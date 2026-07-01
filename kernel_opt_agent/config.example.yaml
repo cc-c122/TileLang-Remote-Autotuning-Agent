@@ -1,0 +1,67 @@
+project_name: tilelang-autotune-local-mock
+
+runner:
+  type: local
+
+remote:
+  host: 127.0.0.1
+  port: 22
+  username: user
+  auth_type: key
+  key_path: ~/.ssh/id_rsa
+  password_env: KERNEL_AGENT_SSH_PASSWORD
+  remote_workspace: /tmp/kernel_opt_workspace
+
+llm:
+  provider: openai_compatible
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  model: gpt-4o-mini
+  temperature: 0.2
+  max_tokens: 2048
+
+kernel:
+  sample_path: ./samples/mock
+  entry_file: kernel.py
+  build_command: python -m py_compile kernel.py
+  correctness_command: python correctness.py
+  run_command: python benchmark.py
+
+search:
+  strategy: hybrid
+  max_iterations: 2
+  candidates_per_iteration: 3
+  timeout_seconds: 60
+  objective: latency
+  random_seed: 20260701
+
+search_space:
+  BM: [16, 32, 64]
+  BN: [32, 64]
+  BK: [32, 64]
+  NUM_THREADS: [128, 256]
+  NUM_STAGES: [2, 3]
+  VECTOR_WIDTH: [1, 2, 4]
+  UNROLL_FACTOR: [1, 2]
+  USE_SHARED: [true, false]
+  USE_DOUBLE_BUFFER: [true, false]
+
+metrics:
+  latency_regex: "latency\\s*[:=]\\s*([0-9.]+)"
+  tflops_regex: "tflops\\s*[:=]\\s*([0-9.]+)"
+  bandwidth_regex: "bandwidth\\s*[:=]\\s*([0-9.]+)"
+
+constraints:
+  max_shared_memory: 98304
+  max_registers: 255
+  allowed_file_patterns:
+    - "*.py"
+    - "*.yaml"
+    - "*.json"
+    - "*.txt"
+  denied_commands:
+    - "rm -rf"
+    - "apt remove"
+    - "mkfs"
+    - "dd if="
+

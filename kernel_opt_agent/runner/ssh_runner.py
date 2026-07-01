@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import os
+import posixpath
+import shlex
+import stat
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+from .command_guard import validate
+from .local_runner import CommandResult
+
+
+@dataclass
+class SSHConnectionInfo:
+    host: str
+    port: int
+    username: str
+    auth_type: str
+    key_path: str | None
+    password_env: str | None
+    remote_workspace: str
+
+
+class SSHRunner:
+    def __init__(self, info: SSHConnectionInfo, timeout_seconds: int, denied_commands: list[str] | None = None):
+        if info.auth_type == "password":
+            raise NotImplementedError("SSH password authentication is configured but not implemented in V1; use auth_type=key")
+        self.info = info
+        self.timeout_seconds = timeout_seconds
+        self.denied_commands = denied_commands or []
+        self.client = None
+        self.sftp = None
+
+    def connect(self) -> None:
+        try:
+            import paramiko
+        except ImportError as exc:
+            raise RuntimeError("SSH runner requires the optional dependency 'paramiko'. Install dependencies with: pip install -r kernel_opt_agent/requirements.txt") from exc
+
+        key_path = os.path.expanduser(self.info.key_path or "")
+        self.client = paramiko.SSHClient()
+        self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        self.client.connect(
+            hostname=self.info.host,
+            port=self.info.port,
+            username=self.info.username,
+            key_filename=key_path,
+            timeout=20,
+            look_for_keys=True,
+            allow_agent=True,
+        )
+        self.sftp = self.client.open_sftp()
+        self._mkdir_p(self.info.remote_workspace)
+
+    def close(self) -> None:
+        if self.sftp:
+            self.sftp.close()
+        if self.client:
+            self.client.close()
+
+    def _mkdir_p(self, remote_path: str) -> None:
+        assert self.sftp is not None
+        parts = remote_path.strip("/").split("/")
+        cur = ""
+        for part in parts:
+            cur = f"{cur}/{part}"
+            try:
+                self.sftp.stat(cur)
+            except OSError:
+                self.sftp.mkdir(cur)
+
+    def upload(self, local_path: Path, remote_path: str | None = None) -> None:
+        assert self.sftp is not None
+        remote_path = remote_path or self.info.remote_workspace
+        local_path = local_path.resolve()
+        if local_path.is_file():
+            self._mkdir_p(posixpath.dirname(remote_path))
+            self.sftp.put(str(local_path), remote_path)
+            return
+        self._mkdir_p(remote_path)
+        for item in local_path.rglob("*"):
+            rel = item.relative_to(local_path).as_posix()
+            dest = posixpath.join(remote_path, rel)
+            if item.is_dir():
+                self._mkdir_p(dest)
+            else:
+                self._mkdir_p(posixpath.dirname(dest))
+                self.sftp.put(str(item), dest)
+
+    def download_artifacts(self, local_results: Path) -> None:
+        assert self.sftp is not None
+        local_results.mkdir(parents=True, exist_ok=True)
+        for name in ("results", "logs", "best_kernel.py", "best_config.yaml"):
+            remote = posixpath.join(self.info.remote_workspace, name)
+            try:
+                st = self.sftp.stat(remote)
+            except OSError:
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                self._download_dir(remote, local_results / name)
+            else:
+                self.sftp.get(remote, str(local_results / name))
+
+    def _download_dir(self, remote_dir: str, local_dir: Path) -> None:
+        assert self.sftp is not None
+        local_dir.mkdir(parents=True, exist_ok=True)
+        for entry in self.sftp.listdir_attr(remote_dir):
+            remote = posixpath.join(remote_dir, entry.filename)
+            local = local_dir / entry.filename
+            if stat.S_ISDIR(entry.st_mode):
+                self._download_dir(remote, local)
+            else:
+                self.sftp.get(remote, str(local))
+
+    def run(self, name: str, command: str | None) -> CommandResult:
+        assert self.client is not None
+        start = time.time()
+        if not command:
+            return CommandResult(name, "", 0, "", "", start, start, 0.0)
+        guard = validate(command, self.info.remote_workspace, self.info.remote_workspace, self.denied_commands)
+        if not guard.allowed:
+            end = time.time()
+            return CommandResult(name, command, 126, "", guard.reason, start, end, end - start, guard_denied=True, error_message=guard.reason)
+        remote_command = f"cd {shlex.quote(self.info.remote_workspace)} && {command}"
+        try:
+            stdin, stdout, stderr = self.client.exec_command(remote_command, timeout=self.timeout_seconds)
+            out = stdout.read().decode("utf-8", errors="replace")
+            err = stderr.read().decode("utf-8", errors="replace")
+            rc = stdout.channel.recv_exit_status()
+            end = time.time()
+            return CommandResult(name, command, rc, out, err, start, end, end - start)
+        except Exception as exc:
+            end = time.time()
+            return CommandResult(name, command, 1, "", str(exc), start, end, end - start, error_message=str(exc))

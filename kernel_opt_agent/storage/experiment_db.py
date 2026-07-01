@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
+from typing import Any
+
+
+SUMMARY_FIELDS = [
+    "run_id",
+    "iteration",
+    "candidate_id",
+    "status",
+    "latency",
+    "tflops",
+    "bandwidth",
+    "objective_value",
+    "config_hash",
+    "kernel_path",
+    "patch_path",
+]
+
+
+class ExperimentDB:
+    def __init__(self, results_dir: Path):
+        self.results_dir = results_dir
+        self.logs_dir = results_dir / "logs"
+        self.results_dir.mkdir(parents=True, exist_ok=True)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.experiments_path = results_dir / "experiments.jsonl"
+        self.failed_path = results_dir / "failed_cases.jsonl"
+        self.summary_path = results_dir / "summary.csv"
+        self.records: list[dict[str, Any]] = []
+        self._init_run_files()
+
+    def _init_run_files(self) -> None:
+        self.experiments_path.write_text("", encoding="utf-8")
+        self.failed_path.write_text("", encoding="utf-8")
+        for log_path in self.logs_dir.glob("*.log"):
+            log_path.unlink()
+        with self.summary_path.open("w", newline="", encoding="utf-8") as f:
+            csv.DictWriter(f, fieldnames=SUMMARY_FIELDS).writeheader()
+
+    def write_logs(self, label: str, stdout: str, stderr: str) -> tuple[Path, Path]:
+        stdout_path = self.logs_dir / f"{label}.stdout.log"
+        stderr_path = self.logs_dir / f"{label}.stderr.log"
+        stdout_path.write_text(stdout or "", encoding="utf-8")
+        stderr_path.write_text(stderr or "", encoding="utf-8")
+        return stdout_path, stderr_path
+
+    def append(self, record: dict[str, Any]) -> None:
+        self.records.append(record)
+        with self.experiments_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        if record.get("status") != "benchmark_ok":
+            with self.failed_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        metrics = record.get("metrics") or {}
+        paths = record.get("paths") or {}
+        objective = record.get("objective") or {}
+        row = {
+            "run_id": record.get("run_id"),
+            "iteration": record.get("iteration"),
+            "candidate_id": record.get("candidate_id"),
+            "status": record.get("status"),
+            "latency": metrics.get("latency"),
+            "tflops": metrics.get("tflops"),
+            "bandwidth": metrics.get("bandwidth"),
+            "objective_value": objective.get("value"),
+            "config_hash": record.get("config_hash"),
+            "kernel_path": paths.get("kernel"),
+            "patch_path": paths.get("patch"),
+        }
+        with self.summary_path.open("a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=SUMMARY_FIELDS)
+            writer.writerow(row)

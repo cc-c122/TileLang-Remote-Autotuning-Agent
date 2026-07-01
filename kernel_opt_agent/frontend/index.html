@@ -1,0 +1,973 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TileLang Autotuning Result Viewer</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d9e0ea;
+      --soft: #eef3f8;
+      --ok: #16845b;
+      --warn: #a15c00;
+      --bad: #b42318;
+      --accent: #2563eb;
+      --accent-soft: #dbe8ff;
+      --shadow: 0 14px 36px rgba(23, 32, 51, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+
+    button, input, select {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: white;
+      border-radius: 6px;
+      padding: 9px 13px;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      border-color: var(--line);
+      background: white;
+      color: var(--ink);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .app {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 22px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+
+    h1, h2, h3, p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      font-size: 17px;
+      margin-bottom: 12px;
+    }
+
+    h3 {
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .notice {
+      padding: 12px 14px;
+      border: 1px solid #f2cf85;
+      background: #fff8e8;
+      color: #553803;
+      border-radius: 6px;
+      margin-bottom: 14px;
+      font-weight: 650;
+    }
+
+    .alerts {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .alert {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-left-width: 4px;
+      background: white;
+      border-radius: 6px;
+      color: var(--muted);
+    }
+
+    .alert.warn {
+      border-left-color: var(--warn);
+    }
+
+    .alert.bad {
+      border-left-color: var(--bad);
+    }
+
+    .alert.ok {
+      border-left-color: var(--ok);
+    }
+
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      min-height: 102px;
+      background: linear-gradient(180deg, #ffffff, #f9fbfe);
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+
+    .value {
+      font-size: 25px;
+      font-weight: 760;
+      overflow-wrap: anywhere;
+    }
+
+    .subvalue {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 5px;
+      overflow-wrap: anywhere;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+      gap: 16px;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 820px;
+    }
+
+    th, td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    th {
+      background: var(--soft);
+      color: #344054;
+      font-weight: 700;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    tr.best {
+      background: #eef8f4;
+    }
+
+    code, pre {
+      font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 0;
+      background: #111827;
+      color: #eef2ff;
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 360px;
+      overflow: auto;
+      font-size: 12px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 9px;
+      background: white;
+      color: #344054;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-weight: 700;
+      font-size: 12px;
+      color: #344054;
+      background: var(--soft);
+    }
+
+    .status.ok {
+      color: #075c3f;
+      background: #dcfaeb;
+    }
+
+    .status.bad {
+      color: #8d1d14;
+      background: #fde2df;
+    }
+
+    .status.warn {
+      color: #7a4400;
+      background: #fff0cf;
+    }
+
+    .chart {
+      width: 100%;
+      min-height: 280px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      padding: 10px;
+    }
+
+    .chart svg {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+
+    .legend {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .swatch {
+      width: 12px;
+      height: 3px;
+      border-radius: 2px;
+      display: inline-block;
+    }
+
+    .empty {
+      padding: 22px;
+      border: 1px dashed var(--line);
+      color: var(--muted);
+      background: #fbfcfe;
+      border-radius: 8px;
+    }
+
+    .path {
+      max-width: 460px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      direction: rtl;
+      unicode-bidi: plaintext;
+    }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 12px;
+    }
+
+    @media (max-width: 920px) {
+      header, .grid-2 {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar {
+        justify-content: flex-start;
+      }
+
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 560px) {
+      .app {
+        padding: 14px;
+      }
+
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 23px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <h1>TileLang Autotuning Result Viewer</h1>
+        <p class="subtitle">本地结果文件查看器，只读取结果目录中的文件。</p>
+      </div>
+      <div class="toolbar">
+        <button id="chooseDirBtn" type="button">选择结果目录</button>
+        <button id="reloadBtn" class="secondary" type="button">刷新</button>
+      </div>
+    </header>
+
+    <div class="notice">当前结果是搜索预算内 best-seen，不代表全局最优。</div>
+    <div id="alerts" class="alerts"></div>
+
+    <section class="section">
+      <div class="summary-grid" id="summaryGrid"></div>
+      <p class="footer-note" id="sourceNote"></p>
+    </section>
+
+    <section class="section grid-2">
+      <div>
+        <h2>性能趋势</h2>
+        <div class="chart" id="trendChart"></div>
+      </div>
+      <div>
+        <h2>Best Config</h2>
+        <pre id="bestConfig">waiting</pre>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>每轮候选列表</h2>
+      <div id="candidateTable" class="table-wrap"></div>
+    </section>
+
+    <section class="section grid-2">
+      <div>
+        <h2>Failed Cases 摘要</h2>
+        <div id="failedCases"></div>
+      </div>
+      <div>
+        <h2>日志路径和 Patch 路径</h2>
+        <div id="pathsTable" class="table-wrap"></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Report</h2>
+      <pre id="reportText">waiting</pre>
+    </section>
+  </main>
+
+  <script>
+    const REQUIRED_FILES = [
+      "report.md",
+      "summary.csv",
+      "experiments.jsonl",
+      "failed_cases.jsonl",
+      "all_results.csv",
+    ];
+
+    const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
+    const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
+
+    const state = {
+      dirHandle: null,
+      mode: "fixed",
+      files: new Map(),
+      warnings: [],
+      errors: [],
+      missing: [],
+    };
+
+    const el = {
+      alerts: document.getElementById("alerts"),
+      summaryGrid: document.getElementById("summaryGrid"),
+      sourceNote: document.getElementById("sourceNote"),
+      trendChart: document.getElementById("trendChart"),
+      bestConfig: document.getElementById("bestConfig"),
+      candidateTable: document.getElementById("candidateTable"),
+      failedCases: document.getElementById("failedCases"),
+      pathsTable: document.getElementById("pathsTable"),
+      reportText: document.getElementById("reportText"),
+      chooseDirBtn: document.getElementById("chooseDirBtn"),
+      reloadBtn: document.getElementById("reloadBtn"),
+    };
+
+    el.chooseDirBtn.addEventListener("click", chooseDirectory);
+    el.reloadBtn.addEventListener("click", loadAndRender);
+
+    loadAndRender();
+
+    async function chooseDirectory() {
+      if (!("showDirectoryPicker" in window)) {
+        pushWarning("当前浏览器不支持目录选择。可通过本地静态服务器打开本页面以读取固定目录。");
+        renderAlerts();
+        return;
+      }
+      state.dirHandle = await window.showDirectoryPicker({ mode: "read" });
+      state.mode = "picked";
+      await loadAndRender();
+    }
+
+    async function loadAndRender() {
+      resetState();
+      await readFiles();
+      const parsed = parseFiles();
+      render(parsed);
+    }
+
+    function resetState() {
+      state.files = new Map();
+      state.warnings = [];
+      state.errors = [];
+      state.missing = [];
+    }
+
+    async function readFiles() {
+      for (const name of REQUIRED_FILES) {
+        try {
+          const text = state.dirHandle
+            ? await readFromDirectory(name)
+            : await readFromFixedPath(name);
+          state.files.set(name, sanitizeText(text));
+        } catch (error) {
+          state.missing.push(name);
+        }
+      }
+    }
+
+    async function readFromDirectory(name) {
+      const handle = await state.dirHandle.getFileHandle(name);
+      return await (await handle.getFile()).text();
+    }
+
+    async function readFromFixedPath(name) {
+      const response = await fetch(`../workspace/results/${name}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(`missing ${name}`);
+      return await response.text();
+    }
+
+    function parseFiles() {
+      const experiments = parseJsonl("experiments.jsonl");
+      const failed = parseJsonl("failed_cases.jsonl");
+      const summary = parseCsvFile("summary.csv");
+      const allResults = parseCsvFile("all_results.csv");
+      const rows = mergeRows(experiments, allResults.rows, summary.rows);
+      const baseline = findBaseline(rows, experiments);
+      const best = findBest(rows, experiments, baseline);
+      const improvement = computeImprovement(baseline, best);
+      return {
+        experiments,
+        failed,
+        summary,
+        allResults,
+        rows,
+        baseline,
+        best,
+        improvement,
+        report: state.files.get("report.md") || "",
+      };
+    }
+
+    function parseJsonl(name) {
+      const text = state.files.get(name);
+      if (!text) return [];
+      const rows = [];
+      text.split(/\r?\n/).forEach((line, index) => {
+        if (!line.trim()) return;
+        try {
+          rows.push(redactObject(JSON.parse(line)));
+        } catch (error) {
+          pushWarning(`${name} 第 ${index + 1} 行不是合法 JSON，已跳过。`);
+        }
+      });
+      return rows;
+    }
+
+    function parseCsvFile(name) {
+      const text = state.files.get(name);
+      if (!text) return { headers: [], rows: [] };
+      const parsed = parseCsv(text);
+      if (!parsed.headers.length) {
+        pushWarning(`${name} 没有可用表头，已降级为空表。`);
+      }
+      const required = name === "all_results.csv"
+        ? ["iteration", "candidate_id", "status"]
+        : ["iteration", "candidate_id", "status"];
+      const missing = required.filter((field) => !parsed.headers.includes(field));
+      if (missing.length) {
+        pushWarning(`${name} 缺少字段 ${missing.join(", ")}，相关列会显示为 waiting。`);
+      }
+      return parsed;
+    }
+
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let field = "";
+      let quoted = false;
+      for (let i = 0; i < text.length; i += 1) {
+        const char = text[i];
+        const next = text[i + 1];
+        if (quoted) {
+          if (char === "\"" && next === "\"") {
+            field += "\"";
+            i += 1;
+          } else if (char === "\"") {
+            quoted = false;
+          } else {
+            field += char;
+          }
+        } else if (char === "\"") {
+          quoted = true;
+        } else if (char === ",") {
+          row.push(field);
+          field = "";
+        } else if (char === "\n") {
+          row.push(field);
+          rows.push(row);
+          row = [];
+          field = "";
+        } else if (char !== "\r") {
+          field += char;
+        }
+      }
+      if (field || row.length) {
+        row.push(field);
+        rows.push(row);
+      }
+      const headers = (rows.shift() || []).map((header) => header.trim());
+      return {
+        headers,
+        rows: rows
+          .filter((items) => items.some((item) => item.trim()))
+          .map((items) => {
+            const record = {};
+            headers.forEach((header, index) => {
+              record[header] = sanitizeText(items[index] || "");
+            });
+            return record;
+          }),
+      };
+    }
+
+    function mergeRows(experiments, allRows, summaryRows) {
+      const byKey = new Map();
+      for (const row of [...summaryRows, ...allRows]) {
+        const key = rowKey(row);
+        byKey.set(key, { ...(byKey.get(key) || {}), ...row });
+      }
+      for (const exp of experiments) {
+        const key = rowKey(exp);
+        byKey.set(key, normalizeExperiment(exp, byKey.get(key) || {}));
+      }
+      return [...byKey.values()].sort(compareRows);
+    }
+
+    function normalizeExperiment(exp, existing) {
+      return {
+        ...existing,
+        run_id: exp.run_id ?? existing.run_id,
+        iteration: exp.iteration ?? existing.iteration,
+        candidate_id: exp.candidate_id ?? existing.candidate_id,
+        status: exp.status ?? existing.status,
+        latency: valueAt(exp, ["metrics", "latency"]) ?? existing.latency,
+        tflops: valueAt(exp, ["metrics", "tflops"]) ?? existing.tflops,
+        bandwidth: valueAt(exp, ["metrics", "bandwidth"]) ?? existing.bandwidth,
+        objective_value: valueAt(exp, ["objective", "value"]) ?? existing.objective_value,
+        config_hash: exp.config_hash ?? existing.config_hash,
+        config: exp.config ?? existing.config,
+        kernel_path: valueAt(exp, ["paths", "kernel"]) ?? existing.kernel_path,
+        patch_path: valueAt(exp, ["paths", "patch"]) ?? existing.patch_path,
+        stdout: valueAt(exp, ["paths", "stdout"]) ?? existing.stdout,
+        stderr: valueAt(exp, ["paths", "stderr"]) ?? existing.stderr,
+        error: exp.error ?? existing.error,
+        correctness: exp.correctness ?? existing.correctness,
+      };
+    }
+
+    function rowKey(row) {
+      return `${row.iteration ?? "?"}:${row.candidate_id ?? "?"}`;
+    }
+
+    function compareRows(a, b) {
+      return Number(a.iteration ?? 0) - Number(b.iteration ?? 0)
+        || Number(a.candidate_id ?? 0) - Number(b.candidate_id ?? 0);
+    }
+
+    function findBaseline(rows, experiments) {
+      return rows.find((row) => String(row.iteration) === "0" && String(row.candidate_id) === "0")
+        || experiments[0]
+        || null;
+    }
+
+    function findBest(rows, experiments, baseline) {
+      const okRows = rows.filter((row) => isSuccess(row) && numeric(row.latency) !== null);
+      if (!okRows.length) return null;
+      const objectiveBetter = valueAt(experiments.find((item) => item.objective), ["objective", "better"]) || "lower";
+      const metric = valueAt(experiments.find((item) => item.objective), ["objective", "name"]) || "latency";
+      const field = metric in okRows[0] ? metric : "latency";
+      return okRows.reduce((best, row) => {
+        const current = numeric(row[field]);
+        const bestValue = numeric(best[field]);
+        if (current === null) return best;
+        if (bestValue === null) return row;
+        return objectiveBetter === "higher"
+          ? (current > bestValue ? row : best)
+          : (current < bestValue ? row : best);
+      }, baseline && isSuccess(baseline) ? baseline : okRows[0]);
+    }
+
+    function computeImprovement(baseline, best) {
+      const base = numeric(baseline?.latency);
+      const seen = numeric(best?.latency);
+      if (base === null || seen === null || base === 0) return null;
+      return ((base - seen) / base) * 100;
+    }
+
+    function render(data) {
+      renderAlerts();
+      renderSummary(data);
+      renderTrend(data.rows, data.best);
+      renderBestConfig(data.best);
+      renderCandidates(data.rows, data.best);
+      renderFailedCases(data.failed);
+      renderPaths(data.rows);
+      el.reportText.textContent = data.report || "waiting";
+    }
+
+    function renderAlerts() {
+      el.alerts.innerHTML = "";
+      if (state.missing.length) {
+        addAlert("warn", `waiting: ${state.missing.join(", ")} 尚不可用。后端运行中时这是正常状态。`);
+      }
+      for (const warning of state.warnings) addAlert("warn", warning);
+      for (const error of state.errors) addAlert("bad", error);
+      if (!state.missing.length && !state.warnings.length && !state.errors.length) {
+        addAlert("ok", "已读取本地结果文件。未调用 HTTP API，未触发后端命令执行。");
+      }
+    }
+
+    function addAlert(kind, text) {
+      const item = document.createElement("div");
+      item.className = `alert ${kind}`;
+      item.textContent = text;
+      el.alerts.appendChild(item);
+    }
+
+    function renderSummary(data) {
+      const cards = [
+        ["Baseline 性能", formatMetrics(data.baseline), statusText(data.baseline)],
+        ["Best-seen 性能", formatMetrics(data.best), statusText(data.best)],
+        ["提升比例", data.improvement === null ? "waiting" : `${formatNumber(data.improvement)}%`, "基于 latency，越低越好"],
+        ["成功 / 失败", `${data.rows.filter(isSuccess).length} / ${data.rows.filter((row) => !isSuccess(row)).length}`, `${data.rows.length || "waiting"} candidates`],
+      ];
+      el.summaryGrid.innerHTML = cards.map(([label, value, subvalue]) => `
+        <div class="metric">
+          <div class="label">${escapeHtml(label)}</div>
+          <div class="value">${escapeHtml(value)}</div>
+          <div class="subvalue">${escapeHtml(subvalue || "")}</div>
+        </div>
+      `).join("");
+      const source = state.dirHandle
+        ? `数据来源：用户选择的结果目录`
+        : `数据来源：固定目录 ../workspace/results/；如果显示 waiting，请选择结果目录或通过本地静态服务器打开。`;
+      el.sourceNote.textContent = source;
+    }
+
+    function renderTrend(rows, best) {
+      const successful = rows.filter((row) => isSuccess(row));
+      if (!successful.length) {
+        el.trendChart.innerHTML = `<div class="empty">waiting: 暂无可绘制的成功候选。</div>`;
+        return;
+      }
+      const metrics = [
+        { key: "latency", label: "latency", color: "#2563eb" },
+        { key: "tflops", label: "TFLOPS", color: "#16845b" },
+        { key: "bandwidth", label: "bandwidth", color: "#b45309" },
+      ];
+      const width = 920;
+      const height = 300;
+      const pad = { top: 20, right: 24, bottom: 44, left: 54 };
+      const points = successful.map((row, index) => ({ row, xIndex: index }));
+      const allValues = metrics.flatMap((metric) => points.map((point) => numeric(point.row[metric.key])).filter((value) => value !== null));
+      const minY = Math.min(...allValues);
+      const maxY = Math.max(...allValues);
+      const spanY = maxY - minY || 1;
+      const x = (index) => pad.left + (points.length === 1 ? 0.5 : index / (points.length - 1)) * (width - pad.left - pad.right);
+      const y = (value) => pad.top + (1 - ((value - minY) / spanY)) * (height - pad.top - pad.bottom);
+      const series = metrics.map((metric) => {
+        const valid = points
+          .map((point) => ({ point, value: numeric(point.row[metric.key]) }))
+          .filter((item) => item.value !== null);
+        const d = valid.map((item, idx) => `${idx ? "L" : "M"} ${x(item.point.xIndex)} ${y(item.value)}`).join(" ");
+        const circles = valid.map((item) => `
+          <circle cx="${x(item.point.xIndex)}" cy="${y(item.value)}" r="${rowKey(item.point.row) === rowKey(best || {}) ? 5 : 3}" fill="${metric.color}">
+            <title>${escapeHtml(metric.label)} iter ${display(item.point.row.iteration)} cand ${display(item.point.row.candidate_id)}: ${formatNumber(item.value)}</title>
+          </circle>
+        `).join("");
+        return `<path d="${d}" fill="none" stroke="${metric.color}" stroke-width="2.5"></path>${circles}`;
+      }).join("");
+      const labels = points.map((point) => `
+        <text x="${x(point.xIndex)}" y="${height - 18}" text-anchor="middle" font-size="11" fill="#667085">${escapeHtml(`${display(point.row.iteration)}/${display(point.row.candidate_id)}`)}</text>
+      `).join("");
+      el.trendChart.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="latency TFLOPS bandwidth trends">
+          <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" stroke="#d9e0ea"></line>
+          <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" stroke="#d9e0ea"></line>
+          <text x="10" y="${pad.top + 8}" font-size="11" fill="#667085">${formatNumber(maxY)}</text>
+          <text x="10" y="${height - pad.bottom}" font-size="11" fill="#667085">${formatNumber(minY)}</text>
+          ${series}
+          ${labels}
+        </svg>
+        <div class="legend">
+          ${metrics.map((metric) => `<span class="legend-item"><span class="swatch" style="background:${metric.color}"></span>${escapeHtml(metric.label)}</span>`).join("")}
+        </div>
+      `;
+    }
+
+    function renderBestConfig(best) {
+      if (!best) {
+        el.bestConfig.textContent = "waiting";
+        return;
+      }
+      el.bestConfig.textContent = JSON.stringify(redactObject(best.config || {}), null, 2) || "waiting";
+    }
+
+    function renderCandidates(rows, best) {
+      if (!rows.length) {
+        el.candidateTable.innerHTML = `<div class="empty">waiting: 尚无候选结果。</div>`;
+        return;
+      }
+      const headers = ["iteration", "candidate_id", "status", "latency", "tflops", "bandwidth", "objective_value", "config_hash", "config"];
+      el.candidateTable.innerHTML = `
+        <table>
+          <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr class="${rowKey(row) === rowKey(best || {}) ? "best" : ""}">
+                ${headers.map((header) => `<td>${cell(row, header)}</td>`).join("")}
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function renderFailedCases(failed) {
+      if (!failed.length) {
+        el.failedCases.innerHTML = `<div class="empty">暂无失败案例，或 failed_cases.jsonl 仍在 waiting。</div>`;
+        return;
+      }
+      el.failedCases.innerHTML = `
+        <div class="chips">
+          ${failed.slice(0, 12).map((item) => `
+            <span class="chip">
+              iter ${escapeHtml(display(item.iteration))} cand ${escapeHtml(display(item.candidate_id))}: ${escapeHtml(display(valueAt(item, ["error", "category"]) || item.status))}
+            </span>
+          `).join("")}
+        </div>
+        <div class="table-wrap" style="margin-top:12px">
+          <table>
+            <thead><tr><th>iteration</th><th>candidate</th><th>status</th><th>reason</th><th>max_error</th></tr></thead>
+            <tbody>
+              ${failed.map((item) => `
+                <tr>
+                  <td>${escapeHtml(display(item.iteration))}</td>
+                  <td>${escapeHtml(display(item.candidate_id))}</td>
+                  <td>${statusBadge(item)}</td>
+                  <td>${escapeHtml(display(valueAt(item, ["error", "message"]) || valueAt(item, ["correctness", "reason"])))}</td>
+                  <td>${escapeHtml(display(valueAt(item, ["correctness", "max_error"])))}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderPaths(rows) {
+      const withPaths = rows.filter((row) => row.patch_path || row.stdout || row.stderr || row.kernel_path);
+      if (!withPaths.length) {
+        el.pathsTable.innerHTML = `<div class="empty">waiting: 暂无日志或 patch 路径。</div>`;
+        return;
+      }
+      const pathFields = ["kernel_path", "patch_path", "stdout", "stderr"];
+      el.pathsTable.innerHTML = `
+        <table>
+          <thead><tr><th>candidate</th>${pathFields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr></thead>
+          <tbody>
+            ${withPaths.map((row) => `
+              <tr>
+                <td>${escapeHtml(`${display(row.iteration)}/${display(row.candidate_id)}`)}</td>
+                ${pathFields.map((field) => `<td><div class="path" title="${escapeHtml(display(row[field]))}">${escapeHtml(display(row[field]))}</div></td>`).join("")}
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function cell(row, header) {
+      if (header === "status") return statusBadge(row);
+      if (header === "config") return `<code>${escapeHtml(JSON.stringify(redactObject(row.config || {})))}</code>`;
+      const value = row[header];
+      return escapeHtml(display(value));
+    }
+
+    function statusBadge(row) {
+      const text = display(row?.status);
+      const kind = isSuccess(row) ? "ok" : (text === "waiting" ? "warn" : "bad");
+      return `<span class="status ${kind}">${escapeHtml(text)}</span>`;
+    }
+
+    function statusText(row) {
+      return row ? display(row.status) : "waiting";
+    }
+
+    function formatMetrics(row) {
+      if (!row) return "waiting";
+      return [
+        ["lat", row.latency],
+        ["TF", row.tflops],
+        ["BW", row.bandwidth],
+      ].map(([label, value]) => `${label} ${displayNumber(value)}`).join(" / ");
+    }
+
+    function isSuccess(row) {
+      const status = String(row?.status || "").toLowerCase();
+      return status.includes("ok") || status === "success" || status === "pass" || valueAt(row, ["correctness", "passed"]) === true;
+    }
+
+    function numeric(value) {
+      if (value === null || value === undefined || value === "") return null;
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function displayNumber(value) {
+      const number = numeric(value);
+      return number === null ? "waiting" : formatNumber(number);
+    }
+
+    function formatNumber(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return "waiting";
+      return Math.abs(number) >= 100 ? number.toFixed(2) : number.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+    }
+
+    function display(value) {
+      if (value === null || value === undefined || value === "") return "waiting";
+      if (typeof value === "object") return JSON.stringify(redactObject(value));
+      return sanitizeText(String(value));
+    }
+
+    function valueAt(object, path) {
+      return path.reduce((current, part) => current && current[part], object);
+    }
+
+    function pushWarning(message) {
+      if (!state.warnings.includes(message)) state.warnings.push(message);
+    }
+
+    function sanitizeText(text) {
+      return String(text)
+        .replace(SENSITIVE_VALUE_RE, "[REDACTED]")
+        .replace(/((?:api[_-]?key|token|password|passwd|secret|authorization|bearer)\s*[:=]\s*)[^\s,'"\\]+/gi, "$1[REDACTED]");
+    }
+
+    function redactObject(value, key = "") {
+      if (Array.isArray(value)) return value.map((item) => redactObject(item, key));
+      if (value && typeof value === "object") {
+        return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
+          childKey,
+          redactObject(childValue, childKey),
+        ]));
+      }
+      if (SENSITIVE_KEY_RE.test(key)) return "[REDACTED]";
+      return typeof value === "string" ? sanitizeText(value) : value;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll("\"", "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+  </script>
+</body>
+</html>
