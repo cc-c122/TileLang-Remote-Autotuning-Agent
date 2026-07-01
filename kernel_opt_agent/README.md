@@ -30,6 +30,17 @@ Important outputs:
 - `best_config.yaml`
 - `report.md`
 
+## View Results Locally
+
+The V1 frontend is a read-only local result viewer. It does not call a backend HTTP API, execute commands, read credentials, or modify files under `workspace/results/`.
+
+Open it in either of these ways:
+
+- Open `kernel_opt_agent/frontend/index.html` in a Chromium-based browser and click "选择结果目录", then select `kernel_opt_agent/workspace/results/`.
+- Or serve `kernel_opt_agent/` with any static file server and open `/frontend/index.html`; the page will read `../workspace/results/` relative to itself.
+
+If the backend is still running, the viewer shows exactly which expected files are still `waiting`.
+
 ## Configuration
 
 Copy `config.example.yaml` to your own `config.yaml` and edit:
