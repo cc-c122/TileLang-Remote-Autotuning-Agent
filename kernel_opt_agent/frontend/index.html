@@ -115,14 +115,36 @@
       justify-content: flex-end;
     }
 
-    .notice {
+    .notice, .howto {
       margin-bottom: 14px;
-      border: 1px solid #f2cf85;
       border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .notice {
+      border: 1px solid #f2cf85;
       background: #fff8e8;
       color: #553803;
       font-weight: 700;
-      padding: 12px 14px;
+    }
+
+    .howto {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      border: 1px solid var(--line);
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .howto p, .howto li {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .howto ul {
+      margin: 6px 0 0;
+      padding-left: 18px;
     }
 
     .alerts {
@@ -143,6 +165,11 @@
     .alert.ok { border-left-color: var(--ok); }
     .alert.warn { border-left-color: var(--warn); }
     .alert.bad { border-left-color: var(--bad); }
+
+    .waiting-list {
+      margin: 8px 0 0;
+      padding-left: 20px;
+    }
 
     .section {
       margin-bottom: 16px;
@@ -238,9 +265,7 @@
       font-size: 13px;
     }
 
-    .kv div:nth-child(odd) {
-      color: var(--muted);
-    }
+    .kv div:nth-child(odd) { color: var(--muted); }
 
     .grid-2 {
       display: grid;
@@ -297,6 +322,8 @@
       border-collapse: collapse;
     }
 
+    .failed-table { min-width: 1180px; }
+
     th, td {
       border-bottom: 1px solid var(--line);
       padding: 9px 10px;
@@ -315,15 +342,13 @@
       font-weight: 760;
     }
 
-    td.config-cell {
+    td.config-cell, td.reason-cell {
       max-width: 420px;
       white-space: normal;
       overflow-wrap: anywhere;
     }
 
-    tr.best-row {
-      background: #eef8f4;
-    }
+    tr.best-row { background: #eef8f4; }
 
     .badge {
       display: inline-flex;
@@ -375,20 +400,9 @@
       unicode-bidi: plaintext;
     }
 
-    .footer-note {
-      margin-top: 12px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
     @media (max-width: 980px) {
-      .topbar, .grid-2, .compare-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .toolbar {
-        justify-content: flex-start;
-      }
+      .topbar, .grid-2, .compare-grid, .howto { grid-template-columns: 1fr; }
+      .toolbar { justify-content: flex-start; }
     }
 
     @media (max-width: 560px) {
@@ -413,6 +427,18 @@
     </header>
 
     <div class="notice">当前结果是搜索预算内 best-seen，不代表全局最优。</div>
+
+    <section class="howto" aria-label="本地查看说明">
+      <div>
+        <h3>本地查看说明</h3>
+        <p>推荐点击“选择结果目录”，直接选择后端生成的 <code>kernel_opt_agent/workspace/results/</code>。</p>
+      </div>
+      <div>
+        <h3>静态服务器方式</h3>
+        <p>也可以在 <code>kernel_opt_agent</code> 目录启动静态服务器，然后打开 <code>/frontend/index.html</code>；页面会读取 <code>../workspace/results/</code>。</p>
+      </div>
+    </section>
+
     <div id="alerts" class="alerts"></div>
 
     <section class="section">
@@ -448,21 +474,20 @@
       <div id="candidateTable" class="table-wrap"></div>
     </section>
 
-    <section class="section grid-2">
-      <div>
-        <div class="section-head">
-          <h2>Failed Cases</h2>
-          <span class="muted" id="failedCount">waiting</span>
-        </div>
-        <div id="failedCases"></div>
+    <section class="section">
+      <div class="section-head">
+        <h2>Failed Cases</h2>
+        <span class="muted" id="failedCount">waiting</span>
       </div>
-      <div>
-        <div class="section-head">
-          <h2>Log / Patch Paths</h2>
-          <span class="muted">只展示路径，不读取内容</span>
-        </div>
-        <div id="pathsTable" class="table-wrap"></div>
+      <div id="failedCases"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>Log / Patch Paths</h2>
+        <span class="muted">只展示路径，不读取内容</span>
       </div>
+      <div id="pathsTable" class="table-wrap"></div>
     </section>
 
     <section class="section">
@@ -752,9 +777,10 @@
     function renderAlerts() {
       el.alerts.innerHTML = "";
       if (state.missing.length) {
-        addAlert("warn", `waiting: ${state.missing.join(", ")} 尚不可用。后端运行中或结果目录未选对时会出现这个状态。`);
+        const list = state.missing.map((name) => `<li>${escapeHtml(name)}</li>`).join("");
+        addAlert("warn", `后端结果文件仍在 waiting：<ul class="waiting-list">${list}</ul>后端没跑完或结果目录选错时会出现这个状态。`);
       }
-      for (const warning of state.warnings) addAlert("warn", warning);
+      for (const warning of state.warnings) addAlert("warn", escapeHtml(warning));
       if (!state.missing.length && !state.warnings.length) {
         addAlert("ok", "已读取本地结果文件。页面没有 HTTP API 调用，也不会触发后端命令执行。");
       }
@@ -885,19 +911,33 @@
       }
       el.failedCases.innerHTML = `
         <div class="chips">
-          ${failed.slice(0, 8).map((item) => `<span class="chip">${escapeHtml(candidateLabel(item))}: ${escapeHtml(display(valueAt(item, ["error", "category"]) || item.status))}</span>`).join("")}
+          ${failed.slice(0, 8).map((item) => `<span class="chip">${escapeHtml(candidateLabel(item))}: ${escapeHtml(errorCategory(item))}</span>`).join("")}
         </div>
         <div class="table-wrap">
-          <table>
-            <thead><tr><th>candidate</th><th>status</th><th>reason</th><th>max_error</th><th>patch</th></tr></thead>
+          <table class="failed-table">
+            <thead>
+              <tr>
+                <th>candidate</th>
+                <th>status</th>
+                <th>error category</th>
+                <th>reason</th>
+                <th>max_error</th>
+                <th>stdout path</th>
+                <th>stderr path</th>
+                <th>patch path</th>
+              </tr>
+            </thead>
             <tbody>
               ${failed.map((item) => `
                 <tr>
                   <td>${escapeHtml(candidateLabel(item))}</td>
                   <td>${statusBadge(item)}</td>
-                  <td>${escapeHtml(display(valueAt(item, ["error", "message"]) || valueAt(item, ["correctness", "reason"])))}</td>
+                  <td>${escapeHtml(errorCategory(item))}</td>
+                  <td class="reason-cell">${escapeHtml(errorReason(item))}</td>
                   <td>${escapeHtml(display(valueAt(item, ["correctness", "max_error"])))}</td>
-                  <td><div class="path" title="${escapeHtml(display(valueAt(item, ["paths", "patch"])))}">${escapeHtml(display(valueAt(item, ["paths", "patch"])))}</div></td>
+                  <td><div class="path" title="${escapeHtml(pathValue(item, "stdout"))}">${escapeHtml(pathValue(item, "stdout"))}</div></td>
+                  <td><div class="path" title="${escapeHtml(pathValue(item, "stderr"))}">${escapeHtml(pathValue(item, "stderr"))}</div></td>
+                  <td><div class="path" title="${escapeHtml(pathValue(item, "patch"))}">${escapeHtml(pathValue(item, "patch"))}</div></td>
                 </tr>
               `).join("")}
             </tbody>
@@ -938,6 +978,18 @@
       const text = display(row?.status);
       const kind = isSuccess(row) ? "ok" : (text === "waiting" ? "warn" : "bad");
       return `<span class="badge ${kind}">${escapeHtml(text)}</span>`;
+    }
+
+    function errorCategory(row) {
+      return display(valueAt(row, ["error", "category"]) || row?.status);
+    }
+
+    function errorReason(row) {
+      return display(valueAt(row, ["error", "message"]) || valueAt(row, ["correctness", "reason"]) || valueAt(row, ["metrics", "reason"]));
+    }
+
+    function pathValue(row, key) {
+      return display(valueAt(row, ["paths", key]) || row?.[`${key}_path`] || row?.[key]);
     }
 
     function isSuccess(row) {
@@ -992,10 +1044,10 @@
       return path.reduce((current, part) => current && current[part], object);
     }
 
-    function addAlert(kind, text) {
+    function addAlert(kind, html) {
       const item = document.createElement("div");
       item.className = `alert ${kind}`;
-      item.textContent = text;
+      item.innerHTML = html;
       el.alerts.appendChild(item);
     }
 
