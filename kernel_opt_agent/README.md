@@ -40,6 +40,14 @@ Copy `config.example.yaml` to your own `config.yaml` and edit:
 - `kernel.sample_path`: file or directory
 - `kernel.entry_file`: only this file is rendered as a template
 
+For SSH key-auth smoke testing, copy `config.ssh.example.yaml`, replace only the host, user, key path, and remote workspace fields, then run:
+
+```bash
+python main.py --config path/to/ssh.config.yaml
+```
+
+The SSH runner uploads the sample file or directory, renders only `kernel.entry_file`, runs commands under `remote.remote_workspace`, and downloads remote artifacts into `workspace/results/remote_artifacts/` when present.
+
 Template placeholders use `{{BM}}` syntax. Placeholder names must exactly match `search_space` keys, including case. Boolean values render as Python `True` / `False`.
 
 ## Security Limits
