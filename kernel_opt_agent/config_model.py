@@ -141,6 +141,7 @@ def load_config(path: str) -> AppConfig:
 def safe_config_dict(config: AppConfig) -> dict[str, Any]:
     data = config.model_dump()
     data["llm"]["api_key_env"] = config.llm.api_key_env
+    if data.get("remote", {}).get("key_path"):
+        data["remote"]["key_path"] = "<redacted:key_path>"
     data["remote"]["password_env"] = config.remote.password_env
     return data
-
