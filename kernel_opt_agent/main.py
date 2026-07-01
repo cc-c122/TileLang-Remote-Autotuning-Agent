@@ -84,7 +84,6 @@ def run_trial(
         yaml.safe_dump(candidate_config, f, sort_keys=True)
 
     started = datetime.utcnow().isoformat() + "Z"
-    runner = build_runner(config, paths["trial_dir"])
     stdout_all = []
     stderr_all = []
     status = "unknown"

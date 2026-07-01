@@ -114,6 +114,9 @@ class SSHRunner:
             else:
                 self.sftp.get(remote, str(local))
 
+    def _build_remote_command(self, command: str) -> str:
+        return f"cd {shlex.quote(self.info.remote_workspace)} && {command}"
+
     def run(self, name: str, command: str | None) -> CommandResult:
         assert self.client is not None
         start = time.time()
@@ -123,7 +126,7 @@ class SSHRunner:
         if not guard.allowed:
             end = time.time()
             return CommandResult(name, command, 126, "", guard.reason, start, end, end - start, guard_denied=True, error_message=guard.reason)
-        remote_command = f"cd {shlex.quote(self.info.remote_workspace)} && {command}"
+        remote_command = self._build_remote_command(command)
         try:
             stdin, stdout, stderr = self.client.exec_command(remote_command, timeout=self.timeout_seconds)
             out = stdout.read().decode("utf-8", errors="replace")
