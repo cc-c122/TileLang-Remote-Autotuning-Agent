@@ -3,28 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TileLang Autotuning Result Viewer</title>
+  <title>TileLang 结果查看器</title>
   <link rel="icon" href="data:,">
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f8fb;
+      --bg: #f5f7fb;
       --panel: #ffffff;
       --ink: #172033;
       --muted: #667085;
-      --line: #d9e0ea;
+      --line: #d8e0ea;
       --soft: #eef3f8;
-      --ok: #16845b;
-      --warn: #a15c00;
-      --bad: #b42318;
       --accent: #2563eb;
-      --accent-soft: #dbe8ff;
-      --shadow: 0 14px 36px rgba(23, 32, 51, 0.08);
+      --accent-soft: #dce8ff;
+      --ok: #137a53;
+      --ok-soft: #dcfaeb;
+      --warn: #a15c00;
+      --warn-soft: #fff2d6;
+      --bad: #b42318;
+      --bad-soft: #fde2df;
+      --shadow: 0 14px 32px rgba(23, 32, 51, 0.08);
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
@@ -34,47 +35,28 @@
       line-height: 1.45;
     }
 
-    button, input, select {
-      font: inherit;
-    }
-
     button {
       border: 1px solid var(--accent);
-      background: var(--accent);
-      color: white;
       border-radius: 6px;
-      padding: 9px 13px;
+      background: var(--accent);
+      color: #fff;
       cursor: pointer;
+      font: inherit;
+      padding: 9px 13px;
     }
 
     button.secondary {
       border-color: var(--line);
-      background: white;
+      background: #fff;
       color: var(--ink);
     }
 
     button:disabled {
-      cursor: not-allowed;
-      opacity: 0.5;
+      cursor: wait;
+      opacity: 0.65;
     }
 
-    .app {
-      max-width: 1360px;
-      margin: 0 auto;
-      padding: 22px;
-    }
-
-    header {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 16px;
-      align-items: end;
-      margin-bottom: 18px;
-    }
-
-    h1, h2, h3, p {
-      margin: 0;
-    }
+    h1, h2, h3, p { margin: 0; }
 
     h1 {
       font-size: 28px;
@@ -92,9 +74,38 @@
       margin-bottom: 8px;
     }
 
+    code, pre { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }
+
+    pre {
+      margin: 0;
+      max-height: 360px;
+      overflow: auto;
+      border-radius: 8px;
+      background: #111827;
+      color: #eef2ff;
+      padding: 12px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 12px;
+    }
+
+    .app {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 22px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 16px;
+    }
+
     .subtitle {
       color: var(--muted);
-      margin-top: 4px;
+      margin-top: 5px;
     }
 
     .toolbar {
@@ -105,13 +116,13 @@
     }
 
     .notice {
-      padding: 12px 14px;
+      margin-bottom: 14px;
       border: 1px solid #f2cf85;
+      border-radius: 8px;
       background: #fff8e8;
       color: #553803;
-      border-radius: 6px;
-      margin-bottom: 14px;
-      font-weight: 650;
+      font-weight: 700;
+      padding: 12px 14px;
     }
 
     .alerts {
@@ -121,220 +132,243 @@
     }
 
     .alert {
-      padding: 10px 12px;
       border: 1px solid var(--line);
       border-left-width: 4px;
-      background: white;
-      border-radius: 6px;
-      color: var(--muted);
+      border-radius: 8px;
+      background: #fff;
+      color: #475467;
+      padding: 10px 12px;
     }
 
-    .alert.warn {
-      border-left-color: var(--warn);
-    }
-
-    .alert.bad {
-      border-left-color: var(--bad);
-    }
-
-    .alert.ok {
-      border-left-color: var(--ok);
-    }
+    .alert.ok { border-left-color: var(--ok); }
+    .alert.warn { border-left-color: var(--warn); }
+    .alert.bad { border-left-color: var(--bad); }
 
     .section {
-      background: var(--panel);
+      margin-bottom: 16px;
       border: 1px solid var(--line);
       border-radius: 8px;
+      background: var(--panel);
       box-shadow: var(--shadow);
       padding: 16px;
-      margin-bottom: 16px;
     }
 
-    .summary-grid {
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .section-head h2 { margin: 0; }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .compare-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(180px, 1fr));
+      grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr) minmax(220px, 0.65fr);
       gap: 12px;
     }
 
-    .metric {
+    .result-card {
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 13px;
-      min-height: 102px;
-      background: linear-gradient(180deg, #ffffff, #f9fbfe);
+      background: linear-gradient(180deg, #fff, #f9fbfe);
+      padding: 14px;
+      min-height: 178px;
     }
 
-    .label {
+    .best-card {
+      border-color: #9bd7bf;
+      background: linear-gradient(180deg, #ffffff, #f0fbf6);
+    }
+
+    .metric-label {
       color: var(--muted);
       font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      margin-bottom: 6px;
-    }
-
-    .value {
-      font-size: 25px;
       font-weight: 760;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .metric-main {
+      margin-top: 7px;
+      font-size: 30px;
+      font-weight: 780;
       overflow-wrap: anywhere;
     }
 
-    .subvalue {
+    .metric-main.good { color: var(--ok); }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .mini {
+      border-radius: 6px;
+      background: var(--soft);
+      padding: 8px;
+      min-width: 0;
+    }
+
+    .mini .name {
       color: var(--muted);
-      font-size: 13px;
-      margin-top: 5px;
+      font-size: 11px;
+    }
+
+    .mini .num {
+      margin-top: 2px;
+      font-weight: 740;
       overflow-wrap: anywhere;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 7px 10px;
+      margin-top: 12px;
+      color: #344054;
+      font-size: 13px;
+    }
+
+    .kv div:nth-child(odd) {
+      color: var(--muted);
     }
 
     .grid-2 {
       display: grid;
-      grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+      grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
       gap: 16px;
+    }
+
+    .chart {
+      min-height: 310px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+    }
+
+    .chart svg {
+      display: block;
+      width: 100%;
+      height: 300px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .swatch {
+      display: inline-block;
+      width: 12px;
+      height: 3px;
+      border-radius: 2px;
     }
 
     .table-wrap {
       overflow: auto;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: white;
+      background: #fff;
     }
 
     table {
       width: 100%;
+      min-width: 920px;
       border-collapse: collapse;
-      min-width: 820px;
     }
 
     th, td {
-      padding: 9px 10px;
       border-bottom: 1px solid var(--line);
+      padding: 9px 10px;
       text-align: left;
       vertical-align: top;
-      font-size: 13px;
       white-space: nowrap;
+      font-size: 13px;
     }
 
     th {
-      background: var(--soft);
-      color: #344054;
-      font-weight: 700;
       position: sticky;
       top: 0;
       z-index: 1;
+      background: var(--soft);
+      color: #344054;
+      font-weight: 760;
     }
 
-    tr.best {
+    td.config-cell {
+      max-width: 420px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    tr.best-row {
       background: #eef8f4;
     }
 
-    code, pre {
-      font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 12px;
+      font-weight: 760;
+      background: var(--soft);
+      color: #344054;
     }
 
-    pre {
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      margin: 0;
-      background: #111827;
-      color: #eef2ff;
-      border-radius: 8px;
-      padding: 12px;
-      max-height: 360px;
-      overflow: auto;
-      font-size: 12px;
-    }
+    .badge.ok { background: var(--ok-soft); color: #075c3f; }
+    .badge.bad { background: var(--bad-soft); color: #8d1d14; }
+    .badge.warn { background: var(--warn-soft); color: #7a4400; }
+    .badge.best { background: var(--accent-soft); color: #1d4ed8; }
 
     .chips {
       display: flex;
       flex-wrap: wrap;
       gap: 7px;
+      margin-bottom: 12px;
     }
 
     .chip {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
       border: 1px solid var(--line);
       border-radius: 999px;
+      background: #fff;
+      color: #344054;
       padding: 4px 9px;
-      background: white;
-      color: #344054;
       font-size: 12px;
-      white-space: nowrap;
-    }
-
-    .status {
-      display: inline-flex;
-      align-items: center;
-      border-radius: 999px;
-      padding: 3px 8px;
-      font-weight: 700;
-      font-size: 12px;
-      color: #344054;
-      background: var(--soft);
-    }
-
-    .status.ok {
-      color: #075c3f;
-      background: #dcfaeb;
-    }
-
-    .status.bad {
-      color: #8d1d14;
-      background: #fde2df;
-    }
-
-    .status.warn {
-      color: #7a4400;
-      background: #fff0cf;
-    }
-
-    .chart {
-      width: 100%;
-      min-height: 280px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: white;
-      padding: 10px;
-    }
-
-    .chart svg {
-      width: 100%;
-      height: 300px;
-      display: block;
-    }
-
-    .legend {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-      color: var(--muted);
-      font-size: 12px;
-      margin-top: 8px;
-    }
-
-    .legend-item {
-      display: inline-flex;
-      gap: 6px;
-      align-items: center;
-    }
-
-    .swatch {
-      width: 12px;
-      height: 3px;
-      border-radius: 2px;
-      display: inline-block;
     }
 
     .empty {
-      padding: 22px;
       border: 1px dashed var(--line);
-      color: var(--muted);
-      background: #fbfcfe;
       border-radius: 8px;
+      background: #fbfcfe;
+      color: var(--muted);
+      padding: 18px;
     }
 
     .path {
-      max-width: 460px;
+      max-width: 520px;
       overflow: hidden;
       text-overflow: ellipsis;
       direction: rtl;
@@ -342,46 +376,35 @@
     }
 
     .footer-note {
+      margin-top: 12px;
       color: var(--muted);
       font-size: 12px;
-      margin-top: 12px;
     }
 
-    @media (max-width: 920px) {
-      header, .grid-2 {
+    @media (max-width: 980px) {
+      .topbar, .grid-2, .compare-grid {
         grid-template-columns: 1fr;
       }
 
       .toolbar {
         justify-content: flex-start;
       }
-
-      .summary-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
     }
 
     @media (max-width: 560px) {
-      .app {
-        padding: 14px;
-      }
-
-      .summary-grid {
-        grid-template-columns: 1fr;
-      }
-
-      h1 {
-        font-size: 23px;
-      }
+      .app { padding: 14px; }
+      h1 { font-size: 23px; }
+      .metric-row { grid-template-columns: 1fr; }
+      .kv { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <main class="app">
-    <header>
+    <header class="topbar">
       <div>
-        <h1>TileLang Autotuning Result Viewer</h1>
-        <p class="subtitle">本地结果文件查看器，只读取结果目录中的文件。</p>
+        <h1>TileLang 结果查看器</h1>
+        <p class="subtitle">V1 只消费本地结果文件，不调用 HTTP API，不触发后端命令执行。</p>
       </div>
       <div class="toolbar">
         <button id="chooseDirBtn" type="button">选择结果目录</button>
@@ -393,39 +416,60 @@
     <div id="alerts" class="alerts"></div>
 
     <section class="section">
-      <div class="summary-grid" id="summaryGrid"></div>
-      <p class="footer-note" id="sourceNote"></p>
+      <div class="section-head">
+        <h2>Baseline vs Best</h2>
+        <span class="muted" id="sourceNote">waiting</span>
+      </div>
+      <div class="compare-grid" id="compareGrid"></div>
     </section>
 
     <section class="section grid-2">
       <div>
-        <h2>性能趋势</h2>
+        <div class="section-head">
+          <h2>Latency / TFLOPS / Bandwidth 趋势</h2>
+          <span class="muted">成功候选按 iteration/candidate 排序</span>
+        </div>
         <div class="chart" id="trendChart"></div>
       </div>
       <div>
-        <h2>Best Config</h2>
+        <div class="section-head">
+          <h2>Best Config</h2>
+          <span class="muted" id="bestIdentity">waiting</span>
+        </div>
         <pre id="bestConfig">waiting</pre>
       </div>
     </section>
 
     <section class="section">
-      <h2>每轮候选列表</h2>
+      <div class="section-head">
+        <h2>Trial Table</h2>
+        <span class="muted" id="trialCount">waiting</span>
+      </div>
       <div id="candidateTable" class="table-wrap"></div>
     </section>
 
     <section class="section grid-2">
       <div>
-        <h2>Failed Cases 摘要</h2>
+        <div class="section-head">
+          <h2>Failed Cases</h2>
+          <span class="muted" id="failedCount">waiting</span>
+        </div>
         <div id="failedCases"></div>
       </div>
       <div>
-        <h2>日志路径和 Patch 路径</h2>
+        <div class="section-head">
+          <h2>Log / Patch Paths</h2>
+          <span class="muted">只展示路径，不读取内容</span>
+        </div>
         <div id="pathsTable" class="table-wrap"></div>
       </div>
     </section>
 
     <section class="section">
-      <h2>Report</h2>
+      <div class="section-head">
+        <h2>report.md</h2>
+        <span class="muted">已做基础脱敏</span>
+      </div>
       <pre id="reportText">waiting</pre>
     </section>
   </main>
@@ -439,25 +483,29 @@
       "all_results.csv",
     ];
 
+    const FIXED_RESULT_DIR = "../workspace/results/";
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
     const state = {
       dirHandle: null,
-      mode: "fixed",
       files: new Map(),
       warnings: [],
-      errors: [],
       missing: [],
+      loading: false,
+      lastLoadedAt: null,
     };
 
     const el = {
       alerts: document.getElementById("alerts"),
-      summaryGrid: document.getElementById("summaryGrid"),
+      compareGrid: document.getElementById("compareGrid"),
       sourceNote: document.getElementById("sourceNote"),
       trendChart: document.getElementById("trendChart"),
+      bestIdentity: document.getElementById("bestIdentity"),
       bestConfig: document.getElementById("bestConfig"),
+      trialCount: document.getElementById("trialCount"),
       candidateTable: document.getElementById("candidateTable"),
+      failedCount: document.getElementById("failedCount"),
       failedCases: document.getElementById("failedCases"),
       pathsTable: document.getElementById("pathsTable"),
       reportText: document.getElementById("reportText"),
@@ -472,35 +520,41 @@
 
     async function chooseDirectory() {
       if (!("showDirectoryPicker" in window)) {
-        pushWarning("当前浏览器不支持目录选择。可通过本地静态服务器打开本页面以读取固定目录。");
+        addOneShotWarning("当前浏览器不支持选择目录。请通过本地静态服务器打开页面，或换用支持 File System Access API 的 Chromium 浏览器。");
         renderAlerts();
         return;
       }
       state.dirHandle = await window.showDirectoryPicker({ mode: "read" });
-      state.mode = "picked";
       await loadAndRender();
     }
 
     async function loadAndRender() {
-      resetState();
+      setLoading(true);
+      resetReadState();
       await readFiles();
+      state.lastLoadedAt = new Date();
       const parsed = parseFiles();
       render(parsed);
+      setLoading(false);
     }
 
-    function resetState() {
+    function setLoading(value) {
+      state.loading = value;
+      el.reloadBtn.disabled = value;
+      el.chooseDirBtn.disabled = value;
+      el.reloadBtn.textContent = value ? "刷新中" : "刷新";
+    }
+
+    function resetReadState() {
       state.files = new Map();
       state.warnings = [];
-      state.errors = [];
       state.missing = [];
     }
 
     async function readFiles() {
       for (const name of REQUIRED_FILES) {
         try {
-          const text = state.dirHandle
-            ? await readFromDirectory(name)
-            : await readFromFixedPath(name);
+          const text = state.dirHandle ? await readFromPickedDirectory(name) : await readFromFixedDirectory(name);
           state.files.set(name, sanitizeText(text));
         } catch (error) {
           state.missing.push(name);
@@ -508,13 +562,14 @@
       }
     }
 
-    async function readFromDirectory(name) {
+    async function readFromPickedDirectory(name) {
       const handle = await state.dirHandle.getFileHandle(name);
-      return await (await handle.getFile()).text();
+      const file = await handle.getFile();
+      return await file.text();
     }
 
-    async function readFromFixedPath(name) {
-      const response = await fetch(`../workspace/results/${name}`, { cache: "no-store" });
+    async function readFromFixedDirectory(name) {
+      const response = await fetch(`${FIXED_RESULT_DIR}${name}`, { cache: "no-store" });
       if (!response.ok) throw new Error(`missing ${name}`);
       return await response.text();
     }
@@ -550,7 +605,7 @@
         try {
           rows.push(redactObject(JSON.parse(line)));
         } catch (error) {
-          pushWarning(`${name} 第 ${index + 1} 行不是合法 JSON，已跳过。`);
+          addOneShotWarning(`${name} 第 ${index + 1} 行不是合法 JSONL，已跳过该行。`);
         }
       });
       return rows;
@@ -561,20 +616,19 @@
       if (!text) return { headers: [], rows: [] };
       const parsed = parseCsv(text);
       if (!parsed.headers.length) {
-        pushWarning(`${name} 没有可用表头，已降级为空表。`);
+        addOneShotWarning(`${name} 没有可用表头，相关区域会显示 waiting。`);
+        return parsed;
       }
-      const required = name === "all_results.csv"
-        ? ["iteration", "candidate_id", "status"]
-        : ["iteration", "candidate_id", "status"];
+      const required = ["iteration", "candidate_id", "status"];
       const missing = required.filter((field) => !parsed.headers.includes(field));
       if (missing.length) {
-        pushWarning(`${name} 缺少字段 ${missing.join(", ")}，相关列会显示为 waiting。`);
+        addOneShotWarning(`${name} 缺少字段 ${missing.join(", ")}，表格会尽量展示已有字段。`);
       }
       return parsed;
     }
 
     function parseCsv(text) {
-      const rows = [];
+      const rawRows = [];
       let row = [];
       let field = "";
       let quoted = false;
@@ -597,7 +651,7 @@
           field = "";
         } else if (char === "\n") {
           row.push(field);
-          rows.push(row);
+          rawRows.push(row);
           row = [];
           field = "";
         } else if (char !== "\r") {
@@ -606,21 +660,19 @@
       }
       if (field || row.length) {
         row.push(field);
-        rows.push(row);
+        rawRows.push(row);
       }
-      const headers = (rows.shift() || []).map((header) => header.trim());
-      return {
-        headers,
-        rows: rows
-          .filter((items) => items.some((item) => item.trim()))
-          .map((items) => {
-            const record = {};
-            headers.forEach((header, index) => {
-              record[header] = sanitizeText(items[index] || "");
-            });
-            return record;
-          }),
-      };
+      const headers = (rawRows.shift() || []).map((header) => header.trim()).filter(Boolean);
+      const rows = rawRows
+        .filter((items) => items.some((item) => item.trim()))
+        .map((items) => {
+          const record = {};
+          headers.forEach((header, index) => {
+            record[header] = sanitizeText(items[index] || "");
+          });
+          return record;
+        });
+      return { headers, rows };
     }
 
     function mergeRows(experiments, allRows, summaryRows) {
@@ -658,36 +710,25 @@
       };
     }
 
-    function rowKey(row) {
-      return `${row.iteration ?? "?"}:${row.candidate_id ?? "?"}`;
-    }
-
-    function compareRows(a, b) {
-      return Number(a.iteration ?? 0) - Number(b.iteration ?? 0)
-        || Number(a.candidate_id ?? 0) - Number(b.candidate_id ?? 0);
-    }
-
     function findBaseline(rows, experiments) {
       return rows.find((row) => String(row.iteration) === "0" && String(row.candidate_id) === "0")
-        || experiments[0]
+        || normalizeExperiment(experiments[0] || {}, {})
         || null;
     }
 
     function findBest(rows, experiments, baseline) {
-      const okRows = rows.filter((row) => isSuccess(row) && numeric(row.latency) !== null);
-      if (!okRows.length) return null;
-      const objectiveBetter = valueAt(experiments.find((item) => item.objective), ["objective", "better"]) || "lower";
-      const metric = valueAt(experiments.find((item) => item.objective), ["objective", "name"]) || "latency";
-      const field = metric in okRows[0] ? metric : "latency";
-      return okRows.reduce((best, row) => {
+      const successful = rows.filter((row) => isSuccess(row) && numeric(row.latency) !== null);
+      if (!successful.length) return null;
+      const objective = experiments.find((item) => item.objective)?.objective || {};
+      const better = objective.better || "lower";
+      const field = objective.name && objective.name in successful[0] ? objective.name : "latency";
+      return successful.reduce((best, row) => {
         const current = numeric(row[field]);
-        const bestValue = numeric(best[field]);
+        const previous = numeric(best[field]);
         if (current === null) return best;
-        if (bestValue === null) return row;
-        return objectiveBetter === "higher"
-          ? (current > bestValue ? row : best)
-          : (current < bestValue ? row : best);
-      }, baseline && isSuccess(baseline) ? baseline : okRows[0]);
+        if (previous === null) return row;
+        return better === "higher" ? (current > previous ? row : best) : (current < previous ? row : best);
+      }, baseline && isSuccess(baseline) ? baseline : successful[0]);
     }
 
     function computeImprovement(baseline, best) {
@@ -699,63 +740,73 @@
 
     function render(data) {
       renderAlerts();
-      renderSummary(data);
+      renderCompare(data);
       renderTrend(data.rows, data.best);
       renderBestConfig(data.best);
       renderCandidates(data.rows, data.best);
       renderFailedCases(data.failed);
       renderPaths(data.rows);
-      el.reportText.textContent = data.report || "waiting";
+      el.reportText.textContent = data.report || "waiting: report.md 尚不可用";
     }
 
     function renderAlerts() {
       el.alerts.innerHTML = "";
       if (state.missing.length) {
-        addAlert("warn", `waiting: ${state.missing.join(", ")} 尚不可用。后端运行中时这是正常状态。`);
+        addAlert("warn", `waiting: ${state.missing.join(", ")} 尚不可用。后端运行中或结果目录未选对时会出现这个状态。`);
       }
       for (const warning of state.warnings) addAlert("warn", warning);
-      for (const error of state.errors) addAlert("bad", error);
-      if (!state.missing.length && !state.warnings.length && !state.errors.length) {
-        addAlert("ok", "已读取本地结果文件。未调用 HTTP API，未触发后端命令执行。");
+      if (!state.missing.length && !state.warnings.length) {
+        addAlert("ok", "已读取本地结果文件。页面没有 HTTP API 调用，也不会触发后端命令执行。");
       }
     }
 
-    function addAlert(kind, text) {
-      const item = document.createElement("div");
-      item.className = `alert ${kind}`;
-      item.textContent = text;
-      el.alerts.appendChild(item);
+    function renderCompare(data) {
+      const baseline = data.baseline;
+      const best = data.best;
+      const delta = data.improvement;
+      el.compareGrid.innerHTML = `
+        ${resultCard("Baseline", baseline, "")}
+        ${resultCard("Best-seen", best, "best-card")}
+        <article class="result-card">
+          <div class="metric-label">Improvement</div>
+          <div class="metric-main ${delta !== null && delta >= 0 ? "good" : ""}">${delta === null ? "waiting" : `${formatNumber(delta)}%`}</div>
+          <div class="kv">
+            <div>口径</div><div>基于 latency，越低越好</div>
+            <div>成功/失败</div><div>${data.rows.filter(isSuccess).length} / ${data.rows.filter((row) => !isSuccess(row)).length}</div>
+            <div>总候选</div><div>${data.rows.length || "waiting"}</div>
+          </div>
+        </article>
+      `;
+      el.sourceNote.textContent = sourceLabel();
     }
 
-    function renderSummary(data) {
-      const cards = [
-        ["Baseline 性能", formatMetrics(data.baseline), statusText(data.baseline)],
-        ["Best-seen 性能", formatMetrics(data.best), statusText(data.best)],
-        ["提升比例", data.improvement === null ? "waiting" : `${formatNumber(data.improvement)}%`, "基于 latency，越低越好"],
-        ["成功 / 失败", `${data.rows.filter(isSuccess).length} / ${data.rows.filter((row) => !isSuccess(row)).length}`, `${data.rows.length || "waiting"} candidates`],
-      ];
-      el.summaryGrid.innerHTML = cards.map(([label, value, subvalue]) => `
-        <div class="metric">
-          <div class="label">${escapeHtml(label)}</div>
-          <div class="value">${escapeHtml(value)}</div>
-          <div class="subvalue">${escapeHtml(subvalue || "")}</div>
-        </div>
-      `).join("");
-      const source = state.dirHandle
-        ? `数据来源：用户选择的结果目录`
-        : `数据来源：固定目录 ../workspace/results/；如果显示 waiting，请选择结果目录或通过本地静态服务器打开。`;
-      el.sourceNote.textContent = source;
+    function resultCard(title, row, extraClass) {
+      return `
+        <article class="result-card ${extraClass}">
+          <div class="metric-label">${escapeHtml(title)}</div>
+          <div class="metric-main">${displayNumber(row?.latency)} ms</div>
+          <div class="metric-row">
+            <div class="mini"><div class="name">TFLOPS</div><div class="num">${displayNumber(row?.tflops)}</div></div>
+            <div class="mini"><div class="name">Bandwidth</div><div class="num">${displayNumber(row?.bandwidth)}</div></div>
+            <div class="mini"><div class="name">Status</div><div class="num">${statusBadge(row)}</div></div>
+          </div>
+          <div class="kv">
+            <div>Candidate</div><div>${escapeHtml(candidateLabel(row))}</div>
+            <div>Config hash</div><div>${escapeHtml(display(row?.config_hash))}</div>
+          </div>
+        </article>
+      `;
     }
 
     function renderTrend(rows, best) {
       const successful = rows.filter((row) => isSuccess(row));
       if (!successful.length) {
-        el.trendChart.innerHTML = `<div class="empty">waiting: 暂无可绘制的成功候选。</div>`;
+        el.trendChart.innerHTML = `<div class="empty">waiting: 尚无成功候选可绘制。若后端仍在运行，请稍后刷新。</div>`;
         return;
       }
       const metrics = [
         { key: "latency", label: "latency", color: "#2563eb" },
-        { key: "tflops", label: "TFLOPS", color: "#16845b" },
+        { key: "tflops", label: "TFLOPS", color: "#137a53" },
         { key: "bandwidth", label: "bandwidth", color: "#b45309" },
       ];
       const width = 920;
@@ -772,21 +823,22 @@
         const valid = points
           .map((point) => ({ point, value: numeric(point.row[metric.key]) }))
           .filter((item) => item.value !== null);
-        const d = valid.map((item, idx) => `${idx ? "L" : "M"} ${x(item.point.xIndex)} ${y(item.value)}`).join(" ");
-        const circles = valid.map((item) => `
-          <circle cx="${x(item.point.xIndex)}" cy="${y(item.value)}" r="${rowKey(item.point.row) === rowKey(best || {}) ? 5 : 3}" fill="${metric.color}">
-            <title>${escapeHtml(metric.label)} iter ${display(item.point.row.iteration)} cand ${display(item.point.row.candidate_id)}: ${formatNumber(item.value)}</title>
-          </circle>
-        `).join("");
-        return `<path d="${d}" fill="none" stroke="${metric.color}" stroke-width="2.5"></path>${circles}`;
+        const d = valid.map((item, index) => `${index ? "L" : "M"} ${x(item.point.xIndex)} ${y(item.value)}`).join(" ");
+        const dots = valid.map((item) => {
+          const isBest = rowKey(item.point.row) === rowKey(best || {});
+          return `<circle cx="${x(item.point.xIndex)}" cy="${y(item.value)}" r="${isBest ? 5 : 3}" fill="${metric.color}">
+            <title>${escapeHtml(metric.label)} ${candidateLabel(item.point.row)}: ${formatNumber(item.value)}</title>
+          </circle>`;
+        }).join("");
+        return `<path d="${d}" fill="none" stroke="${metric.color}" stroke-width="2.5"></path>${dots}`;
       }).join("");
       const labels = points.map((point) => `
         <text x="${x(point.xIndex)}" y="${height - 18}" text-anchor="middle" font-size="11" fill="#667085">${escapeHtml(`${display(point.row.iteration)}/${display(point.row.candidate_id)}`)}</text>
       `).join("");
       el.trendChart.innerHTML = `
         <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="latency TFLOPS bandwidth trends">
-          <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" stroke="#d9e0ea"></line>
-          <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" stroke="#d9e0ea"></line>
+          <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" stroke="#d8e0ea"></line>
+          <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" stroke="#d8e0ea"></line>
           <text x="10" y="${pad.top + 8}" font-size="11" fill="#667085">${formatNumber(maxY)}</text>
           <text x="10" y="${height - pad.bottom}" font-size="11" fill="#667085">${formatNumber(minY)}</text>
           ${series}
@@ -799,26 +851,25 @@
     }
 
     function renderBestConfig(best) {
-      if (!best) {
-        el.bestConfig.textContent = "waiting";
-        return;
-      }
-      el.bestConfig.textContent = JSON.stringify(redactObject(best.config || {}), null, 2) || "waiting";
+      el.bestIdentity.textContent = best ? candidateLabel(best) : "waiting";
+      el.bestConfig.textContent = best ? JSON.stringify(redactObject(best.config || {}), null, 2) : "waiting: 尚无可用 best-seen config";
     }
 
     function renderCandidates(rows, best) {
+      el.trialCount.textContent = rows.length ? `${rows.length} candidates` : "waiting";
       if (!rows.length) {
-        el.candidateTable.innerHTML = `<div class="empty">waiting: 尚无候选结果。</div>`;
+        el.candidateTable.innerHTML = `<div class="empty">waiting: 还没有候选记录。支持后端运行中状态，文件出现后点击刷新即可。</div>`;
         return;
       }
       const headers = ["iteration", "candidate_id", "status", "latency", "tflops", "bandwidth", "objective_value", "config_hash", "config"];
       el.candidateTable.innerHTML = `
         <table>
-          <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+          <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}<th>best</th></tr></thead>
           <tbody>
             ${rows.map((row) => `
-              <tr class="${rowKey(row) === rowKey(best || {}) ? "best" : ""}">
-                ${headers.map((header) => `<td>${cell(row, header)}</td>`).join("")}
+              <tr class="${rowKey(row) === rowKey(best || {}) ? "best-row" : ""}">
+                ${headers.map((header) => `<td class="${header === "config" ? "config-cell" : ""}">${cell(row, header)}</td>`).join("")}
+                <td>${rowKey(row) === rowKey(best || {}) ? `<span class="badge best">best-seen</span>` : ""}</td>
               </tr>
             `).join("")}
           </tbody>
@@ -827,29 +878,26 @@
     }
 
     function renderFailedCases(failed) {
+      el.failedCount.textContent = failed.length ? `${failed.length} failed` : "0 failed";
       if (!failed.length) {
-        el.failedCases.innerHTML = `<div class="empty">暂无失败案例，或 failed_cases.jsonl 仍在 waiting。</div>`;
+        el.failedCases.innerHTML = `<div class="empty">暂无失败案例。若 failed_cases.jsonl 缺失，会在顶部显示 waiting。</div>`;
         return;
       }
       el.failedCases.innerHTML = `
         <div class="chips">
-          ${failed.slice(0, 12).map((item) => `
-            <span class="chip">
-              iter ${escapeHtml(display(item.iteration))} cand ${escapeHtml(display(item.candidate_id))}: ${escapeHtml(display(valueAt(item, ["error", "category"]) || item.status))}
-            </span>
-          `).join("")}
+          ${failed.slice(0, 8).map((item) => `<span class="chip">${escapeHtml(candidateLabel(item))}: ${escapeHtml(display(valueAt(item, ["error", "category"]) || item.status))}</span>`).join("")}
         </div>
-        <div class="table-wrap" style="margin-top:12px">
+        <div class="table-wrap">
           <table>
-            <thead><tr><th>iteration</th><th>candidate</th><th>status</th><th>reason</th><th>max_error</th></tr></thead>
+            <thead><tr><th>candidate</th><th>status</th><th>reason</th><th>max_error</th><th>patch</th></tr></thead>
             <tbody>
               ${failed.map((item) => `
                 <tr>
-                  <td>${escapeHtml(display(item.iteration))}</td>
-                  <td>${escapeHtml(display(item.candidate_id))}</td>
+                  <td>${escapeHtml(candidateLabel(item))}</td>
                   <td>${statusBadge(item)}</td>
                   <td>${escapeHtml(display(valueAt(item, ["error", "message"]) || valueAt(item, ["correctness", "reason"])))}</td>
                   <td>${escapeHtml(display(valueAt(item, ["correctness", "max_error"])))}</td>
+                  <td><div class="path" title="${escapeHtml(display(valueAt(item, ["paths", "patch"])))}">${escapeHtml(display(valueAt(item, ["paths", "patch"])))}</div></td>
                 </tr>
               `).join("")}
             </tbody>
@@ -859,20 +907,20 @@
     }
 
     function renderPaths(rows) {
-      const withPaths = rows.filter((row) => row.patch_path || row.stdout || row.stderr || row.kernel_path);
+      const withPaths = rows.filter((row) => row.kernel_path || row.patch_path || row.stdout || row.stderr);
       if (!withPaths.length) {
-        el.pathsTable.innerHTML = `<div class="empty">waiting: 暂无日志或 patch 路径。</div>`;
+        el.pathsTable.innerHTML = `<div class="empty">waiting: 暂无 log/patch 路径。路径缺失时不会尝试读取文件内容。</div>`;
         return;
       }
-      const pathFields = ["kernel_path", "patch_path", "stdout", "stderr"];
+      const fields = ["kernel_path", "patch_path", "stdout", "stderr"];
       el.pathsTable.innerHTML = `
         <table>
-          <thead><tr><th>candidate</th>${pathFields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr></thead>
+          <thead><tr><th>candidate</th>${fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr></thead>
           <tbody>
             ${withPaths.map((row) => `
               <tr>
-                <td>${escapeHtml(`${display(row.iteration)}/${display(row.candidate_id)}`)}</td>
-                ${pathFields.map((field) => `<td><div class="path" title="${escapeHtml(display(row[field]))}">${escapeHtml(display(row[field]))}</div></td>`).join("")}
+                <td>${escapeHtml(candidateLabel(row))}</td>
+                ${fields.map((field) => `<td><div class="path" title="${escapeHtml(display(row[field]))}">${escapeHtml(display(row[field]))}</div></td>`).join("")}
               </tr>
             `).join("")}
           </tbody>
@@ -883,32 +931,38 @@
     function cell(row, header) {
       if (header === "status") return statusBadge(row);
       if (header === "config") return `<code>${escapeHtml(JSON.stringify(redactObject(row.config || {})))}</code>`;
-      const value = row[header];
-      return escapeHtml(display(value));
+      return escapeHtml(display(row[header]));
     }
 
     function statusBadge(row) {
       const text = display(row?.status);
       const kind = isSuccess(row) ? "ok" : (text === "waiting" ? "warn" : "bad");
-      return `<span class="status ${kind}">${escapeHtml(text)}</span>`;
-    }
-
-    function statusText(row) {
-      return row ? display(row.status) : "waiting";
-    }
-
-    function formatMetrics(row) {
-      if (!row) return "waiting";
-      return [
-        ["lat", row.latency],
-        ["TF", row.tflops],
-        ["BW", row.bandwidth],
-      ].map(([label, value]) => `${label} ${displayNumber(value)}`).join(" / ");
+      return `<span class="badge ${kind}">${escapeHtml(text)}</span>`;
     }
 
     function isSuccess(row) {
       const status = String(row?.status || "").toLowerCase();
       return status.includes("ok") || status === "success" || status === "pass" || valueAt(row, ["correctness", "passed"]) === true;
+    }
+
+    function rowKey(row) {
+      return `${row?.iteration ?? "?"}:${row?.candidate_id ?? "?"}`;
+    }
+
+    function compareRows(a, b) {
+      return Number(a.iteration ?? 0) - Number(b.iteration ?? 0)
+        || Number(a.candidate_id ?? 0) - Number(b.candidate_id ?? 0);
+    }
+
+    function candidateLabel(row) {
+      if (!row) return "waiting";
+      return `iter ${display(row.iteration)} / cand ${display(row.candidate_id)}`;
+    }
+
+    function sourceLabel() {
+      const mode = state.dirHandle ? "用户选择的结果目录" : "固定目录 ../workspace/results/";
+      const time = state.lastLoadedAt ? state.lastLoadedAt.toLocaleTimeString() : "waiting";
+      return `${mode}，最后刷新 ${time}`;
     }
 
     function numeric(value) {
@@ -938,7 +992,14 @@
       return path.reduce((current, part) => current && current[part], object);
     }
 
-    function pushWarning(message) {
+    function addAlert(kind, text) {
+      const item = document.createElement("div");
+      item.className = `alert ${kind}`;
+      item.textContent = text;
+      el.alerts.appendChild(item);
+    }
+
+    function addOneShotWarning(message) {
       if (!state.warnings.includes(message)) state.warnings.push(message);
     }
 
