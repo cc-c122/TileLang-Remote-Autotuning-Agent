@@ -584,7 +584,8 @@
       const rows = mergeRows(experiments, allResults.rows, summary.rows);
       const baseline = findBaseline(rows, experiments);
       const best = findBest(rows, experiments, baseline);
-      return { experiments, failed, summary, allResults, rows, baseline, best, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "" };
+      const runId = pick(baseline?.run_id, best?.run_id, rows.find((row) => row.run_id)?.run_id, experiments.find((row) => row.run_id)?.run_id);
+      return { experiments, failed, summary, allResults, rows, baseline, best, runId, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "" };
     }
 
     function parseJsonl(name) {
@@ -753,6 +754,7 @@
           <div class="metric-main ${delta !== null && delta >= 0 ? "good" : ""}">${delta === null ? "waiting" : `${formatNumber(delta)}%`}</div>
           <div class="kv">
             <div>口径</div><div>基于 latency，越低越好</div>
+            <div>Run ID</div><div>${escapeHtml(display(data.runId))}</div>
             <div>成功/失败</div><div>${data.rows.filter(isSuccess).length} / ${data.rows.filter((row) => !isSuccess(row)).length}</div>
             <div>总候选</div><div>${data.rows.length || "waiting"}</div>
           </div>
