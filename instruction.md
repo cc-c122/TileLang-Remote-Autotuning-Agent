@@ -893,3 +893,420 @@ run_id,iteration,candidate_id,status,latency,tflops,bandwidth,objective_value,co
 5. 最后补 README、示例 config、mock sample 和 profiler 预留接口。
 
 第一版应该优先保证安全、可复现和失败隔离。性能搜索策略可以朴素，但记录必须完整，结果必须能复查。
+
+## 19. V1 追加架构决策：Hardware Auto Detection and Safe Probing
+
+算子优化与目标硬件强相关。V1 不要求用户必须完整填写 GPU 硬件参数，但系统必须支持硬件自动探测，并在探测失败时使用内置硬件 profile、文档缓存和安全试探补充信息。所有硬件字段都必须记录来源和置信度；无法确认的字段必须保持 `null` 或 `unknown`，不得为了搜索顺畅而伪造参数。
+
+本章节是 V1 的追加架构决策。后续后端线程和前端线程应按本章节更新实现、报告和结果查看器。
+
+### 19.1 目标
+
+用户只需要声明目标硬件名称和远程环境。Agent 优先自动探测硬件能力；探测不到时查内置 profile 或官方文档缓存；仍无法确认时执行安全 probe；最终根据已知约束和 probe 结果进入正常搜索或保守搜索。
+
+目标不是在 V1 准确复刻完整 GPU 规格表，而是：
+
+1. 给搜索策略提供基本安全边界。
+2. 避免 LLM 或规则搜索基于未知硬件参数过度激进。
+3. 在报告中清楚说明哪些字段可信、哪些字段未知。
+4. 让后续支持不同 backend 时有稳定接口。
+
+### 19.2 配置新增字段
+
+`config.yaml` 新增可选 `hardware` 与 `hardware_detection` 字段：
+
+```yaml
+hardware:
+  target_name: metax-c500
+  backend: mxmaca
+  profile: metax_c500
+  allow_doc_lookup: false
+  doc_paths: []
+  fields:
+    total_memory_GB: null
+    available_memory_GB: null
+    warp_size: null
+    wave_size: null
+    max_threads_per_block: null
+    shared_memory_per_block_bytes: null
+    max_registers_per_thread: null
+    vector_alignment_bytes: null
+    supported_dtypes: []
+
+hardware_detection:
+  enabled: true
+  remote_detection: true
+  builtin_profile: true
+  doc_lookup: false
+  safe_probe: true
+  conservative_unknown_mode: true
+  timeout_seconds: 60
+```
+
+配置要求：
+
+1. `hardware` 字段可选；用户显式填写的字段优先级最高。
+2. `hardware.target_name` 是用户声明的目标硬件名称，可用于选择内置 profile。
+3. `hardware.backend` 可选，常见值包括 `cuda`、`mxmaca`、`generic`、`unknown`。
+4. `hardware.profile` 可选，用于指定 `hardware_profiles/*.yaml`。
+5. `hardware_detection.enabled=false` 时跳过自动探测，但仍应生成 `hardware_detected.yaml`，并标明哪些字段来自 user config、哪些未知。
+6. `hardware_detection.doc_lookup` V1 默认关闭；只有用户显式允许联网或提供文档路径时才能使用。
+7. 所有探测、profile、probe 结果不得覆盖用户显式配置。
+
+### 19.3 硬件信息来源优先级
+
+硬件字段按以下优先级合并：
+
+1. `user_config`：用户在 `config.yaml` 中显式填写的 `hardware` 字段。
+2. `remote_detection`：通过 SSH runner 在远程 workspace 中执行安全探测命令获取。
+3. `builtin_profile`：读取项目内置硬件 profile，例如 `hardware_profiles/metax_c500.yaml`。
+4. `doc_lookup`：用户允许联网时查询官方文档，或读取用户提供的文档缓存。V1 可先实现为 TODO 或手动导入文档缓存。
+5. `safe_probe`：关键字段仍未知时运行小型安全 probe。
+6. `unknown`：仍无法确认的字段保持 `null` 或 `unknown`。
+
+合并规则：
+
+1. 用户显式配置永远覆盖自动探测结果。
+2. 自动探测结果覆盖内置 profile。
+3. 内置 profile 覆盖文档缓存。
+4. 文档缓存覆盖 safe probe。
+5. safe probe 只补充经验性可用/不可用结论，不得声明官方硬件理论上限。
+6. 每个字段必须记录：
+   - `value`
+   - `source`
+   - `confidence`
+   - `notes`
+7. `source` 只能使用 `user_config`、`remote_detection`、`builtin_profile`、`doc_lookup`、`safe_probe`、`unknown`。
+8. `confidence` 建议使用 `high`、`medium`、`low`、`unknown`。
+
+建议统一结构：
+
+```yaml
+fields:
+  total_memory_GB:
+    value: 64
+    source: builtin_profile
+    confidence: medium
+    notes: "from built-in metax_c500 profile"
+  shared_memory_per_block_bytes:
+    value: null
+    source: unknown
+    confidence: unknown
+    notes: "not detected; conservative mode enabled"
+```
+
+### 19.4 新增目录与模块
+
+新增目录：
+
+```text
+hardware/
+  __init__.py
+  detector.py
+  detection_commands.py
+  cuda_detector.py
+  mxmaca_detector.py
+  generic_linux_detector.py
+  profile_loader.py
+  safe_probe.py
+  hardware_info.py
+
+hardware_profiles/
+  metax_c500.yaml
+  unknown_gpu.yaml
+```
+
+模块职责：
+
+1. `hardware/hardware_info.py`：定义硬件字段、来源、置信度和合并后的结构化对象。
+2. `hardware/detector.py`：统一调度 remote detection、profile loading、doc lookup 和 safe probe。
+3. `hardware/detection_commands.py`：维护 backend 探测命令白名单。
+4. `hardware/cuda_detector.py`：CUDA/NVIDIA 环境探测，使用安全只读命令。
+5. `hardware/mxmaca_detector.py`：MetaX/MACA 环境探测，使用安全只读命令。
+6. `hardware/generic_linux_detector.py`：通用 Linux 只读探测。
+7. `hardware/profile_loader.py`：读取和校验 `hardware_profiles/*.yaml`。
+8. `hardware/safe_probe.py`：运行小型安全 probe，并写入 probe 结果。
+
+### 19.5 Remote Detection
+
+`remote_detection` 通过 runner 执行安全探测命令，尝试获取：
+
+1. GPU name
+2. backend
+3. device count
+4. driver/runtime version
+5. total memory
+6. available memory
+7. warp size 或 wave size
+8. max threads per block
+9. shared memory per block
+10. register limit
+11. supported dtype
+12. compiler version
+13. TileLang / mcTileLang version
+
+要求：
+
+1. 探测命令失败不能中断主流程。
+2. 所有失败写入 `workspace/results/hardware_detection.log`。
+3. 合并后的硬件结果写入 `workspace/results/hardware_detected.yaml`。
+4. 不允许伪造探测不到的字段。
+5. 只允许执行白名单内的只读命令。
+6. 探测命令也必须经过 command guard。
+7. 不允许执行安装、卸载、系统修改或长时间压力测试命令。
+8. 不同 backend 可以有不同 detector：
+   - `cuda_detector.py`
+   - `mxmaca_detector.py`
+   - `generic_linux_detector.py`
+
+探测命令示例必须保持只读，例如：
+
+```text
+python -c "import platform; print(platform.platform())"
+python -c "import tilelang; print(tilelang.__version__)"
+```
+
+CUDA/MACA 专用命令必须先由对应 detector 判断是否可用，不可盲目假设环境存在。
+
+### 19.6 内置 Hardware Profile
+
+新增内置 profile：
+
+```text
+hardware_profiles/metax_c500.yaml
+hardware_profiles/unknown_gpu.yaml
+```
+
+`metax_c500.yaml` 示例：
+
+```yaml
+name: "metax-c500"
+backend: "mxmaca"
+source: "builtin_profile"
+
+warp_size: null
+wave_size: null
+max_threads_per_block: null
+shared_memory_per_block_bytes: null
+max_registers_per_thread: null
+
+total_memory_GB: 64
+vector_alignment_bytes: 16
+
+mma:
+  enabled: true
+  supported_dtypes: ["float16", "bfloat16"]
+  preferred_m_tile: 16
+  preferred_n_tile: 16
+  preferred_k_tile: 32
+```
+
+Profile 规则：
+
+1. 如果某些参数没有可靠公开来源，必须保持 `null`。
+2. 不允许为了让搜索更顺畅而随便填数。
+3. 每个 profile 需要有 `source: builtin_profile`。
+4. report.md 需要标明哪些字段来自 builtin profile，哪些字段仍未知。
+5. `unknown_gpu.yaml` 应提供最保守默认行为，不能包含虚构硬件上限。
+
+### 19.7 Doc Lookup
+
+`doc_lookup` V1 可以先实现为 TODO 或手动导入文档缓存。
+
+规则：
+
+1. 默认不联网。
+2. 只有 `hardware.allow_doc_lookup=true` 或 `hardware_detection.doc_lookup=true` 时才能联网查官方文档。
+3. 联网查文档必须优先使用官方来源。
+4. 如果用户提供 `hardware.doc_paths`，应优先读取本地文档缓存。
+5. 文档解析结果必须标记 `source=doc_lookup`。
+6. 文档中没有明确写出的字段仍保持 `null`。
+
+### 19.8 Safe Probing
+
+如果 `shared_memory_per_block_bytes`、`max_threads_per_block`、`vector_alignment_bytes`、`NUM_STAGES` 相关约束等关键字段未知，V1 可以运行安全试探。
+
+新增模块：
+
+```text
+hardware/safe_probe.py
+```
+
+支持 probe：
+
+1. `threads_probe`：测试 `NUM_THREADS` 候选是否能编译/运行，只测试 `search_space` 中出现的 `NUM_THREADS`。
+2. `shared_memory_probe`：用小 kernel 申请不同大小 shared memory，候选为 32KB、48KB、64KB、96KB、128KB，从小到大测试，失败后停止继续增大。
+3. `vector_width_probe`：测试 `VECTOR_WIDTH` 候选是否能编译/运行，只测试 `search_space` 中出现的值。
+4. `stages_probe`：测试 `NUM_STAGES` 候选是否导致明显 shared memory 编译失败。
+
+Safe probe 要求：
+
+1. probe 必须使用小 kernel，不允许使用完整 workload。
+2. 每个 probe 必须设置 timeout。
+3. probe 失败不能中断主流程。
+4. probe 结果写入 `workspace/results/hardware_probe.jsonl`。
+5. probe 只能推断“某配置可能可用/不可用”，不能声明完整硬件理论上限。
+6. probe 不允许覆盖用户显式配置。
+7. probe 结论必须标记 `source=safe_probe`。
+8. probe 结论必须带 `confidence=low` 或 `confidence=medium`。
+9. probe 命令必须经过 command guard。
+10. probe 不得执行压力测试、系统修改、安装卸载或长时间占用 GPU 的命令。
+
+`hardware_probe.jsonl` 建议结构：
+
+```json
+{
+  "probe_name": "threads_probe",
+  "candidate": {"NUM_THREADS": 256},
+  "status": "probe_ok",
+  "inference": "possibly_available",
+  "source": "safe_probe",
+  "confidence": "medium",
+  "duration_seconds": 1.23,
+  "stdout_path": "workspace/results/logs/probe_threads_256.stdout.log",
+  "stderr_path": "workspace/results/logs/probe_threads_256.stderr.log",
+  "notes": "small probe compiled and ran"
+}
+```
+
+### 19.9 Conservative Unknown Mode
+
+如果关键硬件字段仍未知，系统进入 conservative unknown mode。
+
+触发条件示例：
+
+1. `max_threads_per_block` 未知。
+2. `shared_memory_per_block_bytes` 未知。
+3. `vector_alignment_bytes` 未知。
+4. backend 未知。
+5. safe probe 不可用或结果不足。
+
+保守规则：
+
+1. 只运行 `search_space` 中较保守的配置。
+2. 优先 `NUM_THREADS=128` 或 `256`。
+3. 优先 `NUM_STAGES=2` 或 `3`。
+4. 避免最大 `BM/BN/BK` 组合。
+5. `USE_DOUBLE_BUFFER=True` 时优先小 tile。
+6. 避免同时使用最大 tile、最大 stages、最大 threads 的组合。
+7. 不做强结论，只输出低置信度建议。
+8. report.md 必须说明硬件参数不完整，当前搜索结果可能不是最优。
+
+Optimizer Policy 更新要求：
+
+1. policy 输入应包含 `hardware_info` 和 `conservative_mode`。
+2. grid/random/rule-based/LLM-guided/hybrid 都必须尊重硬件约束和 probe 判定。
+3. 已被 probe 判定为明显不可用的参数组合不得继续推荐，除非用户显式覆盖。
+4. 如果硬件信息不足，rule-based fallback 应优先保守配置。
+5. 所有被 conservative mode 过滤的候选应记录原因，方便复查。
+
+### 19.10 Report 增强
+
+`report.md` 新增 `Hardware Detection` 部分，必须包含：
+
+1. 用户声明的硬件名称。
+2. 自动探测到的硬件信息。
+3. 内置 profile 使用情况。
+4. doc lookup 使用情况。
+5. safe probe 结果摘要。
+6. unknown 字段列表。
+7. conservative mode 是否启用。
+8. 每个硬件字段的 `source` 和 `confidence`。
+9. 如果硬件参数不完整，需要明确说明当前搜索结果可能不是最优。
+
+最终结果目录新增：
+
+```text
+workspace/results/hardware_detected.yaml
+workspace/results/hardware_detection.log
+workspace/results/hardware_probe.jsonl
+```
+
+前端结果查看器后续应读取并展示：
+
+1. 硬件名称与 backend。
+2. 字段来源分布。
+3. unknown 字段数量。
+4. safe probe 摘要。
+5. conservative mode 状态。
+
+### 19.11 LLM 约束
+
+LLM 可以读取 hardware detection 结果，但必须遵守：
+
+1. 不允许伪造未知硬件参数。
+2. 不允许把 safe probe 的结果说成官方硬件上限。
+3. 不允许推荐被 probe 判定为明显不可用的参数。
+4. 如果硬件信息不足，必须降低诊断置信度。
+5. LLM 推荐参数仍必须来自 `search_space`。
+6. LLM 输出 JSON schema 应增加可选字段 `hardware_assumptions` 和 `confidence`。
+7. `hardware_assumptions` 只能引用已知字段或明确写 `unknown`，不能补造数字。
+
+LLM 输出示例：
+
+```json
+{
+  "candidates": [
+    {
+      "config": {
+        "BM": 32,
+        "BN": 64,
+        "BK": 32,
+        "NUM_THREADS": 128,
+        "NUM_STAGES": 2,
+        "VECTOR_WIDTH": 2,
+        "UNROLL_FACTOR": 1,
+        "USE_SHARED": true,
+        "USE_DOUBLE_BUFFER": false
+      },
+      "hypothesis": "Use a conservative tile because shared memory per block is unknown.",
+      "expected_improvement": "May improve reuse while avoiding high shared-memory pressure.",
+      "risk": "Hardware limits are incomplete; confidence is low.",
+      "hardware_assumptions": {
+        "shared_memory_per_block_bytes": "unknown",
+        "max_threads_per_block": "unknown"
+      },
+      "confidence": "low"
+    }
+  ]
+}
+```
+
+### 19.12 验收标准追加
+
+后端新增验收标准：
+
+1. `hardware_detected.yaml` 能生成。
+2. 探测失败不终止主流程。
+3. 探测失败写入 `hardware_detection.log`。
+4. 内置 `metax_c500.yaml` 和 `unknown_gpu.yaml` 可加载。
+5. 用户配置字段覆盖自动探测和 profile。
+6. safe probe 失败不终止主流程。
+7. `hardware_probe.jsonl` 能记录 probe 结果。
+8. conservative mode 能在硬件字段不足时启用。
+9. optimizer policy 能基于 conservative mode 过滤明显激进候选。
+10. report.md 包含 Hardware Detection 部分。
+
+前端新增验收标准：
+
+1. 能展示 `hardware_detected.yaml` 的核心字段。
+2. 能展示字段 source/confidence。
+3. 能展示 unknown 字段列表。
+4. 能展示 safe probe 摘要。
+5. 能展示 conservative mode 是否启用。
+6. 文件缺失时显示 waiting，不崩溃。
+
+### 19.13 建议实现优先级
+
+建议后续线程按以下顺序实现：
+
+1. 新增 `hardware_info.py` 数据结构和 `hardware_profiles/unknown_gpu.yaml`。
+2. 新增 `profile_loader.py`，先让 builtin profile 可加载和合并。
+3. 新增 `detector.py`，生成 `hardware_detected.yaml`，即使探测全失败也能输出 unknown 字段。
+4. 接入 runner 的 remote detection，只使用安全只读命令。
+5. 增加 `metax_c500.yaml`，未知字段保持 `null`。
+6. 将 `hardware_info` 传入 optimizer policy，先实现 conservative mode。
+7. 增加 safe probe 框架和 JSONL 记录，probe kernel 可以先 mock 或最小实现。
+8. 增强 report writer，加入 Hardware Detection 部分。
+9. 增强前端 viewer，展示硬件信息与 unknown 字段。
+10. 最后更新 LLM prompt/schema，使 LLM 读取硬件信息但不伪造未知参数。
