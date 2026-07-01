@@ -19,3 +19,4 @@ kernel_opt_agent/workspace/tmp_*.yaml
 *.log
 .env
 config.yaml
+ssh.config.yaml

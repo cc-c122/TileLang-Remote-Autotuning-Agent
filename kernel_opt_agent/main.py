@@ -67,6 +67,16 @@ def command_failure_status(result: CommandResult, prefix: str) -> str:
     return f"{prefix}_failed"
 
 
+def runner_exception_category(config: AppConfig, message: str) -> str:
+    lowered = message.lower()
+    if config.runner.type == "ssh":
+        if any(token in lowered for token in ("timed out", "connection", "authentication", "unable to connect")):
+            return "ssh_connection_failed"
+        if "sftp" in lowered or "upload" in lowered:
+            return "sftp_upload_failed"
+    return "runner_exception"
+
+
 def run_trial(
     config: AppConfig,
     db: ExperimentDB,
@@ -138,8 +148,8 @@ def run_trial(
                     status = "benchmark_ok"
                     objective["value"] = metrics_data.get(config.search.objective)
     except Exception as exc:
-        status = "runner_exception"
-        error = {"category": "runner_exception", "message": str(exc)}
+        status = runner_exception_category(config, str(exc))
+        error = {"category": status, "message": str(exc)}
         stderr_all.append(str(exc))
     finally:
         if isinstance(runner, SSHRunner):
