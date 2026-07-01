@@ -137,14 +137,9 @@
       box-shadow: var(--shadow);
     }
 
-    .howto p, .howto li {
+    .howto p {
       color: var(--muted);
       font-size: 13px;
-    }
-
-    .howto ul {
-      margin: 6px 0 0;
-      padding-left: 18px;
     }
 
     .alerts {
@@ -500,27 +495,12 @@
   </main>
 
   <script>
-    const REQUIRED_FILES = [
-      "report.md",
-      "summary.csv",
-      "experiments.jsonl",
-      "failed_cases.jsonl",
-      "all_results.csv",
-    ];
-
+    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv"];
     const FIXED_RESULT_DIR = "../workspace/results/";
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
-    const state = {
-      dirHandle: null,
-      files: new Map(),
-      warnings: [],
-      missing: [],
-      loading: false,
-      lastLoadedAt: null,
-    };
-
+    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null };
     const el = {
       alerts: document.getElementById("alerts"),
       compareGrid: document.getElementById("compareGrid"),
@@ -540,7 +520,6 @@
 
     el.chooseDirBtn.addEventListener("click", chooseDirectory);
     el.reloadBtn.addEventListener("click", loadAndRender);
-
     loadAndRender();
 
     async function chooseDirectory() {
@@ -558,8 +537,7 @@
       resetReadState();
       await readFiles();
       state.lastLoadedAt = new Date();
-      const parsed = parseFiles();
-      render(parsed);
+      render(parseFiles());
       setLoading(false);
     }
 
@@ -589,8 +567,7 @@
 
     async function readFromPickedDirectory(name) {
       const handle = await state.dirHandle.getFileHandle(name);
-      const file = await handle.getFile();
-      return await file.text();
+      return await (await handle.getFile()).text();
     }
 
     async function readFromFixedDirectory(name) {
@@ -607,18 +584,7 @@
       const rows = mergeRows(experiments, allResults.rows, summary.rows);
       const baseline = findBaseline(rows, experiments);
       const best = findBest(rows, experiments, baseline);
-      const improvement = computeImprovement(baseline, best);
-      return {
-        experiments,
-        failed,
-        summary,
-        allResults,
-        rows,
-        baseline,
-        best,
-        improvement,
-        report: state.files.get("report.md") || "",
-      };
+      return { experiments, failed, summary, allResults, rows, baseline, best, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "" };
     }
 
     function parseJsonl(name) {
@@ -644,11 +610,8 @@
         addOneShotWarning(`${name} 没有可用表头，相关区域会显示 waiting。`);
         return parsed;
       }
-      const required = ["iteration", "candidate_id", "status"];
-      const missing = required.filter((field) => !parsed.headers.includes(field));
-      if (missing.length) {
-        addOneShotWarning(`${name} 缺少字段 ${missing.join(", ")}，表格会尽量展示已有字段。`);
-      }
+      const missing = ["iteration", "candidate_id", "status"].filter((field) => !parsed.headers.includes(field));
+      if (missing.length) addOneShotWarning(`${name} 缺少字段 ${missing.join(", ")}，表格会尽量展示已有字段。`);
       return parsed;
     }
 
@@ -688,16 +651,14 @@
         rawRows.push(row);
       }
       const headers = (rawRows.shift() || []).map((header) => header.trim()).filter(Boolean);
-      const rows = rawRows
-        .filter((items) => items.some((item) => item.trim()))
-        .map((items) => {
+      return {
+        headers,
+        rows: rawRows.filter((items) => items.some((item) => item.trim())).map((items) => {
           const record = {};
-          headers.forEach((header, index) => {
-            record[header] = sanitizeText(items[index] || "");
-          });
+          headers.forEach((header, index) => { record[header] = sanitizeText(items[index] || ""); });
           return record;
-        });
-      return { headers, rows };
+        }),
+      };
     }
 
     function mergeRows(experiments, allRows, summaryRows) {
@@ -716,29 +677,27 @@
     function normalizeExperiment(exp, existing) {
       return {
         ...existing,
-        run_id: exp.run_id ?? existing.run_id,
-        iteration: exp.iteration ?? existing.iteration,
-        candidate_id: exp.candidate_id ?? existing.candidate_id,
-        status: exp.status ?? existing.status,
-        latency: valueAt(exp, ["metrics", "latency"]) ?? existing.latency,
-        tflops: valueAt(exp, ["metrics", "tflops"]) ?? existing.tflops,
-        bandwidth: valueAt(exp, ["metrics", "bandwidth"]) ?? existing.bandwidth,
-        objective_value: valueAt(exp, ["objective", "value"]) ?? existing.objective_value,
-        config_hash: exp.config_hash ?? existing.config_hash,
-        config: exp.config ?? existing.config,
-        kernel_path: valueAt(exp, ["paths", "kernel"]) ?? existing.kernel_path,
-        patch_path: valueAt(exp, ["paths", "patch"]) ?? existing.patch_path,
-        stdout: valueAt(exp, ["paths", "stdout"]) ?? existing.stdout,
-        stderr: valueAt(exp, ["paths", "stderr"]) ?? existing.stderr,
-        error: exp.error ?? existing.error,
-        correctness: exp.correctness ?? existing.correctness,
+        run_id: pick(exp.run_id, existing.run_id),
+        iteration: pick(exp.iteration, existing.iteration),
+        candidate_id: pick(exp.candidate_id, exp.candidate, existing.candidate_id),
+        status: pick(exp.status, existing.status),
+        latency: pick(metricValue(exp, "latency"), exp.latency, exp.latency_ms, existing.latency),
+        tflops: pick(metricValue(exp, "tflops"), exp.tflops, existing.tflops),
+        bandwidth: pick(metricValue(exp, "bandwidth"), exp.bandwidth, existing.bandwidth),
+        objective_value: pick(valueAt(exp, ["objective", "value"]), exp.objective_value, existing.objective_value),
+        config_hash: pick(exp.config_hash, existing.config_hash),
+        config: pick(exp.config, existing.config),
+        kernel_path: pickPath(exp, existing, "kernel"),
+        patch_path: pickPath(exp, existing, "patch"),
+        stdout: pickPath(exp, existing, "stdout"),
+        stderr: pickPath(exp, existing, "stderr"),
+        error: pick(exp.error, existing.error),
+        correctness: pick(exp.correctness, existing.correctness),
       };
     }
 
     function findBaseline(rows, experiments) {
-      return rows.find((row) => String(row.iteration) === "0" && String(row.candidate_id) === "0")
-        || normalizeExperiment(experiments[0] || {}, {})
-        || null;
+      return rows.find((row) => String(row.iteration) === "0" && String(row.candidate_id) === "0") || normalizeExperiment(experiments[0] || {}, {}) || null;
     }
 
     function findBest(rows, experiments, baseline) {
@@ -781,18 +740,14 @@
         addAlert("warn", `后端结果文件仍在 waiting：<ul class="waiting-list">${list}</ul>后端没跑完或结果目录选错时会出现这个状态。`);
       }
       for (const warning of state.warnings) addAlert("warn", escapeHtml(warning));
-      if (!state.missing.length && !state.warnings.length) {
-        addAlert("ok", "已读取本地结果文件。页面没有 HTTP API 调用，也不会触发后端命令执行。");
-      }
+      if (!state.missing.length && !state.warnings.length) addAlert("ok", "已读取本地结果文件。页面没有 HTTP API 调用，也不会触发后端命令执行。");
     }
 
     function renderCompare(data) {
-      const baseline = data.baseline;
-      const best = data.best;
       const delta = data.improvement;
       el.compareGrid.innerHTML = `
-        ${resultCard("Baseline", baseline, "")}
-        ${resultCard("Best-seen", best, "best-card")}
+        ${resultCard("Baseline", data.baseline, "")}
+        ${resultCard("Best-seen", data.best, "best-card")}
         <article class="result-card">
           <div class="metric-label">Improvement</div>
           <div class="metric-main ${delta !== null && delta >= 0 ? "good" : ""}">${delta === null ? "waiting" : `${formatNumber(delta)}%`}</div>
@@ -801,27 +756,24 @@
             <div>成功/失败</div><div>${data.rows.filter(isSuccess).length} / ${data.rows.filter((row) => !isSuccess(row)).length}</div>
             <div>总候选</div><div>${data.rows.length || "waiting"}</div>
           </div>
-        </article>
-      `;
+        </article>`;
       el.sourceNote.textContent = sourceLabel();
     }
 
     function resultCard(title, row, extraClass) {
-      return `
-        <article class="result-card ${extraClass}">
-          <div class="metric-label">${escapeHtml(title)}</div>
-          <div class="metric-main">${displayNumber(row?.latency)} ms</div>
-          <div class="metric-row">
-            <div class="mini"><div class="name">TFLOPS</div><div class="num">${displayNumber(row?.tflops)}</div></div>
-            <div class="mini"><div class="name">Bandwidth</div><div class="num">${displayNumber(row?.bandwidth)}</div></div>
-            <div class="mini"><div class="name">Status</div><div class="num">${statusBadge(row)}</div></div>
-          </div>
-          <div class="kv">
-            <div>Candidate</div><div>${escapeHtml(candidateLabel(row))}</div>
-            <div>Config hash</div><div>${escapeHtml(display(row?.config_hash))}</div>
-          </div>
-        </article>
-      `;
+      return `<article class="result-card ${extraClass}">
+        <div class="metric-label">${escapeHtml(title)}</div>
+        <div class="metric-main">${displayNumber(row?.latency)} ms</div>
+        <div class="metric-row">
+          <div class="mini"><div class="name">TFLOPS</div><div class="num">${displayNumber(row?.tflops)}</div></div>
+          <div class="mini"><div class="name">Bandwidth</div><div class="num">${displayNumber(row?.bandwidth)}</div></div>
+          <div class="mini"><div class="name">Status</div><div class="num">${statusBadge(row)}</div></div>
+        </div>
+        <div class="kv">
+          <div>Candidate</div><div>${escapeHtml(candidateLabel(row))}</div>
+          <div>Config hash</div><div>${escapeHtml(display(row?.config_hash))}</div>
+        </div>
+      </article>`;
     }
 
     function renderTrend(rows, best) {
@@ -846,34 +798,20 @@
       const x = (index) => pad.left + (points.length === 1 ? 0.5 : index / (points.length - 1)) * (width - pad.left - pad.right);
       const y = (value) => pad.top + (1 - ((value - minY) / spanY)) * (height - pad.top - pad.bottom);
       const series = metrics.map((metric) => {
-        const valid = points
-          .map((point) => ({ point, value: numeric(point.row[metric.key]) }))
-          .filter((item) => item.value !== null);
+        const valid = points.map((point) => ({ point, value: numeric(point.row[metric.key]) })).filter((item) => item.value !== null);
         const d = valid.map((item, index) => `${index ? "L" : "M"} ${x(item.point.xIndex)} ${y(item.value)}`).join(" ");
-        const dots = valid.map((item) => {
-          const isBest = rowKey(item.point.row) === rowKey(best || {});
-          return `<circle cx="${x(item.point.xIndex)}" cy="${y(item.value)}" r="${isBest ? 5 : 3}" fill="${metric.color}">
-            <title>${escapeHtml(metric.label)} ${candidateLabel(item.point.row)}: ${formatNumber(item.value)}</title>
-          </circle>`;
-        }).join("");
+        const dots = valid.map((item) => `<circle cx="${x(item.point.xIndex)}" cy="${y(item.value)}" r="${rowKey(item.point.row) === rowKey(best || {}) ? 5 : 3}" fill="${metric.color}"><title>${escapeHtml(metric.label)} ${candidateLabel(item.point.row)}: ${formatNumber(item.value)}</title></circle>`).join("");
         return `<path d="${d}" fill="none" stroke="${metric.color}" stroke-width="2.5"></path>${dots}`;
       }).join("");
-      const labels = points.map((point) => `
-        <text x="${x(point.xIndex)}" y="${height - 18}" text-anchor="middle" font-size="11" fill="#667085">${escapeHtml(`${display(point.row.iteration)}/${display(point.row.candidate_id)}`)}</text>
-      `).join("");
-      el.trendChart.innerHTML = `
-        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="latency TFLOPS bandwidth trends">
-          <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" stroke="#d8e0ea"></line>
-          <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" stroke="#d8e0ea"></line>
-          <text x="10" y="${pad.top + 8}" font-size="11" fill="#667085">${formatNumber(maxY)}</text>
-          <text x="10" y="${height - pad.bottom}" font-size="11" fill="#667085">${formatNumber(minY)}</text>
-          ${series}
-          ${labels}
-        </svg>
-        <div class="legend">
-          ${metrics.map((metric) => `<span class="legend-item"><span class="swatch" style="background:${metric.color}"></span>${escapeHtml(metric.label)}</span>`).join("")}
-        </div>
-      `;
+      const labels = points.map((point) => `<text x="${x(point.xIndex)}" y="${height - 18}" text-anchor="middle" font-size="11" fill="#667085">${escapeHtml(`${display(point.row.iteration)}/${display(point.row.candidate_id)}`)}</text>`).join("");
+      el.trendChart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="latency TFLOPS bandwidth trends">
+        <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" stroke="#d8e0ea"></line>
+        <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" stroke="#d8e0ea"></line>
+        <text x="10" y="${pad.top + 8}" font-size="11" fill="#667085">${formatNumber(maxY)}</text>
+        <text x="10" y="${height - pad.bottom}" font-size="11" fill="#667085">${formatNumber(minY)}</text>
+        ${series}${labels}
+      </svg>
+      <div class="legend">${metrics.map((metric) => `<span class="legend-item"><span class="swatch" style="background:${metric.color}"></span>${escapeHtml(metric.label)}</span>`).join("")}</div>`;
     }
 
     function renderBestConfig(best) {
@@ -888,19 +826,9 @@
         return;
       }
       const headers = ["iteration", "candidate_id", "status", "latency", "tflops", "bandwidth", "objective_value", "config_hash", "config"];
-      el.candidateTable.innerHTML = `
-        <table>
-          <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}<th>best</th></tr></thead>
-          <tbody>
-            ${rows.map((row) => `
-              <tr class="${rowKey(row) === rowKey(best || {}) ? "best-row" : ""}">
-                ${headers.map((header) => `<td class="${header === "config" ? "config-cell" : ""}">${cell(row, header)}</td>`).join("")}
-                <td>${rowKey(row) === rowKey(best || {}) ? `<span class="badge best">best-seen</span>` : ""}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      `;
+      el.candidateTable.innerHTML = `<table><thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}<th>best</th></tr></thead><tbody>
+        ${rows.map((row) => `<tr class="${rowKey(row) === rowKey(best || {}) ? "best-row" : ""}">${headers.map((header) => `<td class="${header === "config" ? "config-cell" : ""}">${cell(row, header)}</td>`).join("")}<td>${rowKey(row) === rowKey(best || {}) ? `<span class="badge best">best-seen</span>` : ""}</td></tr>`).join("")}
+      </tbody></table>`;
     }
 
     function renderFailedCases(failed) {
@@ -909,41 +837,10 @@
         el.failedCases.innerHTML = `<div class="empty">暂无失败案例。若 failed_cases.jsonl 缺失，会在顶部显示 waiting。</div>`;
         return;
       }
-      el.failedCases.innerHTML = `
-        <div class="chips">
-          ${failed.slice(0, 8).map((item) => `<span class="chip">${escapeHtml(candidateLabel(item))}: ${escapeHtml(errorCategory(item))}</span>`).join("")}
-        </div>
-        <div class="table-wrap">
-          <table class="failed-table">
-            <thead>
-              <tr>
-                <th>candidate</th>
-                <th>status</th>
-                <th>error category</th>
-                <th>reason</th>
-                <th>max_error</th>
-                <th>stdout path</th>
-                <th>stderr path</th>
-                <th>patch path</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${failed.map((item) => `
-                <tr>
-                  <td>${escapeHtml(candidateLabel(item))}</td>
-                  <td>${statusBadge(item)}</td>
-                  <td>${escapeHtml(errorCategory(item))}</td>
-                  <td class="reason-cell">${escapeHtml(errorReason(item))}</td>
-                  <td>${escapeHtml(display(valueAt(item, ["correctness", "max_error"])))}</td>
-                  <td><div class="path" title="${escapeHtml(pathValue(item, "stdout"))}">${escapeHtml(pathValue(item, "stdout"))}</div></td>
-                  <td><div class="path" title="${escapeHtml(pathValue(item, "stderr"))}">${escapeHtml(pathValue(item, "stderr"))}</div></td>
-                  <td><div class="path" title="${escapeHtml(pathValue(item, "patch"))}">${escapeHtml(pathValue(item, "patch"))}</div></td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
-        </div>
-      `;
+      el.failedCases.innerHTML = `<div class="chips">${failed.slice(0, 8).map((item) => `<span class="chip">${escapeHtml(candidateLabel(item))}: ${escapeHtml(errorCategory(item))}</span>`).join("")}</div>
+        <div class="table-wrap"><table class="failed-table"><thead><tr><th>candidate</th><th>status</th><th>error category</th><th>reason</th><th>max_error</th><th>stdout path</th><th>stderr path</th><th>patch path</th></tr></thead><tbody>
+          ${failed.map((item) => `<tr><td>${escapeHtml(candidateLabel(item))}</td><td>${statusBadge(item)}</td><td>${escapeHtml(errorCategory(item))}</td><td class="reason-cell">${escapeHtml(errorReason(item))}</td><td>${escapeHtml(display(valueAt(item, ["correctness", "max_error"])))}</td><td><div class="path" title="${escapeHtml(pathValue(item, "stdout"))}">${escapeHtml(pathValue(item, "stdout"))}</div></td><td><div class="path" title="${escapeHtml(pathValue(item, "stderr"))}">${escapeHtml(pathValue(item, "stderr"))}</div></td><td><div class="path" title="${escapeHtml(pathValue(item, "patch"))}">${escapeHtml(pathValue(item, "patch"))}</div></td></tr>`).join("")}
+        </tbody></table></div>`;
     }
 
     function renderPaths(rows) {
@@ -953,19 +850,9 @@
         return;
       }
       const fields = ["kernel_path", "patch_path", "stdout", "stderr"];
-      el.pathsTable.innerHTML = `
-        <table>
-          <thead><tr><th>candidate</th>${fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr></thead>
-          <tbody>
-            ${withPaths.map((row) => `
-              <tr>
-                <td>${escapeHtml(candidateLabel(row))}</td>
-                ${fields.map((field) => `<td><div class="path" title="${escapeHtml(display(row[field]))}">${escapeHtml(display(row[field]))}</div></td>`).join("")}
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      `;
+      el.pathsTable.innerHTML = `<table><thead><tr><th>candidate</th>${fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr></thead><tbody>
+        ${withPaths.map((row) => `<tr><td>${escapeHtml(candidateLabel(row))}</td>${fields.map((field) => `<td><div class="path" title="${escapeHtml(display(row[field]))}">${escapeHtml(display(row[field]))}</div></td>`).join("")}</tr>`).join("")}
+      </tbody></table>`;
     }
 
     function cell(row, header) {
@@ -981,15 +868,30 @@
     }
 
     function errorCategory(row) {
-      return display(valueAt(row, ["error", "category"]) || row?.status);
+      return display(valueAt(row, ["error", "category"]) || row?.error_category || row?.category || row?.status);
     }
 
     function errorReason(row) {
-      return display(valueAt(row, ["error", "message"]) || valueAt(row, ["correctness", "reason"]) || valueAt(row, ["metrics", "reason"]));
+      return display(valueAt(row, ["error", "message"]) || row?.reason || row?.error_message || valueAt(row, ["correctness", "reason"]) || valueAt(row, ["metrics", "reason"]));
     }
 
     function pathValue(row, key) {
-      return display(valueAt(row, ["paths", key]) || row?.[`${key}_path`] || row?.[key]);
+      if (key === "patch") return display(valueAt(row, ["paths", "patch"]) || row?.patch_path || row?.patch_file || row?.patch);
+      return display(valueAt(row, ["paths", key]) || row?.[`${key}_path`] || row?.[`${key}_file`] || row?.[`log_${key}`] || row?.[key]);
+    }
+
+    function pickPath(exp, existing, key) {
+      if (key === "kernel") return pick(valueAt(exp, ["paths", "kernel"]), exp.kernel_path, exp.kernel, existing.kernel_path);
+      if (key === "patch") return pick(valueAt(exp, ["paths", "patch"]), exp.patch_path, exp.patch_file, exp.patch, existing.patch_path);
+      return pick(valueAt(exp, ["paths", key]), exp[`${key}_path`], exp[`${key}_file`], exp[`log_${key}`], exp[key], existing[key]);
+    }
+
+    function metricValue(row, key) {
+      return valueAt(row, ["metrics", key]) ?? valueAt(row, ["metric", key]);
+    }
+
+    function pick(...values) {
+      return values.find((value) => value !== undefined && value !== null && value !== "");
     }
 
     function isSuccess(row) {
@@ -1002,8 +904,7 @@
     }
 
     function compareRows(a, b) {
-      return Number(a.iteration ?? 0) - Number(b.iteration ?? 0)
-        || Number(a.candidate_id ?? 0) - Number(b.candidate_id ?? 0);
+      return Number(a.iteration ?? 0) - Number(b.iteration ?? 0) || Number(a.candidate_id ?? 0) - Number(b.candidate_id ?? 0);
     }
 
     function candidateLabel(row) {
@@ -1064,22 +965,14 @@
     function redactObject(value, key = "") {
       if (Array.isArray(value)) return value.map((item) => redactObject(item, key));
       if (value && typeof value === "object") {
-        return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
-          childKey,
-          redactObject(childValue, childKey),
-        ]));
+        return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, redactObject(childValue, childKey)]));
       }
       if (SENSITIVE_KEY_RE.test(key)) return "[REDACTED]";
       return typeof value === "string" ? sanitizeText(value) : value;
     }
 
     function escapeHtml(value) {
-      return String(value)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll("\"", "&quot;")
-        .replaceAll("'", "&#39;");
+      return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;").replaceAll("'", "&#39;");
     }
   </script>
 </body>
