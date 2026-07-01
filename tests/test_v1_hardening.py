@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from kernel_opt_agent.config_model import load_config
+from kernel_opt_agent.main import runner_exception_category
 from kernel_opt_agent.agent.optimizer_policy import OptimizerPolicy
 from kernel_opt_agent.kernel.template_manager import TemplateManager
 from kernel_opt_agent.runner.command_guard import validate
@@ -98,6 +100,11 @@ class V1HardeningTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("SSH password authentication is reserved but not implemented", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
+
+    def test_ssh_runner_exception_is_classified(self) -> None:
+        config = load_config(str(ROOT / "kernel_opt_agent" / "config.ssh.example.yaml"))
+        self.assertEqual(runner_exception_category(config, "timed out"), "ssh_connection_failed")
+        self.assertEqual(runner_exception_category(config, "SFTP upload failed"), "sftp_upload_failed")
 
 
 if __name__ == "__main__":
