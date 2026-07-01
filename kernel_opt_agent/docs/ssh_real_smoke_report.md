@@ -10,7 +10,7 @@ SSH real smoke passed against a local Docker SSH container using SSH key authent
 - Port: `2222`
 - User: `smoke`
 - Auth: SSH key auth
-- Key path: local-only temporary key under `E:/ssh-smoke-key/`; not committed
+- Key path: local-only temporary key; not committed
 - Remote workspace: `/tmp/kernel_opt_workspace_success_smoke`
 - Runtime: Python `3.11.15` in a disposable Docker container
 
@@ -45,6 +45,7 @@ python main.py --config ssh.config.yaml
 - SSH key auth: passed; Paramiko logged publickey authentication success.
 - SFTP upload: passed; each trial opened and closed an SFTP session successfully.
 - Remote workspace creation: passed; `/tmp/kernel_opt_workspace_success_smoke` existed and was writable.
+- Remote workspace marker protection: passed; `.kernel_opt_agent_workspace` existed after the run and was preserved across trial uploads.
 - Only `kernel.entry_file` rendered: passed; `kernel.py` had concrete values and no template placeholders.
 - Non-entry sample files preserved: passed; remote `correctness.py` and `benchmark.py` SHA256 hashes matched local sample files.
 - correctness/build/benchmark execution directory: passed; stdout logs showed `/tmp/kernel_opt_workspace_success_smoke` before command output.
@@ -82,6 +83,6 @@ No concrete secrets were found. The generated effective config redacts `remote.k
 
 ## Code Changes Motivated By Smoke
 
-The first successful SSH run exposed a stale remote `__pycache__` issue: rapid uploads of same-named Python files could allow a correctness check to import an older `kernel.py`. The minimal fix clears the configured remote workspace via SFTP before uploading each trial. This is bounded by a remote workspace safety check and covered by tests.
+The first successful SSH run exposed a stale remote `__pycache__` issue: rapid uploads of same-named Python files could allow a correctness check to import an older `kernel.py`. The minimal fix clears the configured remote workspace via SFTP before uploading each trial. This is bounded by remote workspace safety checks, system path prefix rejection, and a required `.kernel_opt_agent_workspace` marker file.
 
 The smoke also showed that writing the local key path into `effective_config.yaml` was unnecessary. `safe_config_dict()` now redacts `remote.key_path`.

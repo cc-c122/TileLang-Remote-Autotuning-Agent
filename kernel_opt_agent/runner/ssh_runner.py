@@ -24,6 +24,9 @@ class SSHConnectionInfo:
 
 
 class SSHRunner:
+    MARKER_FILENAME = ".kernel_opt_agent_workspace"
+    SYSTEM_PATH_PREFIXES = ("/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/sbin", "/sys", "/usr", "/var")
+
     def __init__(self, info: SSHConnectionInfo, timeout_seconds: int, denied_commands: list[str] | None = None):
         if info.auth_type == "password":
             raise NotImplementedError("SSH password authentication is configured but not implemented in V1; use auth_type=key")
@@ -53,6 +56,7 @@ class SSHRunner:
         )
         self.sftp = self.client.open_sftp()
         self._mkdir_p(self.info.remote_workspace)
+        self._ensure_workspace_marker(self.info.remote_workspace)
 
     def close(self) -> None:
         if self.sftp:
@@ -73,23 +77,63 @@ class SSHRunner:
 
     def _is_safe_workspace_to_clear(self, remote_path: str) -> bool:
         normalized = posixpath.normpath(remote_path)
-        return normalized.startswith("/") and normalized not in {"/", "/tmp", "/home"} and len(normalized.strip("/").split("/")) >= 2
+        if not normalized.startswith("/"):
+            return False
+        if normalized in {"/", "/tmp", "/home", "/workspace"}:
+            return False
+        if len(normalized.strip("/").split("/")) < 2:
+            return False
+        return not any(normalized == prefix or normalized.startswith(f"{prefix}/") for prefix in self.SYSTEM_PATH_PREFIXES)
+
+    def _marker_path(self, remote_path: str) -> str:
+        return posixpath.join(posixpath.normpath(remote_path), self.MARKER_FILENAME)
+
+    def _has_workspace_marker(self, remote_path: str) -> bool:
+        assert self.sftp is not None
+        try:
+            marker = self.sftp.stat(self._marker_path(remote_path))
+        except OSError:
+            return False
+        return not stat.S_ISDIR(marker.st_mode)
+
+    def _write_workspace_marker(self, remote_path: str) -> None:
+        assert self.sftp is not None
+        marker_path = self._marker_path(remote_path)
+        with self.sftp.open(marker_path, "w") as marker:
+            marker.write("kernel_opt_agent managed workspace\n")
+
+    def _ensure_workspace_marker(self, remote_path: str) -> None:
+        assert self.sftp is not None
+        if not self._is_safe_workspace_to_clear(remote_path):
+            raise RuntimeError(f"refusing unsafe remote workspace: {remote_path}")
+        if self._has_workspace_marker(remote_path):
+            return
+        entries = self.sftp.listdir_attr(remote_path)
+        if entries:
+            raise RuntimeError(f"remote workspace is not marked and is not empty: {remote_path}")
+        self._write_workspace_marker(remote_path)
 
     def _clear_dir_contents(self, remote_path: str) -> None:
         assert self.sftp is not None
         if not self._is_safe_workspace_to_clear(remote_path):
             raise RuntimeError(f"refusing to clear unsafe remote workspace: {remote_path}")
+        if not self._has_workspace_marker(remote_path):
+            raise RuntimeError(f"refusing to clear unmarked remote workspace: {remote_path}")
         try:
             entries = self.sftp.listdir_attr(remote_path)
         except OSError:
             self._mkdir_p(remote_path)
+            self._write_workspace_marker(remote_path)
             return
         for entry in entries:
+            if entry.filename == self.MARKER_FILENAME:
+                continue
             child = posixpath.join(remote_path, entry.filename)
             if stat.S_ISDIR(entry.st_mode):
                 self._remove_dir(child)
             else:
                 self.sftp.remove(child)
+        self._write_workspace_marker(remote_path)
 
     def _remove_dir(self, remote_dir: str) -> None:
         assert self.sftp is not None
