@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import stat
 import subprocess
 import sys
 import tempfile
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from kernel_opt_agent.config_model import load_config
+from kernel_opt_agent.config_model import load_config, safe_config_dict
 from kernel_opt_agent.main import runner_exception_category
 from kernel_opt_agent.agent.optimizer_policy import OptimizerPolicy
 from kernel_opt_agent.kernel.template_manager import TemplateManager
@@ -20,6 +21,50 @@ from kernel_opt_agent.storage.experiment_db import ExperimentDB
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class FakeSFTPAttr:
+    def __init__(self, filename: str, st_mode: int = stat.S_IFREG):
+        self.filename = filename
+        self.st_mode = st_mode
+
+
+class FakeSFTPFile:
+    def __init__(self, files: set[str], path: str):
+        self.files = files
+        self.path = path
+
+    def __enter__(self):
+        self.files.add(self.path)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def write(self, text: str) -> None:
+        self.files.add(self.path)
+
+
+class FakeSFTP:
+    def __init__(self, entries: dict[str, list[FakeSFTPAttr]] | None = None, files: set[str] | None = None):
+        self.entries = entries or {}
+        self.files = files or set()
+        self.removed: list[str] = []
+
+    def listdir_attr(self, remote_path: str):
+        return self.entries.get(remote_path, [])
+
+    def stat(self, remote_path: str):
+        if remote_path not in self.files:
+            raise OSError(remote_path)
+        return FakeSFTPAttr(Path(remote_path).name)
+
+    def open(self, remote_path: str, mode: str):
+        return FakeSFTPFile(self.files, remote_path)
+
+    def remove(self, remote_path: str):
+        self.removed.append(remote_path)
+        self.files.discard(remote_path)
 
 
 class V1HardeningTests(unittest.TestCase):
@@ -105,6 +150,65 @@ class V1HardeningTests(unittest.TestCase):
         config = load_config(str(ROOT / "kernel_opt_agent" / "config.ssh.example.yaml"))
         self.assertEqual(runner_exception_category(config, "timed out"), "ssh_connection_failed")
         self.assertEqual(runner_exception_category(config, "SFTP upload failed"), "sftp_upload_failed")
+
+    def test_safe_config_redacts_ssh_key_path(self) -> None:
+        config = load_config(str(ROOT / "kernel_opt_agent" / "config.ssh.example.yaml"))
+        self.assertEqual(safe_config_dict(config)["remote"]["key_path"], "<redacted:key_path>")
+
+    def test_ssh_workspace_clear_rejects_broad_paths(self) -> None:
+        runner = SSHRunner(
+            SSHConnectionInfo(
+                host="example.invalid",
+                port=22,
+                username="user",
+                auth_type="key",
+                key_path="~/.ssh/id_rsa",
+                password_env=None,
+                remote_workspace="/tmp/kernel-agent",
+            ),
+            timeout_seconds=5,
+        )
+        self.assertFalse(runner._is_safe_workspace_to_clear("/"))
+        self.assertFalse(runner._is_safe_workspace_to_clear("/tmp"))
+        self.assertFalse(runner._is_safe_workspace_to_clear("/usr/local/kernel-agent"))
+        self.assertFalse(runner._is_safe_workspace_to_clear("/etc/kernel-agent"))
+        self.assertFalse(runner._is_safe_workspace_to_clear("/var/tmp/kernel-agent"))
+        self.assertTrue(runner._is_safe_workspace_to_clear("/tmp/kernel-agent"))
+
+    def test_ssh_workspace_marker_initializes_empty_workspace(self) -> None:
+        runner = SSHRunner(
+            SSHConnectionInfo("example.invalid", 22, "user", "key", "~/.ssh/id_rsa", None, "/tmp/kernel-agent"),
+            timeout_seconds=5,
+        )
+        fake = FakeSFTP(entries={"/tmp/kernel-agent": []})
+        runner.sftp = fake
+        runner._ensure_workspace_marker("/tmp/kernel-agent")
+        self.assertIn("/tmp/kernel-agent/.kernel_opt_agent_workspace", fake.files)
+
+    def test_ssh_workspace_marker_rejects_nonempty_unmarked_workspace(self) -> None:
+        runner = SSHRunner(
+            SSHConnectionInfo("example.invalid", 22, "user", "key", "~/.ssh/id_rsa", None, "/tmp/kernel-agent"),
+            timeout_seconds=5,
+        )
+        runner.sftp = FakeSFTP(entries={"/tmp/kernel-agent": [FakeSFTPAttr("user_file.py")]})
+        with self.assertRaisesRegex(RuntimeError, "not marked"):
+            runner._ensure_workspace_marker("/tmp/kernel-agent")
+
+    def test_ssh_workspace_clear_requires_marker_and_preserves_it(self) -> None:
+        runner = SSHRunner(
+            SSHConnectionInfo("example.invalid", 22, "user", "key", "~/.ssh/id_rsa", None, "/tmp/kernel-agent"),
+            timeout_seconds=5,
+        )
+        marker = "/tmp/kernel-agent/.kernel_opt_agent_workspace"
+        old_file = "/tmp/kernel-agent/old.py"
+        fake = FakeSFTP(
+            entries={"/tmp/kernel-agent": [FakeSFTPAttr(".kernel_opt_agent_workspace"), FakeSFTPAttr("old.py")]},
+            files={marker, old_file},
+        )
+        runner.sftp = fake
+        runner._clear_dir_contents("/tmp/kernel-agent")
+        self.assertIn(marker, fake.files)
+        self.assertIn(old_file, fake.removed)
 
 
 if __name__ == "__main__":
