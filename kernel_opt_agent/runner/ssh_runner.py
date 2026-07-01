@@ -71,10 +71,42 @@ class SSHRunner:
             except OSError:
                 self.sftp.mkdir(cur)
 
+    def _is_safe_workspace_to_clear(self, remote_path: str) -> bool:
+        normalized = posixpath.normpath(remote_path)
+        return normalized.startswith("/") and normalized not in {"/", "/tmp", "/home"} and len(normalized.strip("/").split("/")) >= 2
+
+    def _clear_dir_contents(self, remote_path: str) -> None:
+        assert self.sftp is not None
+        if not self._is_safe_workspace_to_clear(remote_path):
+            raise RuntimeError(f"refusing to clear unsafe remote workspace: {remote_path}")
+        try:
+            entries = self.sftp.listdir_attr(remote_path)
+        except OSError:
+            self._mkdir_p(remote_path)
+            return
+        for entry in entries:
+            child = posixpath.join(remote_path, entry.filename)
+            if stat.S_ISDIR(entry.st_mode):
+                self._remove_dir(child)
+            else:
+                self.sftp.remove(child)
+
+    def _remove_dir(self, remote_dir: str) -> None:
+        assert self.sftp is not None
+        for entry in self.sftp.listdir_attr(remote_dir):
+            child = posixpath.join(remote_dir, entry.filename)
+            if stat.S_ISDIR(entry.st_mode):
+                self._remove_dir(child)
+            else:
+                self.sftp.remove(child)
+        self.sftp.rmdir(remote_dir)
+
     def upload(self, local_path: Path, remote_path: str | None = None) -> None:
         assert self.sftp is not None
         remote_path = remote_path or self.info.remote_workspace
         local_path = local_path.resolve()
+        if posixpath.normpath(remote_path) == posixpath.normpath(self.info.remote_workspace):
+            self._clear_dir_contents(remote_path)
         if local_path.is_file():
             self._mkdir_p(posixpath.dirname(remote_path))
             self.sftp.put(str(local_path), remote_path)

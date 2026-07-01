@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from kernel_opt_agent.config_model import load_config
+from kernel_opt_agent.config_model import load_config, safe_config_dict
 from kernel_opt_agent.main import runner_exception_category
 from kernel_opt_agent.agent.optimizer_policy import OptimizerPolicy
 from kernel_opt_agent.kernel.template_manager import TemplateManager
@@ -105,6 +105,27 @@ class V1HardeningTests(unittest.TestCase):
         config = load_config(str(ROOT / "kernel_opt_agent" / "config.ssh.example.yaml"))
         self.assertEqual(runner_exception_category(config, "timed out"), "ssh_connection_failed")
         self.assertEqual(runner_exception_category(config, "SFTP upload failed"), "sftp_upload_failed")
+
+    def test_safe_config_redacts_ssh_key_path(self) -> None:
+        config = load_config(str(ROOT / "kernel_opt_agent" / "config.ssh.example.yaml"))
+        self.assertEqual(safe_config_dict(config)["remote"]["key_path"], "<redacted:key_path>")
+
+    def test_ssh_workspace_clear_rejects_broad_paths(self) -> None:
+        runner = SSHRunner(
+            SSHConnectionInfo(
+                host="example.invalid",
+                port=22,
+                username="user",
+                auth_type="key",
+                key_path="~/.ssh/id_rsa",
+                password_env=None,
+                remote_workspace="/tmp/kernel-agent",
+            ),
+            timeout_seconds=5,
+        )
+        self.assertFalse(runner._is_safe_workspace_to_clear("/"))
+        self.assertFalse(runner._is_safe_workspace_to_clear("/tmp"))
+        self.assertTrue(runner._is_safe_workspace_to_clear("/tmp/kernel-agent"))
 
 
 if __name__ == "__main__":
