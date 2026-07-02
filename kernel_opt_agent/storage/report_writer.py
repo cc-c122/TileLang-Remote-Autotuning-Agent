@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from kernel_opt_agent.agent.diagnosis import diagnose
+from kernel_opt_agent.hardware.hardware_info import HardwareInfo
 
 
 def _sort_success(records: list[dict[str, Any]], objective: str) -> list[dict[str, Any]]:
@@ -15,7 +16,31 @@ def _sort_success(records: list[dict[str, Any]], objective: str) -> list[dict[st
     return sorted(ok, key=lambda r: r["objective"]["value"], reverse=(objective == "tflops"))
 
 
-def write_final_report(results_dir: Path, records: list[dict[str, Any]], objective: str) -> dict[str, Any] | None:
+def _hardware_lines(hardware_info: HardwareInfo | None) -> list[str]:
+    if hardware_info is None:
+        return ["", "## Hardware Detection", "- Hardware detection data was not available."]
+    data = hardware_info.to_dict()
+    fields = data["fields"]
+    lines = [
+        "",
+        "## Hardware Detection",
+        f"- Declared hardware: {fields.get('target_name', {}).get('value')}",
+        f"- Backend: {fields.get('backend', {}).get('value')}",
+        f"- Built-in profile: {data.get('profile_used')}",
+        f"- Doc lookup used: {data.get('doc_lookup_used')}",
+        f"- Safe probe used: {data.get('safe_probe_used')}",
+        f"- Conservative mode: {data.get('conservative_mode')}",
+        f"- Unknown fields: {', '.join(data.get('unknown_fields') or []) or 'none'}",
+        "- Field sources:",
+    ]
+    for name, field in fields.items():
+        lines.append(f"  - {name}: source={field.get('source')} confidence={field.get('confidence')} value={field.get('value')}")
+    if data.get("unknown_fields"):
+        lines.append("- Hardware parameters are incomplete; current search results may not be optimal for the target device.")
+    return lines
+
+
+def write_final_report(results_dir: Path, records: list[dict[str, Any]], objective: str, hardware_info: HardwareInfo | None = None) -> dict[str, Any] | None:
     best_records = _sort_success(records, objective)
     best = best_records[0] if best_records else None
     if best:
@@ -81,7 +106,7 @@ def write_final_report(results_dir: Path, records: list[dict[str, Any]], objecti
     lines += ["", "## Failures", f"- Failed candidates: {len(failures)}. See `failed_cases.jsonl` for details."]
     lines += ["", "## Diagnosis"]
     lines += [f"- {note}" for note in diagnose(best_records + failures)]
+    lines += _hardware_lines(hardware_info)
     lines += ["", "## Next Steps", "- Increase budget or refine search_space after reviewing failure patterns and profiler data."]
     (results_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return best
-

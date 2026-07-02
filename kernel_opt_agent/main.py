@@ -15,6 +15,7 @@ from kernel_opt_agent.benchmark.correctness import parse_correctness
 from kernel_opt_agent.benchmark.metrics import is_better
 from kernel_opt_agent.benchmark.parser import parse_benchmark
 from kernel_opt_agent.config_model import AppConfig, load_config, resolve_path, safe_config_dict
+from kernel_opt_agent.hardware.detector import detect_hardware
 from kernel_opt_agent.kernel.variant_generator import VariantGenerator
 from kernel_opt_agent.runner.local_runner import CommandResult, LocalRunner
 from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
@@ -196,6 +197,7 @@ def run(config: AppConfig) -> None:
     db = ExperimentDB(RESULTS_DIR)
     run_id = time.strftime("%Y%m%d-%H%M%S")
     (RESULTS_DIR / "effective_config.yaml").write_text(__import__("yaml").safe_dump(safe_config_dict(config), sort_keys=True), encoding="utf-8")
+    hardware_info = detect_hardware(config, RESULTS_DIR)
     planner = None
     if config.search.strategy in {"llm", "hybrid"}:
         client = OpenAICompatibleClient(
@@ -262,7 +264,7 @@ def run(config: AppConfig) -> None:
             if record["status"] == "benchmark_ok" and is_better(record["objective"]["value"], best_value, config.search.objective):
                 best_value = record["objective"]["value"]
 
-    best = write_final_report(RESULTS_DIR, db.records, config.search.objective)
+    best = write_final_report(RESULTS_DIR, db.records, config.search.objective, hardware_info)
     logging.info("done; best=%s results=%s", best.get("config_hash") if best else "none", RESULTS_DIR)
 
 
