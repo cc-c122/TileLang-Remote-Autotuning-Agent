@@ -11,7 +11,7 @@ import yaml
 from kernel_opt_agent.config_model import load_config
 from kernel_opt_agent.hardware.detector import detect_hardware
 from kernel_opt_agent.hardware.safe_probe import run_safe_probes
-from kernel_opt_agent.runner.local_runner import CommandResult
+from kernel_opt_agent.runner.local_runner import CommandResult, LocalRunner
 from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader
 
 
@@ -34,9 +34,11 @@ class FakeProbeRunner:
     def __init__(self, responses):
         self.responses = responses
         self.commands: list[str] = []
+        self.command_texts: list[str] = []
 
     def run(self, name, command):
         self.commands.append(name)
+        self.command_texts.append(command or "")
         response = self.responses.get(name)
         if isinstance(response, Exception):
             raise response
@@ -171,6 +173,8 @@ class HardwareDetectionTests(unittest.TestCase):
         self.assertEqual([r["candidate_value"] for r in rows if r["probe_name"] == "vector_width_probe"], [1, 4])
         self.assertEqual([r["candidate_value"] for r in rows if r["probe_name"] == "stages_probe"], [2])
         self.assertIn("safe probe threads_probe NUM_THREADS=128: pass", log_lines)
+        self.assertIn("py_compile.compile", runner.command_texts[0])
+        self.assertIn("probe_kernel", runner.command_texts[0])
 
     def test_safe_probe_failure_timeout_and_exception_do_not_interrupt(self) -> None:
         search_space = {"NUM_THREADS": [128], "VECTOR_WIDTH": [4], "NUM_STAGES": [2]}
@@ -189,6 +193,17 @@ class HardwareDetectionTests(unittest.TestCase):
         self.assertEqual([record["status"] for record in records], ["failed", "exception", "guard_denied", "timeout"])
         self.assertIn("runner exploded", stderr_text)
         self.assertNotIn("safe_probe_shared_memory_probe_49152", runner.commands)
+
+    def test_safe_probe_local_runner_is_low_confidence_mock(self) -> None:
+        search_space = {"NUM_THREADS": [128], "VECTOR_WIDTH": [1], "NUM_STAGES": [2]}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = LocalRunner(root, timeout_seconds=5)
+            records, _ = run_safe_probes(runner, root / "results", search_space, 5, None)
+        self.assertTrue(records)
+        self.assertTrue(all(record["confidence"] == "low" for record in records))
+        self.assertTrue(all("runner_mode=local_mock" in record["inference"] for record in records))
+        self.assertTrue(any("real GPU capability was not verified" in record["inference"] for record in records))
 
     def test_detect_hardware_runs_safe_probe_without_interrupting(self) -> None:
         config = load_config(str(ROOT / "kernel_opt_agent" / "config.example.yaml"))

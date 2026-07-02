@@ -44,6 +44,8 @@ def _hardware_lines(hardware_info: HardwareInfo | None) -> list[str]:
         "- Safe probe is a low/medium-confidence availability check, not an official hardware limit.",
         f"- Probe records: {len(probe_results)}",
     ]
+    if any("runner_mode=local_mock" in str(probe.get("inference", "")) for probe in probe_results):
+        lines.append("- Local mock probe was used; 未验证真实 GPU 能力.")
     for probe in probe_results:
         lines.append(
             f"- {probe.get('probe_name')} {probe.get('param_name')}={probe.get('candidate_value')}: status={probe.get('status')} "

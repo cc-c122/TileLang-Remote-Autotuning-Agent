@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from kernel_opt_agent.runner.local_runner import CommandResult
+from kernel_opt_agent.runner.local_runner import CommandResult, LocalRunner
+from kernel_opt_agent.runner.ssh_runner import SSHRunner
+
 from .hardware_info import HardwareInfo
 
 
@@ -27,23 +29,118 @@ SAFE_PROBES = [
 ]
 
 
-def _probe_command(param_name: str, value: Any) -> str:
+def _runner_mode(runner: Any) -> str:
+    explicit = getattr(runner, "probe_runner_mode", None)
+    if explicit:
+        return str(explicit)
+    if isinstance(runner, LocalRunner):
+        return "local_mock"
+    if isinstance(runner, SSHRunner):
+        return "ssh_probe"
+    return "remote_probe"
+
+
+def _local_mock_command(param_name: str, value: Any) -> str:
     return (
         "python -c \"import json; "
         f"print(json.dumps({{'param_name': {param_name!r}, 'candidate_value': {value!r}}}, sort_keys=True))\""
     )
 
 
-def _infer_probe(probe_name: str, param_name: str, value: Any, status: str) -> tuple[str, str]:
+def _script_body(probe_name: str, param_name: str, value: Any) -> str:
+    source_name = f"_kernel_opt_safe_probe_{probe_name}_{str(value).replace(' ', '_')}.py"
+    if probe_name == "threads_probe":
+        kernel_source = f"""
+NUM_THREADS = {value!r}
+assert isinstance(NUM_THREADS, int) and NUM_THREADS > 0
+
+def probe_kernel():
+    acc = 0
+    for tid in range(NUM_THREADS):
+        acc += tid & 7
+    return acc
+
+probe_kernel()
+"""
+    elif probe_name == "vector_width_probe":
+        kernel_source = f"""
+VECTOR_WIDTH = {value!r}
+assert isinstance(VECTOR_WIDTH, int) and VECTOR_WIDTH > 0
+
+def probe_kernel():
+    data = list(range(max(VECTOR_WIDTH * 4, 1)))
+    acc = 0
+    for offset in range(0, len(data), VECTOR_WIDTH):
+        vec = data[offset:offset + VECTOR_WIDTH]
+        acc += sum(vec)
+    return acc
+
+probe_kernel()
+"""
+    elif probe_name == "stages_probe":
+        kernel_source = f"""
+NUM_STAGES = {value!r}
+assert isinstance(NUM_STAGES, int) and NUM_STAGES > 0
+
+def probe_kernel():
+    acc = 1
+    for stage in range(NUM_STAGES):
+        acc = (acc * 17 + stage) % 104729
+    return acc
+
+probe_kernel()
+"""
+    else:
+        kernel_source = f"""
+SHARED_MEMORY_BYTES = {value!r}
+assert isinstance(SHARED_MEMORY_BYTES, int) and SHARED_MEMORY_BYTES > 0
+
+def probe_kernel():
+    shared = bytearray(SHARED_MEMORY_BYTES)
+    shared[0] = 1
+    shared[-1] = 2
+    return shared[0] + shared[-1]
+
+probe_kernel()
+"""
+    return f"""
+import json
+import pathlib
+import py_compile
+
+source_path = pathlib.Path({source_name!r})
+source_path.write_text({kernel_source!r}, encoding="utf-8")
+py_compile.compile(str(source_path), doraise=True)
+namespace = {{}}
+exec(source_path.read_text(encoding="utf-8"), namespace, namespace)
+print(json.dumps({{"param_name": {param_name!r}, "candidate_value": {value!r}, "compiled": True, "executed": True}}, sort_keys=True))
+"""
+
+
+def _remote_probe_command(probe_name: str, param_name: str, value: Any) -> str:
+    return "python - <<'PY'\n" + _script_body(probe_name, param_name, value).strip() + "\nPY"
+
+
+def _probe_command(probe_name: str, param_name: str, value: Any, runner_mode: str) -> str:
+    if runner_mode == "local_mock":
+        return _local_mock_command(param_name, value)
+    return _remote_probe_command(probe_name, param_name, value)
+
+
+def _infer_probe(probe_name: str, param_name: str, value: Any, status: str, runner_mode: str) -> tuple[str, str]:
+    if runner_mode == "local_mock":
+        if status == "pass":
+            return f"runner_mode=local_mock; {param_name}={value} passed a mock availability probe; real GPU capability was not verified", "low"
+        return f"runner_mode=local_mock; {param_name}={value} did not pass a mock availability probe; real GPU capability was not verified", "low"
     if status == "pass":
-        return f"{param_name}={value} passed a lightweight availability probe", "medium"
+        return f"runner_mode={runner_mode}; {param_name}={value} compiled and ran a small probe script; this is not an official hardware limit", "medium"
     if status == "guard_denied":
-        return f"{param_name}={value} was not probed because command guard denied it", "low"
+        return f"runner_mode={runner_mode}; {param_name}={value} was not probed because command guard denied it", "low"
     if status == "timeout":
-        return f"{param_name}={value} timed out during lightweight availability probing", "low"
+        return f"runner_mode={runner_mode}; {param_name}={value} timed out during lightweight availability probing", "low"
     if status == "exception":
-        return f"{param_name}={value} could not be probed because the runner raised an exception", "low"
-    return f"{param_name}={value} failed a lightweight availability probe", "low"
+        return f"runner_mode={runner_mode}; {param_name}={value} could not be probed because the runner raised an exception", "low"
+    return f"runner_mode={runner_mode}; {param_name}={value} failed a lightweight availability probe", "low"
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -69,6 +166,7 @@ def run_safe_probes(
     jsonl_path = results_dir / "hardware_probe.jsonl"
     records: list[dict[str, Any]] = []
     log_lines: list[str] = []
+    runner_mode = _runner_mode(runner)
 
     for probe in SAFE_PROBES:
         values = _probe_values(probe, search_space)
@@ -84,7 +182,10 @@ def run_safe_probes(
             stdout = ""
             stderr = ""
             try:
-                result: CommandResult = runner.run(f"safe_probe_{probe.name}_{safe_value}", _probe_command(probe.param_name, value))
+                result: CommandResult = runner.run(
+                    f"safe_probe_{probe.name}_{safe_value}",
+                    _probe_command(probe.name, probe.param_name, value, runner_mode),
+                )
                 stdout = result.stdout
                 stderr = result.stderr
                 if result.guard_denied:
@@ -103,7 +204,7 @@ def run_safe_probes(
 
             _write_text(stdout_path, stdout)
             _write_text(stderr_path, stderr)
-            inference, confidence = _infer_probe(probe.name, probe.param_name, value, status)
+            inference, confidence = _infer_probe(probe.name, probe.param_name, value, status, runner_mode)
             record = {
                 "probe_name": probe.name,
                 "param_name": probe.param_name,
