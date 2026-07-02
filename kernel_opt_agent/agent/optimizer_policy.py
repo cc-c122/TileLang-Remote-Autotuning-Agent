@@ -18,11 +18,15 @@ class OptimizerPolicy:
         seed: int = 20260701,
         planner: Any | None = None,
         safe_probe_results: list[dict[str, Any]] | None = None,
+        hardware_info: Any | None = None,
+        conservative_mode: bool | None = None,
     ):
         self.search_space = search_space
         self.seed = seed
         self.rng = random.Random(seed)
         self.planner = planner
+        self.hardware_info = hardware_info
+        self.conservative_mode = bool(conservative_mode) if conservative_mode is not None else bool(getattr(hardware_info, "conservative_mode", False))
         self.safe_probe_results = safe_probe_results or []
         self.unavailable_values = self._unavailable_values()
         self.grid_iter = self._grid_iter()
@@ -62,7 +66,27 @@ class OptimizerPolicy:
             return False
         if not self._allowed_by_probe(cfg):
             return False
+        if self.conservative_mode and not self._allowed_by_conservative_mode(cfg):
+            return False
         out.append(cfg)
+        return True
+
+    def _allowed_by_conservative_mode(self, config: dict[str, Any]) -> bool:
+        for key in ("BM", "BN", "BK"):
+            values = self.search_space.get(key)
+            if values and len(values) > 1 and config.get(key) == values[-1]:
+                return False
+        threads = self.search_space.get("NUM_THREADS")
+        if threads and config.get("NUM_THREADS") == threads[-1] and len(threads) > 2:
+            return False
+        stages = self.search_space.get("NUM_STAGES")
+        if stages and config.get("NUM_STAGES") == stages[-1] and len(stages) > 2:
+            return False
+        if config.get("USE_DOUBLE_BUFFER") is True:
+            for key in ("BM", "BN", "BK"):
+                values = self.search_space.get(key)
+                if values and config.get(key) == values[-1]:
+                    return False
         return True
 
     def _grid_iter(self):

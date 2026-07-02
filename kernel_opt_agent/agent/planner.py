@@ -13,6 +13,8 @@ class CandidateAdvice(BaseModel):
     hypothesis: str = ""
     expected_improvement: str = ""
     risk: str = ""
+    hardware_assumptions: dict[str, Any] = Field(default_factory=dict)
+    confidence: str = "low"
 
 
 class LLMPlan(BaseModel):
@@ -26,16 +28,23 @@ class LLMPlan(BaseModel):
 
 
 class Planner:
-    def __init__(self, client: OpenAICompatibleClient, search_space: dict[str, list[Any]], safe_probe_results: list[dict[str, Any]] | None = None):
+    def __init__(
+        self,
+        client: OpenAICompatibleClient,
+        search_space: dict[str, list[Any]],
+        safe_probe_results: list[dict[str, Any]] | None = None,
+        hardware_info: Any | None = None,
+    ):
         self.client = client
         self.search_space = search_space
         self.safe_probe_results = safe_probe_results or []
+        self.hardware_info = hardware_info
 
     def propose(self, history: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
         raw = self.client.chat_json(
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": build_user_prompt(self.search_space, history, count, self.safe_probe_results)},
+                {"role": "user", "content": build_user_prompt(self.search_space, history, count, self.safe_probe_results, self.hardware_info)},
             ]
         )
         plan = LLMPlan.model_validate(raw)
@@ -47,5 +56,7 @@ class Planner:
             for key, value in cand.config.items():
                 if value not in self.search_space[key]:
                     raise LLMError(f"LLM candidate outside search_space: {key}={value}")
+            if cand.confidence not in {"low", "medium", "high", "unknown"}:
+                raise LLMError(f"LLM candidate confidence is invalid: {cand.confidence}")
             configs.append(cand.config)
         return configs[:count]

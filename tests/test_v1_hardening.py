@@ -15,6 +15,7 @@ from kernel_opt_agent.config_model import load_config, safe_config_dict
 from kernel_opt_agent.main import runner_exception_category
 from kernel_opt_agent.agent.optimizer_policy import OptimizerPolicy
 from kernel_opt_agent.agent.prompt_templates import build_user_prompt
+from kernel_opt_agent.hardware.hardware_info import HardwareInfo
 from kernel_opt_agent.kernel.template_manager import TemplateManager
 from kernel_opt_agent.runner.command_guard import validate
 from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
@@ -137,15 +138,33 @@ class V1HardeningTests(unittest.TestCase):
         self.assertEqual(candidates, [{"NUM_THREADS": 128, "BM": 16}])
 
     def test_llm_prompt_includes_safe_probe_context(self) -> None:
+        hardware_info = HardwareInfo.unknown()
+        hardware_info.set_field("backend", "unknown", "unknown", "unknown", "not detected")
         prompt = build_user_prompt(
             {"NUM_THREADS": [128, 256]},
             [],
             1,
             [{"param_name": "NUM_THREADS", "candidate_value": 256, "status": "failed", "inference": "failed probe", "confidence": "low"}],
+            hardware_info,
         )
         payload = json.loads(prompt)
         self.assertIn("safe_probe_context", payload)
+        self.assertIn("hardware_info", payload)
         self.assertEqual(payload["safe_probe_context"]["unavailable_values"][0]["candidate_value"], 256)
+        self.assertIn("hardware_assumptions", payload["output_schema"]["candidates"][0])
+        self.assertIn("confidence", payload["output_schema"]["candidates"][0])
+
+    def test_conservative_mode_avoids_largest_tile_values(self) -> None:
+        policy = OptimizerPolicy(
+            {"BM": [16, 32, 64], "BN": [32, 64], "BK": [32, 64], "NUM_THREADS": [128, 256]},
+            conservative_mode=True,
+        )
+        candidates = policy.grid(3, set())
+        self.assertTrue(candidates)
+        for candidate in candidates:
+            self.assertNotEqual(candidate["BM"], 64)
+            self.assertNotEqual(candidate["BN"], 64)
+            self.assertNotEqual(candidate["BK"], 64)
 
     def test_ssh_remote_workspace_is_shell_quoted(self) -> None:
         runner = SSHRunner(

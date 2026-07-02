@@ -14,6 +14,7 @@ def build_user_prompt(
     history: list[dict[str, Any]],
     count: int,
     safe_probe_results: list[dict[str, Any]] | None = None,
+    hardware_info: Any | None = None,
 ) -> str:
     top = [r for r in history if r.get("status") == "benchmark_ok"][:5]
     failed = [r for r in history if r.get("status") != "benchmark_ok"][-10:]
@@ -29,9 +30,11 @@ def build_user_prompt(
         for r in probe_results
         if r.get("status") in {"failed", "timeout", "guard_denied", "exception"}
     ]
+    hardware_payload = hardware_info.to_dict() if hardware_info is not None and hasattr(hardware_info, "to_dict") else None
     payload = {
         "search_space": search_space,
         "requested_candidate_count": count,
+        "hardware_info": hardware_payload,
         "safe_probe_context": {
             "note": "Safe probe is a low/medium-confidence availability check, not an official hardware limit. Prefer values that passed and avoid clearly unavailable values, while still selecting only from search_space.",
             "results": probe_results,
@@ -46,6 +49,8 @@ def build_user_prompt(
                     "hypothesis": "short text",
                     "expected_improvement": "short text",
                     "risk": "short text",
+                    "hardware_assumptions": {"known_field_name": "known value or unknown"},
+                    "confidence": "low | medium | high | unknown",
                 }
             ]
         },
