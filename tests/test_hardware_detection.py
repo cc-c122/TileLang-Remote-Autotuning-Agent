@@ -10,6 +10,7 @@ import yaml
 
 from kernel_opt_agent.config_model import load_config
 from kernel_opt_agent.hardware.detector import detect_hardware
+from kernel_opt_agent.hardware.hardware_info import HardwareInfo
 from kernel_opt_agent.hardware.safe_probe import run_safe_probes
 from kernel_opt_agent.runner.local_runner import CommandResult, LocalRunner
 from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader
@@ -191,6 +192,11 @@ class HardwareDetectionTests(unittest.TestCase):
         self.assertIn("T.Kernel", runner.command_texts[0])
         self.assertIn("T.alloc_shared", runner.command_texts[-1])
         self.assertIn("T.Pipelined", runner.command_texts[0])
+        vector_width_4_script = runner.command_texts[3]
+        shared_memory_32k_script = runner.command_texts[5]
+        self.assertIn("VECTOR_WIDTH = 4", vector_width_4_script)
+        self.assertIn("SHARED_ELEMS = 4", vector_width_4_script)
+        self.assertIn("SHARED_ELEMS = 8192", shared_memory_32k_script)
 
     def test_remote_safe_probe_skips_when_tilelang_unavailable(self) -> None:
         search_space = {"NUM_THREADS": [128], "VECTOR_WIDTH": [], "NUM_STAGES": []}
@@ -205,7 +211,25 @@ class HardwareDetectionTests(unittest.TestCase):
             records, _ = run_safe_probes(runner, Path(tmp), search_space, 60, None)
         self.assertEqual([record["status"] for record in records], ["skipped", "skipped"])
         self.assertTrue(all(record["confidence"] == "low" for record in records))
-        self.assertIn("TileLang/GPU runtime was unavailable", records[0]["inference"])
+        self.assertIn("TileLang unavailable", records[0]["inference"])
+
+    def test_remote_safe_probe_skips_unimplemented_mxmaca_backend(self) -> None:
+        search_space = {"NUM_THREADS": [128], "VECTOR_WIDTH": [], "NUM_STAGES": []}
+        hardware_info = HardwareInfo.unknown()
+        hardware_info.set_field("backend", "mxmaca", "user_config", "high", "test backend")
+        runner = FakeProbeRunner(
+            {
+                "safe_probe_threads_probe_128": ('SAFE_PROBE_RESULT status=SKIPPED reason="backend probe not implemented for mxmaca"\n', "", 0, False, False),
+                "safe_probe_shared_memory_probe_32768": ('SAFE_PROBE_RESULT status=SKIPPED reason="backend probe not implemented for mxmaca"\n', "", 0, False, False),
+            },
+            probe_runner_mode="ssh_probe",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            records, _ = run_safe_probes(runner, Path(tmp), search_space, 60, hardware_info)
+        self.assertEqual([record["status"] for record in records], ["skipped", "skipped"])
+        self.assertTrue(all(record["confidence"] == "low" for record in records))
+        self.assertIn("backend probe not implemented for mxmaca", records[0]["inference"])
+        self.assertIn("BACKEND = 'mxmaca'", runner.command_texts[0])
 
     def test_safe_probe_failure_timeout_and_exception_do_not_interrupt(self) -> None:
         search_space = {"NUM_THREADS": [128], "VECTOR_WIDTH": [4], "NUM_STAGES": [2]}

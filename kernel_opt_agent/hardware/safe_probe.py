@@ -49,11 +49,20 @@ def _local_mock_command(param_name: str, value: Any) -> str:
     )
 
 
-def _tilelang_probe_script(probe_name: str, param_name: str, value: Any) -> str:
-    shared_elems = max(1, int(value) // 4) if probe_name == "shared_memory_probe" else 1
+def _hardware_backend(hardware_info: HardwareInfo | None) -> str:
+    if hardware_info is None:
+        return "unknown"
+    backend = hardware_info.fields.get("backend")
+    if backend is None or backend.value in (None, "", "unknown"):
+        return "unknown"
+    return str(backend.value).lower()
+
+
+def _tilelang_probe_script(probe_name: str, param_name: str, value: Any, backend: str) -> str:
     num_threads = int(value) if probe_name == "threads_probe" else 128
     vector_width = int(value) if probe_name == "vector_width_probe" else 1
     num_stages = int(value) if probe_name == "stages_probe" else 2
+    shared_elems = max(1, int(value) // 4) if probe_name == "shared_memory_probe" else max(vector_width, 1)
     n = max(16, vector_width * 4, min(shared_elems, 256))
     return f"""
 import json
@@ -72,6 +81,10 @@ except Exception as exc:
         import mctilelang.language as T
     except Exception as mc_exc:
         emit("SKIPPED", "TileLang/mcTileLang compatible Python module unavailable: " + str(exc) + "; " + str(mc_exc), 0)
+
+BACKEND = {backend!r}
+if BACKEND in {{"mxmaca", "metax", "metax_c500"}}:
+    emit("SKIPPED", "backend probe not implemented for " + BACKEND, 0)
 
 try:
     import torch
@@ -115,17 +128,17 @@ emit("PASS", "{probe_name} TileLang/GPU small kernel compiled and ran for {param
 """
 
 
-def _remote_probe_command(probe_name: str, param_name: str, value: Any) -> str:
-    return "python - <<'PY'\n" + _tilelang_probe_script(probe_name, param_name, value).strip() + "\nPY"
+def _remote_probe_command(probe_name: str, param_name: str, value: Any, backend: str) -> str:
+    return "python - <<'PY'\n" + _tilelang_probe_script(probe_name, param_name, value, backend).strip() + "\nPY"
 
 
-def _probe_command(probe_name: str, param_name: str, value: Any, runner_mode: str) -> str:
+def _probe_command(probe_name: str, param_name: str, value: Any, runner_mode: str, backend: str) -> str:
     if runner_mode == "local_mock":
         return _local_mock_command(param_name, value)
-    return _remote_probe_command(probe_name, param_name, value)
+    return _remote_probe_command(probe_name, param_name, value, backend)
 
 
-def _infer_probe(probe_name: str, param_name: str, value: Any, status: str, runner_mode: str) -> tuple[str, str]:
+def _infer_probe(probe_name: str, param_name: str, value: Any, status: str, runner_mode: str, detail: str = "") -> tuple[str, str]:
     if runner_mode == "local_mock":
         if status == "pass":
             return f"runner_mode=local_mock; {param_name}={value} passed a mock availability probe; real GPU capability was not verified", "low"
@@ -133,7 +146,8 @@ def _infer_probe(probe_name: str, param_name: str, value: Any, status: str, runn
     if status == "pass":
         return f"runner_mode={runner_mode}; {param_name}={value} compiled and ran a TileLang/GPU small kernel; this is not an official hardware limit", "medium"
     if status == "skipped":
-        return f"runner_mode={runner_mode}; {param_name}={value} skipped because TileLang/GPU runtime was unavailable", "low"
+        reason = detail or "TileLang/GPU runtime was unavailable"
+        return f"runner_mode={runner_mode}; {param_name}={value} skipped: {reason}", "low"
     if status == "guard_denied":
         return f"runner_mode={runner_mode}; {param_name}={value} was not probed because command guard denied it", "low"
     if status == "timeout":
@@ -154,20 +168,33 @@ def _probe_values(probe: SafeProbe, search_space: dict[str, list[Any]]) -> list[
     return list(search_space.get(probe.param_name, []))
 
 
-def _status_from_result(result: CommandResult, runner_mode: str) -> tuple[str, str]:
+def _marker_reason(stdout: str, marker: str) -> str:
+    for line in stdout.splitlines():
+        if marker not in line:
+            continue
+        _, _, raw_reason = line.partition("reason=")
+        try:
+            return str(json.loads(raw_reason))
+        except json.JSONDecodeError:
+            return raw_reason.strip()
+    return ""
+
+
+def _status_from_result(result: CommandResult, runner_mode: str) -> tuple[str, str, str]:
     if result.guard_denied:
-        return "guard_denied", result.error_message or result.stderr
+        return "guard_denied", result.error_message or result.stderr, ""
     if result.timeout:
-        return "timeout", result.stderr
+        return "timeout", result.stderr, ""
     if runner_mode == "local_mock":
-        return ("pass" if result.returncode == 0 else "failed"), result.stderr
+        return ("pass" if result.returncode == 0 else "failed"), result.stderr, ""
     if REMOTE_PASS_MARKER in result.stdout and result.returncode == 0:
-        return "pass", result.stderr
+        return "pass", result.stderr, _marker_reason(result.stdout, REMOTE_PASS_MARKER)
     if REMOTE_SKIPPED_MARKER in result.stdout:
-        return "skipped", result.stderr
+        reason = _marker_reason(result.stdout, REMOTE_SKIPPED_MARKER)
+        return "skipped", result.stderr or reason, reason
     if result.returncode == 0:
-        return "failed", result.stderr or "remote TileLang probe did not emit SAFE_PROBE_RESULT status=PASS"
-    return "failed", result.error_message or result.stderr or f"return code {result.returncode}"
+        return "failed", result.stderr or "remote TileLang probe did not emit SAFE_PROBE_RESULT status=PASS", ""
+    return "failed", result.error_message or result.stderr or f"return code {result.returncode}", ""
 
 
 def run_safe_probes(
@@ -183,6 +210,7 @@ def run_safe_probes(
     records: list[dict[str, Any]] = []
     log_lines: list[str] = []
     runner_mode = _runner_mode(runner)
+    backend = _hardware_backend(hardware_info)
 
     for probe in SAFE_PROBES:
         values = _probe_values(probe, search_space)
@@ -197,21 +225,22 @@ def run_safe_probes(
             status = "failed"
             stdout = ""
             stderr = ""
+            detail = ""
             try:
                 result: CommandResult = runner.run(
                     f"safe_probe_{probe.name}_{safe_value}",
-                    _probe_command(probe.name, probe.param_name, value, runner_mode),
+                    _probe_command(probe.name, probe.param_name, value, runner_mode, backend),
                 )
                 stdout = result.stdout
                 stderr = result.stderr
-                status, stderr = _status_from_result(result, runner_mode)
+                status, stderr, detail = _status_from_result(result, runner_mode)
             except Exception as exc:
                 status = "exception"
                 stderr = str(exc)
 
             _write_text(stdout_path, stdout)
             _write_text(stderr_path, stderr)
-            inference, confidence = _infer_probe(probe.name, probe.param_name, value, status, runner_mode)
+            inference, confidence = _infer_probe(probe.name, probe.param_name, value, status, runner_mode, detail)
             record = {
                 "probe_name": probe.name,
                 "param_name": probe.param_name,
