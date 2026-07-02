@@ -6,7 +6,10 @@ from typing import Any
 import yaml
 
 from kernel_opt_agent.config_model import AppConfig
+from kernel_opt_agent.runner.local_runner import LocalRunner
+from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
 
+from .generic_linux_detector import GenericLinuxDetector
 from .hardware_info import CANONICAL_FIELDS, HardwareInfo
 from .profile_loader import HardwareProfileLoader
 
@@ -27,7 +30,24 @@ def _write_log(log_path: Path, lines: list[str]) -> None:
     log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: HardwareProfileLoader | None = None) -> HardwareInfo:
+def _build_detection_runner(config: AppConfig, results_dir: Path):
+    if config.runner.type == "local":
+        return LocalRunner(results_dir.parent, config.hardware_detection.timeout_seconds, config.constraints.denied_commands)
+    info = SSHConnectionInfo(
+        host=config.remote.host,
+        port=config.remote.port,
+        username=config.remote.username,
+        auth_type=config.remote.auth_type,
+        key_path=config.remote.key_path,
+        password_env=config.remote.password_env,
+        remote_workspace=config.remote.remote_workspace,
+    )
+    runner = SSHRunner(info, config.hardware_detection.timeout_seconds, config.constraints.denied_commands)
+    runner.connect()
+    return runner
+
+
+def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: HardwareProfileLoader | None = None, command_runner: Any | None = None) -> HardwareInfo:
     results_dir.mkdir(parents=True, exist_ok=True)
     log_lines = ["hardware detection started"]
     info = HardwareInfo.unknown()
@@ -38,10 +58,6 @@ def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: Hardwa
     try:
         if not config.hardware_detection.enabled:
             log_lines.append("hardware_detection.enabled=false; skipping automatic detection")
-
-        if config.hardware_detection.remote_detection:
-            info.remote_detection_attempted = True
-            log_lines.append("remote detection is not implemented in first-stage detector; continuing with profiles/user config")
 
         profile_name = config.hardware.profile or config.hardware.target_name or "unknown_gpu"
         if config.hardware_detection.builtin_profile:
@@ -57,6 +73,29 @@ def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: Hardwa
                     info.set_field(field_name, None, "unknown", "unknown", f"not specified by built-in {loaded_name} profile")
         else:
             log_lines.append("builtin profile loading disabled")
+
+        if config.hardware_detection.enabled and config.hardware_detection.remote_detection:
+            info.remote_detection_attempted = True
+            runner = command_runner
+            close_runner = False
+            try:
+                if runner is None:
+                    runner = _build_detection_runner(config, results_dir)
+                    close_runner = True
+                detected, remote_log_lines = GenericLinuxDetector(runner).detect()
+                log_lines.extend(remote_log_lines)
+                for field_name, value in detected.items():
+                    if field_name in info.fields:
+                        info.set_field(field_name, value, "remote_detection", "medium", "from read-only remote detection")
+            except Exception as exc:
+                log_lines.append(f"remote detection failed: {exc}")
+                info.warnings.append(f"remote detection failed: {exc}")
+            finally:
+                if close_runner and hasattr(runner, "close"):
+                    try:
+                        runner.close()
+                    except Exception as exc:
+                        log_lines.append(f"remote detection runner close failed: {exc}")
 
         if config.hardware.target_name:
             info.set_field("target_name", config.hardware.target_name, "user_config", "high", "from config hardware.target_name")
