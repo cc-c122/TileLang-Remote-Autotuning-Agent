@@ -12,6 +12,7 @@ from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
 from .generic_linux_detector import GenericLinuxDetector
 from .hardware_info import CANONICAL_FIELDS, HardwareInfo
 from .profile_loader import HardwareProfileLoader
+from .safe_probe import run_safe_probes
 
 
 def _profile_field_values(profile: dict[str, Any]) -> dict[str, Any]:
@@ -45,6 +46,12 @@ def _build_detection_runner(config: AppConfig, results_dir: Path):
     runner = SSHRunner(info, config.hardware_detection.timeout_seconds, config.constraints.denied_commands)
     runner.connect()
     return runner
+
+
+def _write_empty_probe_file(results_dir: Path) -> None:
+    probe_path = results_dir / "hardware_probe.jsonl"
+    if not probe_path.exists():
+        probe_path.write_text("", encoding="utf-8")
 
 
 def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: HardwareProfileLoader | None = None, command_runner: Any | None = None) -> HardwareInfo:
@@ -104,10 +111,34 @@ def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: Hardwa
         for field_name, value in config.hardware.fields.items():
             info.set_field(field_name, value, "user_config", "high", f"from config hardware.fields.{field_name}")
 
+        if config.hardware_detection.enabled and config.hardware_detection.safe_probe:
+            info.safe_probe_used = True
+            runner = command_runner
+            close_runner = False
+            try:
+                if runner is None:
+                    runner = _build_detection_runner(config, results_dir)
+                    close_runner = True
+                probe_records, probe_log_lines = run_safe_probes(runner, results_dir)
+                info.safe_probe_results = probe_records
+                log_lines.extend(probe_log_lines)
+            except Exception as exc:
+                log_lines.append(f"safe probe failed: {exc}")
+                info.warnings.append(f"safe probe failed: {exc}")
+                _write_empty_probe_file(results_dir)
+            finally:
+                if close_runner and hasattr(runner, "close"):
+                    try:
+                        runner.close()
+                    except Exception as exc:
+                        log_lines.append(f"safe probe runner close failed: {exc}")
+        else:
+            _write_empty_probe_file(results_dir)
+            if config.hardware_detection.safe_probe and not config.hardware_detection.enabled:
+                log_lines.append("hardware_detection.enabled=false; skipping safe probe")
+
         if config.hardware_detection.doc_lookup or config.hardware.allow_doc_lookup:
             log_lines.append("doc lookup requested but not implemented in first-stage detector")
-        if config.hardware_detection.safe_probe:
-            log_lines.append("safe probe requested but not implemented in first-stage detector")
 
         unknowns = info.unknown_fields()
         if unknowns:
@@ -118,6 +149,7 @@ def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: Hardwa
         info.warnings.append(f"hardware detection failed: {exc}")
         log_lines.append(f"hardware detection failed: {exc}")
     finally:
+        _write_empty_probe_file(results_dir)
         detected_path = results_dir / "hardware_detected.yaml"
         with detected_path.open("w", encoding="utf-8") as f:
             yaml.safe_dump(info.to_dict(), f, sort_keys=True)

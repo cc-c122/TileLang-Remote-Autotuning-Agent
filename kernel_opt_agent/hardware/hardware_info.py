@@ -56,6 +56,7 @@ class HardwareInfo:
     remote_detection_attempted: bool = False
     doc_lookup_used: bool = False
     safe_probe_used: bool = False
+    safe_probe_results: list[dict[str, Any]] = field(default_factory=list)
     conservative_mode: bool = True
     warnings: list[str] = field(default_factory=list)
 
@@ -86,6 +87,7 @@ class HardwareInfo:
             "remote_detection_attempted": self.remote_detection_attempted,
             "doc_lookup_used": self.doc_lookup_used,
             "safe_probe_used": self.safe_probe_used,
+            "safe_probe_results": self.safe_probe_results,
             "conservative_mode": self.conservative_mode,
             "unknown_fields": self.unknown_fields(),
             "source_counts": self.source_counts(),
