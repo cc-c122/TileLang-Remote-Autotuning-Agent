@@ -12,12 +12,58 @@ def config_hash(config: dict[str, Any]) -> str:
 
 
 class OptimizerPolicy:
-    def __init__(self, search_space: dict[str, list[Any]], seed: int = 20260701, planner: Any | None = None):
+    def __init__(
+        self,
+        search_space: dict[str, list[Any]],
+        seed: int = 20260701,
+        planner: Any | None = None,
+        safe_probe_results: list[dict[str, Any]] | None = None,
+    ):
         self.search_space = search_space
         self.seed = seed
         self.rng = random.Random(seed)
         self.planner = planner
+        self.safe_probe_results = safe_probe_results or []
+        self.unavailable_values = self._unavailable_values()
         self.grid_iter = self._grid_iter()
+
+    def _unavailable_values(self) -> dict[str, set[Any]]:
+        failed_statuses = {"failed", "timeout", "guard_denied", "exception"}
+        failed: dict[str, set[Any]] = {}
+        passed: dict[str, set[Any]] = {}
+        for record in self.safe_probe_results:
+            param_name = record.get("param_name")
+            if param_name not in self.search_space:
+                continue
+            value = record.get("candidate_value")
+            if value not in self.search_space[param_name]:
+                continue
+            if record.get("status") == "pass":
+                passed.setdefault(param_name, set()).add(value)
+            elif record.get("status") in failed_statuses:
+                failed.setdefault(param_name, set()).add(value)
+
+        unavailable: dict[str, set[Any]] = {}
+        for param_name, values in failed.items():
+            blocked = values - passed.get(param_name, set())
+            if blocked and len(blocked) < len(self.search_space[param_name]):
+                unavailable[param_name] = blocked
+        return unavailable
+
+    def _allowed_by_probe(self, config: dict[str, Any]) -> bool:
+        for param_name, values in self.unavailable_values.items():
+            if config.get(param_name) in values:
+                return False
+        return True
+
+    def _append_if_new(self, out: list[dict[str, Any]], cfg: dict[str, Any], tried: set[str]) -> bool:
+        h = config_hash(cfg)
+        if h in tried or any(config_hash(x) == h for x in out):
+            return False
+        if not self._allowed_by_probe(cfg):
+            return False
+        out.append(cfg)
+        return True
 
     def _grid_iter(self):
         keys = list(self.search_space.keys())
@@ -27,11 +73,9 @@ class OptimizerPolicy:
     def grid(self, count: int, tried: set[str]) -> list[dict[str, Any]]:
         out = []
         for cfg in self.grid_iter:
-            h = config_hash(cfg)
-            if h not in tried:
-                out.append(cfg)
-                if len(out) >= count:
-                    break
+            self._append_if_new(out, cfg, tried)
+            if len(out) >= count:
+                break
         return out
 
     def random_search(self, count: int, tried: set[str]) -> list[dict[str, Any]]:
@@ -40,11 +84,9 @@ class OptimizerPolicy:
         max_attempts = max(100, count * 50)
         for _ in range(max_attempts):
             cfg = {k: self.rng.choice(self.search_space[k]) for k in keys}
-            h = config_hash(cfg)
-            if h not in tried and all(config_hash(x) != h for x in out):
-                out.append(cfg)
-                if len(out) >= count:
-                    break
+            self._append_if_new(out, cfg, tried)
+            if len(out) >= count:
+                break
         return out
 
     def rule_based(self, count: int, tried: set[str]) -> list[dict[str, Any]]:
@@ -59,11 +101,9 @@ class OptimizerPolicy:
         candidates = [mid, small, large, bool_flipped]
         out = []
         for cfg in candidates:
-            h = config_hash(cfg)
-            if h not in tried and all(config_hash(x) != h for x in out):
-                out.append(cfg)
-                if len(out) >= count:
-                    return out
+            self._append_if_new(out, cfg, tried)
+            if len(out) >= count:
+                return out
         out.extend(self.random_search(count - len(out), tried | {config_hash(x) for x in out}))
         return out[:count]
 
@@ -72,9 +112,7 @@ class OptimizerPolicy:
             raise RuntimeError("LLM planner is unavailable")
         out = []
         for cfg in self.planner.propose(history, count):
-            h = config_hash(cfg)
-            if h not in tried and all(config_hash(x) != h for x in out):
-                out.append(cfg)
+            self._append_if_new(out, cfg, tried)
         return out
 
     def propose(self, strategy: str, count: int, tried: set[str], history: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:

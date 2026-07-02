@@ -38,10 +38,15 @@ def _hardware_lines(hardware_info: HardwareInfo | None) -> list[str]:
     if data.get("unknown_fields"):
         lines.append("- Hardware parameters are incomplete; current search results may not be optimal for the target device.")
     probe_results = data.get("safe_probe_results") or []
-    lines += ["", "## Safe Probe Summary", f"- Probe records: {len(probe_results)}"]
+    lines += [
+        "",
+        "## Safe Probe Summary",
+        "- Safe probe is a low/medium-confidence availability check, not an official hardware limit.",
+        f"- Probe records: {len(probe_results)}",
+    ]
     for probe in probe_results:
         lines.append(
-            f"- {probe.get('probe_name')}: status={probe.get('status')} "
+            f"- {probe.get('probe_name')} {probe.get('param_name')}={probe.get('candidate_value')}: status={probe.get('status')} "
             f"confidence={probe.get('confidence')} inference={probe.get('inference')}"
         )
     return lines

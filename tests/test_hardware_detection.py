@@ -40,9 +40,9 @@ class FakeProbeRunner:
         response = self.responses.get(name)
         if isinstance(response, Exception):
             raise response
-        stdout, stderr, returncode, timeout = response or ("{}", "", 0, False)
+        stdout, stderr, returncode, timeout, guard_denied = response or ("{}", "", 0, False, False)
         now = time.time()
-        return CommandResult(name, command or "", returncode, stdout, stderr, now, now, 0.0, timeout=timeout)
+        return CommandResult(name, command or "", returncode, stdout, stderr, now, now, 0.0, timeout=timeout, guard_denied=guard_denied, error_message=stderr if guard_denied else None)
 
 
 class HardwareDetectionTests(unittest.TestCase):
@@ -153,57 +153,50 @@ class HardwareDetectionTests(unittest.TestCase):
         self.assertEqual(info.fields["python_version"].source, "user_config")
 
     def test_safe_probe_success_writes_jsonl_and_logs(self) -> None:
-        runner = FakeProbeRunner(
-            {
-                "safe_probe_threads_probe": ('{"cpu_count": 16}\n', "", 0, False),
-                "safe_probe_vector_width_probe": ('{"pointer_bits": 64}\n', "", 0, False),
-            }
-        )
+        search_space = {"NUM_THREADS": [128, 256], "VECTOR_WIDTH": [1, 4], "NUM_STAGES": [2]}
+        runner = FakeProbeRunner({})
         with tempfile.TemporaryDirectory() as tmp:
             results = Path(tmp)
-            records, log_lines = run_safe_probes(runner, results)
+            records, log_lines = run_safe_probes(runner, results, search_space, 60, None)
             rows = [
                 json.loads(line)
                 for line in (results / "hardware_probe.jsonl").read_text(encoding="utf-8").splitlines()
             ]
-        self.assertEqual(len(records), 2)
+        self.assertEqual(len(records), 10)
         self.assertEqual(rows[0]["source"], "safe_probe")
         self.assertEqual(rows[0]["status"], "pass")
-        self.assertEqual(rows[0]["candidate"]["cpu_count"], 16)
-        self.assertIn("safe probe threads_probe: pass", log_lines)
+        self.assertEqual(rows[0]["param_name"], "NUM_THREADS")
+        self.assertEqual(rows[0]["candidate_value"], 128)
+        self.assertEqual([r["candidate_value"] for r in rows if r["probe_name"] == "threads_probe"], [128, 256])
+        self.assertEqual([r["candidate_value"] for r in rows if r["probe_name"] == "vector_width_probe"], [1, 4])
+        self.assertEqual([r["candidate_value"] for r in rows if r["probe_name"] == "stages_probe"], [2])
+        self.assertIn("safe probe threads_probe NUM_THREADS=128: pass", log_lines)
 
     def test_safe_probe_failure_timeout_and_exception_do_not_interrupt(self) -> None:
+        search_space = {"NUM_THREADS": [128], "VECTOR_WIDTH": [4], "NUM_STAGES": [2]}
         runner = FakeProbeRunner(
             {
-                "safe_probe_threads_probe": ("", "boom", 1, False),
-                "safe_probe_vector_width_probe": RuntimeError("runner exploded"),
+                "safe_probe_threads_probe_128": ("", "boom", 1, False, False),
+                "safe_probe_vector_width_probe_4": RuntimeError("runner exploded"),
+                "safe_probe_stages_probe_2": ("", "denied", 126, False, True),
+                "safe_probe_shared_memory_probe_32768": ("", "slow", 124, True, False),
             }
         )
         with tempfile.TemporaryDirectory() as tmp:
             results = Path(tmp)
-            records, _ = run_safe_probes(runner, results)
-            stderr_text = (results / "logs" / "hardware_probe" / "vector_width_probe.stderr.log").read_text(encoding="utf-8")
-        self.assertEqual([record["status"] for record in records], ["failed", "exception"])
+            records, _ = run_safe_probes(runner, results, search_space, 60, None)
+            stderr_text = (results / "logs" / "hardware_probe" / "vector_width_probe_4.stderr.log").read_text(encoding="utf-8")
+        self.assertEqual([record["status"] for record in records], ["failed", "exception", "guard_denied", "timeout"])
         self.assertIn("runner exploded", stderr_text)
-
-        timeout_runner = FakeProbeRunner(
-            {
-                "safe_probe_threads_probe": ("", "slow", 124, True),
-                "safe_probe_vector_width_probe": ('{"pointer_bits": 64}\n', "", 0, False),
-            }
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            records, _ = run_safe_probes(timeout_runner, Path(tmp))
-        self.assertEqual(records[0]["status"], "timeout")
-        self.assertEqual(records[1]["status"], "pass")
+        self.assertNotIn("safe_probe_shared_memory_probe_49152", runner.commands)
 
     def test_detect_hardware_runs_safe_probe_without_interrupting(self) -> None:
         config = load_config(str(ROOT / "kernel_opt_agent" / "config.example.yaml"))
         config.hardware_detection.remote_detection = False
         runner = FakeProbeRunner(
             {
-                "safe_probe_threads_probe": ('{"cpu_count": 8}\n', "", 0, False),
-                "safe_probe_vector_width_probe": ("", "probe failed", 1, False),
+                "safe_probe_threads_probe_128": ("", "probe failed", 1, False, False),
+                "safe_probe_shared_memory_probe_32768": ("", "shared memory failed", 1, False, False),
             }
         )
         with tempfile.TemporaryDirectory() as tmp:
@@ -215,10 +208,11 @@ class HardwareDetectionTests(unittest.TestCase):
             ]
             log_text = (results / "hardware_detection.log").read_text(encoding="utf-8")
         self.assertTrue(info.safe_probe_used)
-        self.assertEqual(len(info.safe_probe_results), 2)
-        self.assertEqual(rows[0]["status"], "pass")
-        self.assertEqual(rows[1]["status"], "failed")
-        self.assertIn("safe probe vector_width_probe: failed", log_text)
+        self.assertGreater(len(info.safe_probe_results), 2)
+        self.assertEqual(rows[0]["probe_name"], "threads_probe")
+        self.assertEqual(rows[0]["candidate_value"], 128)
+        self.assertEqual(rows[0]["status"], "failed")
+        self.assertIn("safe probe threads_probe NUM_THREADS=128: failed", log_text)
 
     def test_detection_disabled_skips_safe_probe_but_writes_file(self) -> None:
         config = load_config(str(ROOT / "kernel_opt_agent" / "config.example.yaml"))

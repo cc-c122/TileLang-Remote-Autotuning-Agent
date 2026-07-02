@@ -119,7 +119,13 @@ def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: Hardwa
                 if runner is None:
                     runner = _build_detection_runner(config, results_dir)
                     close_runner = True
-                probe_records, probe_log_lines = run_safe_probes(runner, results_dir)
+                probe_records, probe_log_lines = run_safe_probes(
+                    runner,
+                    results_dir,
+                    config.search_space,
+                    config.hardware_detection.timeout_seconds,
+                    info,
+                )
                 info.safe_probe_results = probe_records
                 log_lines.extend(probe_log_lines)
             except Exception as exc:

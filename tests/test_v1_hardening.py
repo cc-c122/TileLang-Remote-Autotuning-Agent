@@ -14,6 +14,7 @@ import yaml
 from kernel_opt_agent.config_model import load_config, safe_config_dict
 from kernel_opt_agent.main import runner_exception_category
 from kernel_opt_agent.agent.optimizer_policy import OptimizerPolicy
+from kernel_opt_agent.agent.prompt_templates import build_user_prompt
 from kernel_opt_agent.kernel.template_manager import TemplateManager
 from kernel_opt_agent.runner.command_guard import validate
 from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
@@ -90,6 +91,61 @@ class V1HardeningTests(unittest.TestCase):
         for candidate in candidates:
             self.assertIn(candidate["BM"], [16, 32])
             self.assertIn(candidate["USE_SHARED"], [True, False])
+
+    def test_optimizer_filters_values_failed_by_safe_probe(self) -> None:
+        policy = OptimizerPolicy(
+            {"NUM_THREADS": [128, 256], "VECTOR_WIDTH": [1, 4], "BM": [16]},
+            seed=1,
+            safe_probe_results=[
+                {"param_name": "NUM_THREADS", "candidate_value": 256, "status": "timeout"},
+                {"param_name": "VECTOR_WIDTH", "candidate_value": 4, "status": "failed"},
+            ],
+        )
+        candidates = policy.grid(4, set())
+        self.assertTrue(candidates)
+        for candidate in candidates:
+            self.assertEqual(candidate["NUM_THREADS"], 128)
+            self.assertEqual(candidate["VECTOR_WIDTH"], 1)
+
+    def test_optimizer_keeps_search_space_when_probe_blocks_all_values(self) -> None:
+        policy = OptimizerPolicy(
+            {"NUM_THREADS": [128, 256], "BM": [16]},
+            seed=1,
+            safe_probe_results=[
+                {"param_name": "NUM_THREADS", "candidate_value": 128, "status": "failed"},
+                {"param_name": "NUM_THREADS", "candidate_value": 256, "status": "failed"},
+            ],
+        )
+        candidates = policy.grid(2, set())
+        self.assertEqual({candidate["NUM_THREADS"] for candidate in candidates}, {128, 256})
+
+    def test_optimizer_filters_llm_candidates_failed_by_safe_probe(self) -> None:
+        class FakePlanner:
+            def propose(self, history, count):
+                return [
+                    {"NUM_THREADS": 256, "BM": 16},
+                    {"NUM_THREADS": 128, "BM": 16},
+                ]
+
+        policy = OptimizerPolicy(
+            {"NUM_THREADS": [128, 256], "BM": [16]},
+            seed=1,
+            planner=FakePlanner(),
+            safe_probe_results=[{"param_name": "NUM_THREADS", "candidate_value": 256, "status": "failed"}],
+        )
+        candidates = policy.llm(2, set(), [])
+        self.assertEqual(candidates, [{"NUM_THREADS": 128, "BM": 16}])
+
+    def test_llm_prompt_includes_safe_probe_context(self) -> None:
+        prompt = build_user_prompt(
+            {"NUM_THREADS": [128, 256]},
+            [],
+            1,
+            [{"param_name": "NUM_THREADS", "candidate_value": 256, "status": "failed", "inference": "failed probe", "confidence": "low"}],
+        )
+        payload = json.loads(prompt)
+        self.assertIn("safe_probe_context", payload)
+        self.assertEqual(payload["safe_probe_context"]["unavailable_values"][0]["candidate_value"], 256)
 
     def test_ssh_remote_workspace_is_shell_quoted(self) -> None:
         runner = SSHRunner(

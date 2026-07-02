@@ -26,15 +26,16 @@ class LLMPlan(BaseModel):
 
 
 class Planner:
-    def __init__(self, client: OpenAICompatibleClient, search_space: dict[str, list[Any]]):
+    def __init__(self, client: OpenAICompatibleClient, search_space: dict[str, list[Any]], safe_probe_results: list[dict[str, Any]] | None = None):
         self.client = client
         self.search_space = search_space
+        self.safe_probe_results = safe_probe_results or []
 
     def propose(self, history: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
         raw = self.client.chat_json(
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": build_user_prompt(self.search_space, history, count)},
+                {"role": "user", "content": build_user_prompt(self.search_space, history, count, self.safe_probe_results)},
             ]
         )
         plan = LLMPlan.model_validate(raw)
@@ -48,4 +49,3 @@ class Planner:
                     raise LLMError(f"LLM candidate outside search_space: {key}={value}")
             configs.append(cand.config)
         return configs[:count]
-
