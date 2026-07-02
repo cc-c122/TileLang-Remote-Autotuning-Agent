@@ -72,31 +72,40 @@ def emit(status, reason, code=0):
     print("SAFE_PROBE_RESULT status=" + status + " reason=" + json.dumps(reason))
     raise SystemExit(code)
 
-try:
-    import tilelang
-    import tilelang.language as T
-except Exception as exc:
+BACKEND = {backend!r}
+IS_MXMACA = BACKEND in {{"mxmaca", "metax", "metax_c500"}}
+
+if IS_MXMACA:
     try:
         import mctilelang as tilelang
         import mctilelang.language as T
-    except Exception as mc_exc:
-        emit("SKIPPED", "TileLang/mcTileLang compatible Python module unavailable: " + str(exc) + "; " + str(mc_exc), 0)
-
-BACKEND = {backend!r}
-if BACKEND in {{"mxmaca", "metax", "metax_c500"}}:
-    emit("SKIPPED", "backend probe not implemented for " + BACKEND, 0)
+    except Exception as exc:
+        emit("SKIPPED", "mcTileLang unavailable for mxmaca/metax probe: " + str(exc), 0)
+else:
+    try:
+        import tilelang
+        import tilelang.language as T
+    except Exception as exc:
+        try:
+            import mctilelang as tilelang
+            import mctilelang.language as T
+        except Exception as mc_exc:
+            emit("SKIPPED", "TileLang/mcTileLang compatible Python module unavailable: " + str(exc) + "; " + str(mc_exc), 0)
 
 try:
     import torch
 except Exception as exc:
-    emit("SKIPPED", "torch runtime unavailable for TileLang probe: " + str(exc), 0)
+    emit("SKIPPED", "torch runtime unavailable for safe probe: " + str(exc), 0)
 
 if not hasattr(torch, "cuda") or not torch.cuda.is_available():
+    if IS_MXMACA:
+        emit("SKIPPED", "mxmaca/mcPyTorch runtime unavailable: torch cuda-compatible device is not available", 0)
     emit("SKIPPED", "CUDA/GPU runtime unavailable for TileLang probe", 0)
 
 if not hasattr(tilelang, "jit"):
     emit("SKIPPED", "TileLang jit API unavailable", 0)
 
+DEVICE = "cuda"
 NUM_THREADS = {num_threads}
 VECTOR_WIDTH = {vector_width}
 NUM_STAGES = {num_stages}
@@ -117,13 +126,15 @@ try:
         return kernel
 
     compiled = safe_probe_kernel()
-    a = torch.ones((N,), device="cuda", dtype=torch.float32)
-    b = torch.empty((N,), device="cuda", dtype=torch.float32)
+    a = torch.ones((N,), device=DEVICE, dtype=torch.float32)
+    b = torch.empty((N,), device=DEVICE, dtype=torch.float32)
     compiled(a, b)
     torch.cuda.synchronize()
 except Exception as exc:
     emit("FAILED", "{probe_name} TileLang/GPU small kernel failed for {param_name}={value}: " + str(exc), 1)
 
+if IS_MXMACA:
+    emit("PASS", "{probe_name} mxmaca/metax small kernel compiled and ran for {param_name}={value}", 0)
 emit("PASS", "{probe_name} TileLang/GPU small kernel compiled and ran for {param_name}={value}", 0)
 """
 
@@ -144,6 +155,8 @@ def _infer_probe(probe_name: str, param_name: str, value: Any, status: str, runn
             return f"runner_mode=local_mock; {param_name}={value} passed a mock availability probe; real GPU capability was not verified", "low"
         return f"runner_mode=local_mock; {param_name}={value} did not pass a mock availability probe; real GPU capability was not verified", "low"
     if status == "pass":
+        if detail:
+            return f"runner_mode={runner_mode}; {detail}; this is not an official hardware limit", "medium"
         return f"runner_mode={runner_mode}; {param_name}={value} compiled and ran a TileLang/GPU small kernel; this is not an official hardware limit", "medium"
     if status == "skipped":
         reason = detail or "TileLang/GPU runtime was unavailable"
