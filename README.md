@@ -257,8 +257,42 @@ kernel_opt_agent/workspace/results/
 - `best_config.yaml`：best-seen 参数配置。
 - `report.md`：最终 Markdown 报告。
 - `logs/`：每个 trial 的 stdout/stderr。
+- `hardware_detected.yaml`：硬件探测合并结果，包含字段来源和置信度。
+- `hardware_probe.jsonl`：硬件 safe probe 记录，包含 probe 状态、参数值、置信度和日志路径。
 
 这些运行产物默认不会提交到 Git。
+
+## 硬件探测与 safe probe 状态说明
+
+V1 支持硬件自动探测和 safe probe，但 probe 结果必须按置信度解释，不能当作官方硬件上限。
+
+`hardware_probe.jsonl` 当前字段包括：
+
+- `probe_name`
+- `param_name`
+- `candidate_value`
+- `status`
+- `inference`
+- `source`
+- `confidence`
+- `stdout_path`
+- `stderr_path`
+
+`status` 语义：
+
+- `pass`：当前 runner mode 下 probe 成功。
+- `failed`：probe 实际执行后失败。
+- `timeout`：probe 超时。
+- `guard_denied`：command guard 拒绝执行。
+- `exception`：runner 或 probe 调度异常。
+- `skipped`：后端、运行时或 probe 实现不可用，因此没有执行真实 probe。
+
+特别注意：
+
+- `local_mock` 只用于 local/demo/test，不验证真实 GPU 能力，必须按低置信度看待。
+- `skipped` 不等于硬件不支持，也不等于失败，只表示没有得到真实 probe 结论。
+- SSH/CUDA 路径会尝试 TileLang/GPU 小 kernel；mxmaca/metax 如果真实 probe 尚未实现，应返回 `skipped` 和低置信度。
+- 前端只读展示这些结果，不会执行命令，也不会把 `local_mock` 或 `skipped` 展示成真实硬件能力通过。
 
 ## 快速开始：local/mock 模式
 
