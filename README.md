@@ -8,7 +8,7 @@ TileLang Remote Autotuning Agent 是一个面向 TileLang kernel sample 的自�
 
 - 从 `config.yaml` 读取 kernel、runner、搜索策略、指标解析规则和安全约束。
 - 支持 `local` runner，用 mock sample 在没有 GPU 和 SSH 的机器上跑通完整流程。
-- 支持 `ssh` runner，通过 SSH key 把 sample 上传到远程 workspace 执行。
+- 支持 `ssh` runner，通过 SSH password auth 或可选 SSH key auth 把 sample 上传到远程 workspace 执行。
 - 用 `{{BM}}`、`{{BN}}`、`{{NUM_THREADS}}` 这类模板占位符生成候选 kernel。
 - 每个候选先跑 correctness，失败的候选不会进入性能排名。
 - benchmark 通过后解析 latency、TFLOPS、bandwidth。
