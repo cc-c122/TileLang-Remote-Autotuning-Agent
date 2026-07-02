@@ -213,14 +213,39 @@ class HardwareDetectionTests(unittest.TestCase):
         self.assertTrue(all(record["confidence"] == "low" for record in records))
         self.assertIn("TileLang unavailable", records[0]["inference"])
 
-    def test_remote_safe_probe_skips_unimplemented_mxmaca_backend(self) -> None:
+    def test_remote_safe_probe_generates_mxmaca_script(self) -> None:
         search_space = {"NUM_THREADS": [128], "VECTOR_WIDTH": [], "NUM_STAGES": []}
         hardware_info = HardwareInfo.unknown()
         hardware_info.set_field("backend", "mxmaca", "user_config", "high", "test backend")
         runner = FakeProbeRunner(
             {
-                "safe_probe_threads_probe_128": ('SAFE_PROBE_RESULT status=SKIPPED reason="backend probe not implemented for mxmaca"\n', "", 0, False, False),
-                "safe_probe_shared_memory_probe_32768": ('SAFE_PROBE_RESULT status=SKIPPED reason="backend probe not implemented for mxmaca"\n', "", 0, False, False),
+                "safe_probe_threads_probe_128": ('SAFE_PROBE_RESULT status=PASS reason="threads_probe mxmaca/metax small kernel compiled and ran for NUM_THREADS=128"\n', "", 0, False, False),
+                "safe_probe_shared_memory_probe_32768": ('SAFE_PROBE_RESULT status=PASS reason="shared_memory_probe mxmaca/metax small kernel compiled and ran for SHARED_MEMORY_BYTES=32768"\n', "", 0, False, False),
+                "safe_probe_shared_memory_probe_49152": ('SAFE_PROBE_RESULT status=PASS reason="shared_memory_probe mxmaca/metax small kernel compiled and ran for SHARED_MEMORY_BYTES=49152"\n', "", 0, False, False),
+                "safe_probe_shared_memory_probe_65536": ('SAFE_PROBE_RESULT status=PASS reason="shared_memory_probe mxmaca/metax small kernel compiled and ran for SHARED_MEMORY_BYTES=65536"\n', "", 0, False, False),
+                "safe_probe_shared_memory_probe_98304": ('SAFE_PROBE_RESULT status=PASS reason="shared_memory_probe mxmaca/metax small kernel compiled and ran for SHARED_MEMORY_BYTES=98304"\n', "", 0, False, False),
+                "safe_probe_shared_memory_probe_131072": ('SAFE_PROBE_RESULT status=PASS reason="shared_memory_probe mxmaca/metax small kernel compiled and ran for SHARED_MEMORY_BYTES=131072"\n', "", 0, False, False),
+            },
+            probe_runner_mode="ssh_probe",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            records, _ = run_safe_probes(runner, Path(tmp), search_space, 60, hardware_info)
+        self.assertTrue(records)
+        self.assertTrue(all(record["status"] == "pass" for record in records))
+        self.assertIn("mxmaca/metax small kernel compiled and ran", records[0]["inference"])
+        self.assertIn("BACKEND = 'mxmaca'", runner.command_texts[0])
+        self.assertIn("IS_MXMACA = BACKEND in", runner.command_texts[0])
+        self.assertIn("import mctilelang as tilelang", runner.command_texts[0])
+        self.assertIn("DEVICE = \"cuda\"", runner.command_texts[0])
+
+    def test_remote_safe_probe_skips_when_mctilelang_unavailable(self) -> None:
+        search_space = {"NUM_THREADS": [128], "VECTOR_WIDTH": [], "NUM_STAGES": []}
+        hardware_info = HardwareInfo.unknown()
+        hardware_info.set_field("backend", "mxmaca", "user_config", "high", "test backend")
+        runner = FakeProbeRunner(
+            {
+                "safe_probe_threads_probe_128": ('SAFE_PROBE_RESULT status=SKIPPED reason="mcTileLang unavailable for mxmaca/metax probe: no module named mctilelang"\n', "", 0, False, False),
+                "safe_probe_shared_memory_probe_32768": ('SAFE_PROBE_RESULT status=SKIPPED reason="mcTileLang unavailable for mxmaca/metax probe: no module named mctilelang"\n', "", 0, False, False),
             },
             probe_runner_mode="ssh_probe",
         )
@@ -228,8 +253,7 @@ class HardwareDetectionTests(unittest.TestCase):
             records, _ = run_safe_probes(runner, Path(tmp), search_space, 60, hardware_info)
         self.assertEqual([record["status"] for record in records], ["skipped", "skipped"])
         self.assertTrue(all(record["confidence"] == "low" for record in records))
-        self.assertIn("backend probe not implemented for mxmaca", records[0]["inference"])
-        self.assertIn("BACKEND = 'mxmaca'", runner.command_texts[0])
+        self.assertIn("mcTileLang unavailable for mxmaca/metax probe", records[0]["inference"])
 
     def test_safe_probe_failure_timeout_and_exception_do_not_interrupt(self) -> None:
         search_space = {"NUM_THREADS": [128], "VECTOR_WIDTH": [4], "NUM_STAGES": [2]}
