@@ -36,7 +36,7 @@ The V1 frontend is a read-only local result viewer. It does not call a backend H
 
 Open it in either of these ways:
 
-- Open `kernel_opt_agent/frontend/index.html` in a Chromium-based browser and click "选择结果目录", then select `kernel_opt_agent/workspace/results/`.
+- Open `kernel_opt_agent/frontend/index.html` in a Chromium-based browser and click "Select results directory", then select `kernel_opt_agent/workspace/results/`.
 - Or serve `kernel_opt_agent/` with any static file server and open `/frontend/index.html`; the page will read `../workspace/results/` relative to itself.
 
 If the backend is still running, the viewer shows exactly which expected files are still `waiting`.
@@ -51,7 +51,7 @@ Copy `config.example.yaml` to your own `config.yaml` and edit:
 - `kernel.sample_path`: file or directory
 - `kernel.entry_file`: only this file is rendered as a template
 
-For SSH key-auth smoke testing, copy `config.ssh.example.yaml`, replace only the host, user, key path, and remote workspace fields, then run:
+For SSH remote testing, copy `config.ssh.example.yaml`, replace the host, port, user, password environment variable name, and remote workspace fields, then run:
 
 ```bash
 python main.py --config path/to/ssh.config.yaml
@@ -59,13 +59,27 @@ python main.py --config path/to/ssh.config.yaml
 
 The SSH runner uploads the sample file or directory, renders only `kernel.entry_file`, runs commands under `remote.remote_workspace`, and downloads remote artifacts into `workspace/results/remote_artifacts/` when present.
 
+V1 must support SSH password authentication. Do not write the password into `config.yaml`; set `remote.password_env` to the name of an environment variable and provide the password through that environment variable:
+
+```bash
+export KERNEL_AGENT_SSH_PASSWORD='your-password'
+```
+
+PowerShell:
+
+```powershell
+$env:KERNEL_AGENT_SSH_PASSWORD = 'your-password'
+```
+
+SSH key authentication may remain available as an optional compatibility path by setting `auth_type: key` and `remote.key_path`.
+
 Template placeholders use `{{BM}}` syntax. Placeholder names must exactly match `search_space` keys, including case. Boolean values render as Python `True` / `False`.
 
 ## Security Limits
 
 Commands run in the trial workspace root. V1 does not support per-command working directories. `command_guard.py` blocks dangerous fragments such as `rm -rf`, `mkfs`, `dd if=`, shutdown/reboot commands, package removal, and destructive operations aimed outside the workspace.
 
-API keys, SSH passwords, and tokens must not be written into config files. LLM API keys are read only from `llm.api_key_env`. SSH password auth is validated as configuration but intentionally not implemented in V1; use SSH key auth for remote runs.
+API keys, SSH passwords, and tokens must not be written into config files, logs, JSONL, CSV, reports, or exception messages. LLM API keys are read only from `llm.api_key_env`. SSH passwords are read only from the environment variable named by `remote.password_env`.
 
 ## Search Behavior
 
