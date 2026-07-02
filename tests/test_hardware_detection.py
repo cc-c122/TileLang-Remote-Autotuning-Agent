@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -8,10 +9,23 @@ import yaml
 
 from kernel_opt_agent.config_model import load_config
 from kernel_opt_agent.hardware.detector import detect_hardware
+from kernel_opt_agent.runner.local_runner import CommandResult
 from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class FakeDetectionRunner:
+    def __init__(self, responses):
+        self.responses = responses
+        self.commands: list[str] = []
+
+    def run(self, name, command):
+        self.commands.append(name)
+        stdout, stderr, returncode = self.responses.get(name, ("{}", "", 0))
+        now = time.time()
+        return CommandResult(name, command or "", returncode, stdout, stderr, now, now, 0.0)
 
 
 class HardwareDetectionTests(unittest.TestCase):
@@ -68,6 +82,57 @@ class HardwareDetectionTests(unittest.TestCase):
         self.assertIn("hardware detection failed", log_text)
         self.assertIn("fields", detected)
         self.assertIsNone(detected["fields"]["total_memory_GB"]["value"])
+
+    def test_remote_detection_partial_success_logs_failures(self) -> None:
+        config = load_config(str(ROOT / "kernel_opt_agent" / "config.example.yaml"))
+        config.hardware_detection.builtin_profile = False
+        runner = FakeDetectionRunner(
+            {
+                "hardware_python_platform": ('{"python_version": "3.11.9", "platform": "Linux-test", "os": "linux"}\n', "", 0),
+                "hardware_tilelang_version": ("", "no tilelang", 1),
+                "hardware_mctilelang_version": ('{"mctilelang_version": "0.1.0"}\n', "", 0),
+                "hardware_compiler_version": ('{"compiler_version": "gcc 12.2.0"}\n', "", 0),
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            info = detect_hardware(config, results, command_runner=runner)
+            log_text = (results / "hardware_detection.log").read_text(encoding="utf-8")
+        self.assertEqual(info.fields["python_version"].value, "3.11.9")
+        self.assertEqual(info.fields["python_version"].source, "remote_detection")
+        self.assertEqual(info.fields["compiler_version"].value, "gcc 12.2.0")
+        self.assertEqual(info.fields["mctilelang_version"].value, "0.1.0")
+        self.assertIn("remote detection command failed: tilelang_version", log_text)
+
+    def test_remote_detection_failure_does_not_interrupt(self) -> None:
+        class ExplodingRunner:
+            def run(self, name, command):
+                raise RuntimeError("runner boom")
+
+        config = load_config(str(ROOT / "kernel_opt_agent" / "config.example.yaml"))
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            info = detect_hardware(config, results, command_runner=ExplodingRunner())
+            log_text = (results / "hardware_detection.log").read_text(encoding="utf-8")
+            self.assertTrue((results / "hardware_detected.yaml").exists())
+        self.assertIn("remote detection command failed: python_platform: runner boom", log_text)
+        self.assertIn("hardware fields remain unknown", "\n".join(info.warnings))
+
+    def test_user_config_overrides_remote_detection(self) -> None:
+        config = load_config(str(ROOT / "kernel_opt_agent" / "config.example.yaml"))
+        config.hardware.backend = "mxmaca"
+        config.hardware.fields = {"python_version": "configured-python"}
+        runner = FakeDetectionRunner(
+            {
+                "hardware_python_platform": ('{"python_version": "3.11.9", "platform": "Linux-test", "os": "linux"}\n', "", 0),
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            info = detect_hardware(config, Path(tmp), command_runner=runner)
+        self.assertEqual(info.fields["backend"].value, "mxmaca")
+        self.assertEqual(info.fields["backend"].source, "user_config")
+        self.assertEqual(info.fields["python_version"].value, "configured-python")
+        self.assertEqual(info.fields["python_version"].source, "user_config")
 
 
 if __name__ == "__main__":
