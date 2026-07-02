@@ -1,0 +1,27 @@
+name: metax-c500
+backend: mxmaca
+source: builtin_profile
+
+target_name: metax-c500
+device_count: null
+driver_version: null
+runtime_version: null
+compiler_version: null
+tilelang_version: null
+total_memory_GB: 64
+available_memory_GB: null
+warp_size: null
+wave_size: null
+max_threads_per_block: null
+shared_memory_per_block_bytes: null
+max_registers_per_thread: null
+vector_alignment_bytes: 16
+
+mma:
+  enabled: true
+  supported_dtypes:
+    - float16
+    - bfloat16
+  preferred_m_tile: 16
+  preferred_n_tile: 16
+  preferred_k_tile: 32

@@ -75,6 +75,25 @@ class ConstraintsConfig(BaseModel):
     denied_commands: list[str] = Field(default_factory=list)
 
 
+class HardwareConfig(BaseModel):
+    target_name: str | None = None
+    backend: str | None = None
+    profile: str | None = None
+    allow_doc_lookup: bool = False
+    doc_paths: list[str] = Field(default_factory=list)
+    fields: dict[str, Any] = Field(default_factory=dict)
+
+
+class HardwareDetectionConfig(BaseModel):
+    enabled: bool = True
+    remote_detection: bool = True
+    builtin_profile: bool = True
+    doc_lookup: bool = False
+    safe_probe: bool = True
+    conservative_unknown_mode: bool = True
+    timeout_seconds: int = Field(default=60, gt=0)
+
+
 class AppConfig(BaseModel):
     project_name: str = "tilelang-autotune-demo"
     runner: RunnerConfig = Field(default_factory=RunnerConfig)
@@ -85,6 +104,8 @@ class AppConfig(BaseModel):
     search_space: dict[str, list[Any]]
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     constraints: ConstraintsConfig = Field(default_factory=ConstraintsConfig)
+    hardware: HardwareConfig = Field(default_factory=HardwareConfig)
+    hardware_detection: HardwareDetectionConfig = Field(default_factory=HardwareDetectionConfig)
 
     @model_validator(mode="after")
     def validate_app(self) -> "AppConfig":
