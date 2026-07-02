@@ -54,12 +54,31 @@ def _write_empty_probe_file(results_dir: Path) -> None:
         probe_path.write_text("", encoding="utf-8")
 
 
+def _is_unknown_field(info: HardwareInfo, field_name: str) -> bool:
+    field = info.fields.get(field_name)
+    if field is None:
+        return True
+    return field.source == "unknown" or field.value is None or field.value == "unknown" or field.value == []
+
+
+def _has_critical_unknowns(info: HardwareInfo) -> bool:
+    critical_fields = [
+        "max_threads_per_block",
+        "shared_memory_per_block_bytes",
+        "vector_alignment_bytes",
+        "supported_dtypes",
+    ]
+    if any(_is_unknown_field(info, field_name) for field_name in critical_fields):
+        return True
+    return _is_unknown_field(info, "warp_size") and _is_unknown_field(info, "wave_size")
+
+
 def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: HardwareProfileLoader | None = None, command_runner: Any | None = None) -> HardwareInfo:
     results_dir.mkdir(parents=True, exist_ok=True)
     log_lines = ["hardware detection started"]
     info = HardwareInfo.unknown()
     info.detection_enabled = config.hardware_detection.enabled
-    info.conservative_mode = config.hardware_detection.conservative_unknown_mode
+    info.conservative_mode = False
     loader = profile_loader or HardwareProfileLoader()
 
     try:
@@ -146,12 +165,16 @@ def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: Hardwa
         if config.hardware_detection.doc_lookup or config.hardware.allow_doc_lookup:
             log_lines.append("doc lookup requested but not implemented in first-stage detector")
 
+        info.conservative_mode = bool(config.hardware_detection.conservative_unknown_mode and _has_critical_unknowns(info))
+        log_lines.append(f"conservative mode: {info.conservative_mode}")
+
         unknowns = info.unknown_fields()
         if unknowns:
             info.warnings.append(f"{len(unknowns)} hardware fields remain unknown")
             log_lines.append(f"unknown fields: {', '.join(unknowns)}")
     except Exception as exc:
         info = HardwareInfo.unknown()
+        info.conservative_mode = bool(config.hardware_detection.conservative_unknown_mode)
         info.warnings.append(f"hardware detection failed: {exc}")
         log_lines.append(f"hardware detection failed: {exc}")
     finally:

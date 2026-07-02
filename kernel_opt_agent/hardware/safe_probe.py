@@ -19,6 +19,8 @@ class SafeProbe:
 
 
 SHARED_MEMORY_CANDIDATES = [32768, 49152, 65536, 98304, 131072]
+REMOTE_PASS_MARKER = "SAFE_PROBE_RESULT status=PASS"
+REMOTE_SKIPPED_MARKER = "SAFE_PROBE_RESULT status=SKIPPED"
 
 
 SAFE_PROBES = [
@@ -47,78 +49,74 @@ def _local_mock_command(param_name: str, value: Any) -> str:
     )
 
 
-def _script_body(probe_name: str, param_name: str, value: Any) -> str:
-    source_name = f"_kernel_opt_safe_probe_{probe_name}_{str(value).replace(' ', '_')}.py"
-    if probe_name == "threads_probe":
-        kernel_source = f"""
-NUM_THREADS = {value!r}
-assert isinstance(NUM_THREADS, int) and NUM_THREADS > 0
-
-def probe_kernel():
-    acc = 0
-    for tid in range(NUM_THREADS):
-        acc += tid & 7
-    return acc
-
-probe_kernel()
-"""
-    elif probe_name == "vector_width_probe":
-        kernel_source = f"""
-VECTOR_WIDTH = {value!r}
-assert isinstance(VECTOR_WIDTH, int) and VECTOR_WIDTH > 0
-
-def probe_kernel():
-    data = list(range(max(VECTOR_WIDTH * 4, 1)))
-    acc = 0
-    for offset in range(0, len(data), VECTOR_WIDTH):
-        vec = data[offset:offset + VECTOR_WIDTH]
-        acc += sum(vec)
-    return acc
-
-probe_kernel()
-"""
-    elif probe_name == "stages_probe":
-        kernel_source = f"""
-NUM_STAGES = {value!r}
-assert isinstance(NUM_STAGES, int) and NUM_STAGES > 0
-
-def probe_kernel():
-    acc = 1
-    for stage in range(NUM_STAGES):
-        acc = (acc * 17 + stage) % 104729
-    return acc
-
-probe_kernel()
-"""
-    else:
-        kernel_source = f"""
-SHARED_MEMORY_BYTES = {value!r}
-assert isinstance(SHARED_MEMORY_BYTES, int) and SHARED_MEMORY_BYTES > 0
-
-def probe_kernel():
-    shared = bytearray(SHARED_MEMORY_BYTES)
-    shared[0] = 1
-    shared[-1] = 2
-    return shared[0] + shared[-1]
-
-probe_kernel()
-"""
+def _tilelang_probe_script(probe_name: str, param_name: str, value: Any) -> str:
+    shared_elems = max(1, int(value) // 4) if probe_name == "shared_memory_probe" else 1
+    num_threads = int(value) if probe_name == "threads_probe" else 128
+    vector_width = int(value) if probe_name == "vector_width_probe" else 1
+    num_stages = int(value) if probe_name == "stages_probe" else 2
+    n = max(16, vector_width * 4, min(shared_elems, 256))
     return f"""
 import json
-import pathlib
-import py_compile
+import sys
 
-source_path = pathlib.Path({source_name!r})
-source_path.write_text({kernel_source!r}, encoding="utf-8")
-py_compile.compile(str(source_path), doraise=True)
-namespace = {{}}
-exec(source_path.read_text(encoding="utf-8"), namespace, namespace)
-print(json.dumps({{"param_name": {param_name!r}, "candidate_value": {value!r}, "compiled": True, "executed": True}}, sort_keys=True))
+def emit(status, reason, code=0):
+    print("SAFE_PROBE_RESULT status=" + status + " reason=" + json.dumps(reason))
+    raise SystemExit(code)
+
+try:
+    import tilelang
+    import tilelang.language as T
+except Exception as exc:
+    try:
+        import mctilelang as tilelang
+        import mctilelang.language as T
+    except Exception as mc_exc:
+        emit("SKIPPED", "TileLang/mcTileLang compatible Python module unavailable: " + str(exc) + "; " + str(mc_exc), 0)
+
+try:
+    import torch
+except Exception as exc:
+    emit("SKIPPED", "torch runtime unavailable for TileLang probe: " + str(exc), 0)
+
+if not hasattr(torch, "cuda") or not torch.cuda.is_available():
+    emit("SKIPPED", "CUDA/GPU runtime unavailable for TileLang probe", 0)
+
+if not hasattr(tilelang, "jit"):
+    emit("SKIPPED", "TileLang jit API unavailable", 0)
+
+NUM_THREADS = {num_threads}
+VECTOR_WIDTH = {vector_width}
+NUM_STAGES = {num_stages}
+SHARED_ELEMS = {shared_elems}
+N = {n}
+
+try:
+    @tilelang.jit
+    def safe_probe_kernel():
+        @T.prim_func
+        def kernel(A: T.Tensor((N,), "float32"), B: T.Tensor((N,), "float32")):
+            with T.Kernel(1, threads=NUM_THREADS) as bx:
+                shared = T.alloc_shared((SHARED_ELEMS,), "float32")
+                for stage in T.Pipelined(1, num_stages=NUM_STAGES):
+                    for i in T.Parallel(VECTOR_WIDTH):
+                        shared[i] = A[i]
+                        B[i] = shared[i]
+        return kernel
+
+    compiled = safe_probe_kernel()
+    a = torch.ones((N,), device="cuda", dtype=torch.float32)
+    b = torch.empty((N,), device="cuda", dtype=torch.float32)
+    compiled(a, b)
+    torch.cuda.synchronize()
+except Exception as exc:
+    emit("FAILED", "{probe_name} TileLang/GPU small kernel failed for {param_name}={value}: " + str(exc), 1)
+
+emit("PASS", "{probe_name} TileLang/GPU small kernel compiled and ran for {param_name}={value}", 0)
 """
 
 
 def _remote_probe_command(probe_name: str, param_name: str, value: Any) -> str:
-    return "python - <<'PY'\n" + _script_body(probe_name, param_name, value).strip() + "\nPY"
+    return "python - <<'PY'\n" + _tilelang_probe_script(probe_name, param_name, value).strip() + "\nPY"
 
 
 def _probe_command(probe_name: str, param_name: str, value: Any, runner_mode: str) -> str:
@@ -133,7 +131,9 @@ def _infer_probe(probe_name: str, param_name: str, value: Any, status: str, runn
             return f"runner_mode=local_mock; {param_name}={value} passed a mock availability probe; real GPU capability was not verified", "low"
         return f"runner_mode=local_mock; {param_name}={value} did not pass a mock availability probe; real GPU capability was not verified", "low"
     if status == "pass":
-        return f"runner_mode={runner_mode}; {param_name}={value} compiled and ran a small probe script; this is not an official hardware limit", "medium"
+        return f"runner_mode={runner_mode}; {param_name}={value} compiled and ran a TileLang/GPU small kernel; this is not an official hardware limit", "medium"
+    if status == "skipped":
+        return f"runner_mode={runner_mode}; {param_name}={value} skipped because TileLang/GPU runtime was unavailable", "low"
     if status == "guard_denied":
         return f"runner_mode={runner_mode}; {param_name}={value} was not probed because command guard denied it", "low"
     if status == "timeout":
@@ -152,6 +152,22 @@ def _probe_values(probe: SafeProbe, search_space: dict[str, list[Any]]) -> list[
     if probe.values is not None:
         return list(probe.values)
     return list(search_space.get(probe.param_name, []))
+
+
+def _status_from_result(result: CommandResult, runner_mode: str) -> tuple[str, str]:
+    if result.guard_denied:
+        return "guard_denied", result.error_message or result.stderr
+    if result.timeout:
+        return "timeout", result.stderr
+    if runner_mode == "local_mock":
+        return ("pass" if result.returncode == 0 else "failed"), result.stderr
+    if REMOTE_PASS_MARKER in result.stdout and result.returncode == 0:
+        return "pass", result.stderr
+    if REMOTE_SKIPPED_MARKER in result.stdout:
+        return "skipped", result.stderr
+    if result.returncode == 0:
+        return "failed", result.stderr or "remote TileLang probe did not emit SAFE_PROBE_RESULT status=PASS"
+    return "failed", result.error_message or result.stderr or f"return code {result.returncode}"
 
 
 def run_safe_probes(
@@ -188,16 +204,7 @@ def run_safe_probes(
                 )
                 stdout = result.stdout
                 stderr = result.stderr
-                if result.guard_denied:
-                    status = "guard_denied"
-                    stderr = result.error_message or result.stderr
-                elif result.timeout:
-                    status = "timeout"
-                elif result.returncode == 0:
-                    status = "pass"
-                else:
-                    status = "failed"
-                    stderr = result.error_message or result.stderr or f"return code {result.returncode}"
+                status, stderr = _status_from_result(result, runner_mode)
             except Exception as exc:
                 status = "exception"
                 stderr = str(exc)

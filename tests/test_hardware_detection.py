@@ -31,8 +31,9 @@ class FakeDetectionRunner:
 
 
 class FakeProbeRunner:
-    def __init__(self, responses):
+    def __init__(self, responses, probe_runner_mode: str = "remote_probe"):
         self.responses = responses
+        self.probe_runner_mode = probe_runner_mode
         self.commands: list[str] = []
         self.command_texts: list[str] = []
 
@@ -156,7 +157,20 @@ class HardwareDetectionTests(unittest.TestCase):
 
     def test_safe_probe_success_writes_jsonl_and_logs(self) -> None:
         search_space = {"NUM_THREADS": [128, 256], "VECTOR_WIDTH": [1, 4], "NUM_STAGES": [2]}
-        runner = FakeProbeRunner({})
+        runner = FakeProbeRunner({}, probe_runner_mode="ssh_probe")
+        for name in [
+            "safe_probe_threads_probe_128",
+            "safe_probe_threads_probe_256",
+            "safe_probe_vector_width_probe_1",
+            "safe_probe_vector_width_probe_4",
+            "safe_probe_stages_probe_2",
+            "safe_probe_shared_memory_probe_32768",
+            "safe_probe_shared_memory_probe_49152",
+            "safe_probe_shared_memory_probe_65536",
+            "safe_probe_shared_memory_probe_98304",
+            "safe_probe_shared_memory_probe_131072",
+        ]:
+            runner.responses[name] = ('SAFE_PROBE_RESULT status=PASS reason="ok"\n', "", 0, False, False)
         with tempfile.TemporaryDirectory() as tmp:
             results = Path(tmp)
             records, log_lines = run_safe_probes(runner, results, search_space, 60, None)
@@ -173,8 +187,25 @@ class HardwareDetectionTests(unittest.TestCase):
         self.assertEqual([r["candidate_value"] for r in rows if r["probe_name"] == "vector_width_probe"], [1, 4])
         self.assertEqual([r["candidate_value"] for r in rows if r["probe_name"] == "stages_probe"], [2])
         self.assertIn("safe probe threads_probe NUM_THREADS=128: pass", log_lines)
-        self.assertIn("py_compile.compile", runner.command_texts[0])
-        self.assertIn("probe_kernel", runner.command_texts[0])
+        self.assertIn("@tilelang.jit", runner.command_texts[0])
+        self.assertIn("T.Kernel", runner.command_texts[0])
+        self.assertIn("T.alloc_shared", runner.command_texts[-1])
+        self.assertIn("T.Pipelined", runner.command_texts[0])
+
+    def test_remote_safe_probe_skips_when_tilelang_unavailable(self) -> None:
+        search_space = {"NUM_THREADS": [128], "VECTOR_WIDTH": [], "NUM_STAGES": []}
+        runner = FakeProbeRunner(
+            {
+                "safe_probe_threads_probe_128": ('SAFE_PROBE_RESULT status=SKIPPED reason="TileLang unavailable"\n', "", 0, False, False),
+                "safe_probe_shared_memory_probe_32768": ('SAFE_PROBE_RESULT status=SKIPPED reason="TileLang unavailable"\n', "", 0, False, False),
+            },
+            probe_runner_mode="ssh_probe",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            records, _ = run_safe_probes(runner, Path(tmp), search_space, 60, None)
+        self.assertEqual([record["status"] for record in records], ["skipped", "skipped"])
+        self.assertTrue(all(record["confidence"] == "low" for record in records))
+        self.assertIn("TileLang/GPU runtime was unavailable", records[0]["inference"])
 
     def test_safe_probe_failure_timeout_and_exception_do_not_interrupt(self) -> None:
         search_space = {"NUM_THREADS": [128], "VECTOR_WIDTH": [4], "NUM_STAGES": [2]}
@@ -228,6 +259,21 @@ class HardwareDetectionTests(unittest.TestCase):
         self.assertEqual(rows[0]["candidate_value"], 128)
         self.assertEqual(rows[0]["status"], "failed")
         self.assertIn("safe probe threads_probe NUM_THREADS=128: failed", log_text)
+
+    def test_conservative_mode_only_when_critical_fields_unknown(self) -> None:
+        config = load_config(str(ROOT / "kernel_opt_agent" / "config.example.yaml"))
+        config.hardware_detection.remote_detection = False
+        config.hardware_detection.safe_probe = False
+        config.hardware.fields = {
+            "max_threads_per_block": 1024,
+            "shared_memory_per_block_bytes": 98304,
+            "vector_alignment_bytes": 16,
+            "warp_size": 32,
+            "supported_dtypes": ["float16"],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            info = detect_hardware(config, Path(tmp), command_runner=FakeProbeRunner({}))
+        self.assertFalse(info.conservative_mode)
 
     def test_detection_disabled_skips_safe_probe_but_writes_file(self) -> None:
         config = load_config(str(ROOT / "kernel_opt_agent" / "config.example.yaml"))
