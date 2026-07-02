@@ -196,6 +196,13 @@
       gap: 12px;
     }
 
+    .hardware-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
     .result-card {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -396,7 +403,7 @@
     }
 
     @media (max-width: 980px) {
-      .topbar, .grid-2, .compare-grid, .howto { grid-template-columns: 1fr; }
+      .topbar, .grid-2, .compare-grid, .hardware-grid, .howto { grid-template-columns: 1fr; }
       .toolbar { justify-content: flex-start; }
     }
 
@@ -435,6 +442,14 @@
     </section>
 
     <div id="alerts" class="alerts"></div>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>Hardware Detection</h2>
+        <span class="muted" id="hardwareStatus">waiting</span>
+      </div>
+      <div id="hardwarePanel"></div>
+    </section>
 
     <section class="section">
       <div class="section-head">
@@ -495,7 +510,7 @@
   </main>
 
   <script>
-    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv"];
+    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml"];
     const FIXED_RESULT_DIR = "../workspace/results/";
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
@@ -512,6 +527,8 @@
       candidateTable: document.getElementById("candidateTable"),
       failedCount: document.getElementById("failedCount"),
       failedCases: document.getElementById("failedCases"),
+      hardwareStatus: document.getElementById("hardwareStatus"),
+      hardwarePanel: document.getElementById("hardwarePanel"),
       pathsTable: document.getElementById("pathsTable"),
       reportText: document.getElementById("reportText"),
       chooseDirBtn: document.getElementById("chooseDirBtn"),
@@ -585,7 +602,54 @@
       const baseline = findBaseline(rows, experiments);
       const best = findBest(rows, experiments, baseline);
       const runId = pick(baseline?.run_id, best?.run_id, rows.find((row) => row.run_id)?.run_id, experiments.find((row) => row.run_id)?.run_id);
-      return { experiments, failed, summary, allResults, rows, baseline, best, runId, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "" };
+      const hardware = parseHardwareYaml(state.files.get("hardware_detected.yaml") || "");
+      return { experiments, failed, summary, allResults, rows, baseline, best, runId, hardware, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "" };
+    }
+
+    function parseHardwareYaml(text) {
+      const empty = { available: false, fields: {}, unknownFields: [], warnings: [] };
+      if (!text.trim()) return empty;
+      const hardware = { ...empty, available: true };
+      let section = "";
+      let currentField = "";
+      for (const rawLine of text.split(/\r?\n/)) {
+        const line = rawLine.replace(/\s+$/, "");
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        if (/^\w[\w-]*:/.test(line)) {
+          const [key, ...rest] = trimmed.split(":");
+          section = key;
+          currentField = "";
+          if (rest.join(":").trim()) hardware[key] = parseYamlValue(rest.join(":").trim());
+          continue;
+        }
+        if (section === "fields" && /^  [A-Za-z0-9_-]+:/.test(line)) {
+          currentField = trimmed.slice(0, -1);
+          hardware.fields[currentField] = {};
+          continue;
+        }
+        if (section === "fields" && currentField && /^    [A-Za-z0-9_-]+:/.test(line)) {
+          const [key, ...rest] = trimmed.split(":");
+          hardware.fields[currentField][key] = parseYamlValue(rest.join(":").trim());
+          continue;
+        }
+        if (section === "unknown_fields" && trimmed.startsWith("- ")) {
+          hardware.unknownFields.push(parseYamlValue(trimmed.slice(2)));
+          continue;
+        }
+        if (section === "warnings" && trimmed.startsWith("- ")) {
+          hardware.warnings.push(parseYamlValue(trimmed.slice(2)));
+        }
+      }
+      return hardware;
+    }
+
+    function parseYamlValue(value) {
+      if (value === "true") return true;
+      if (value === "false") return false;
+      if (value === "null" || value === "~") return null;
+      if (/^-?\d+(?:\.\d+)?$/.test(value)) return Number(value);
+      return sanitizeText(value.replace(/^["']|["']$/g, ""));
     }
 
     function parseJsonl(name) {
@@ -725,6 +789,7 @@
 
     function render(data) {
       renderAlerts();
+      renderHardware(data.hardware);
       renderCompare(data);
       renderTrend(data.rows, data.best);
       renderBestConfig(data.best);
@@ -732,6 +797,56 @@
       renderFailedCases(data.failed);
       renderPaths(data.rows);
       el.reportText.textContent = data.report || "waiting: report.md 尚不可用";
+    }
+
+    function renderHardware(hardware) {
+      if (!hardware?.available) {
+        el.hardwareStatus.textContent = "waiting";
+        el.hardwarePanel.innerHTML = `<div class="empty">waiting: hardware_detected.yaml 尚不可用。后端产出文件后点击刷新即可。</div>`;
+        return;
+      }
+      const target = hardware.fields.target_name || {};
+      const backend = hardware.fields.backend || {};
+      const conservative = hardware.conservative_mode === true ? "on" : hardware.conservative_mode === false ? "off" : "waiting";
+      const unknown = hardware.unknownFields || [];
+      const rows = Object.entries(hardware.fields || {}).sort(([a], [b]) => a.localeCompare(b));
+      el.hardwareStatus.textContent = `${display(target.value)} / ${display(backend.value)}`;
+      el.hardwarePanel.innerHTML = `
+        <div class="hardware-grid">
+          ${hardwareCard("Hardware name", target)}
+          ${hardwareCard("Backend", backend)}
+          <article class="result-card">
+            <div class="metric-label">Conservative mode</div>
+            <div class="metric-main ${conservative === "on" ? "good" : ""}">${escapeHtml(conservative)}</div>
+            <div class="kv">
+              <div>profile</div><div>${escapeHtml(display(hardware.profile_used))}</div>
+              <div>detection</div><div>${escapeHtml(display(hardware.detection_enabled))}</div>
+              <div>remote</div><div>${escapeHtml(display(hardware.remote_detection_attempted))}</div>
+            </div>
+          </article>
+        </div>
+        <h3>Unknown fields</h3>
+        <div class="chips">${unknown.length ? unknown.map((field) => `<span class="chip">${escapeHtml(display(field))}</span>`).join("") : `<span class="chip">none</span>`}</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>field</th><th>value</th><th>source</th><th>confidence</th><th>notes</th></tr></thead>
+            <tbody>
+              ${rows.map(([name, meta]) => `<tr><td>${escapeHtml(name)}</td><td>${escapeHtml(display(meta.value))}</td><td>${escapeHtml(display(meta.source))}</td><td>${escapeHtml(display(meta.confidence))}</td><td>${escapeHtml(display(meta.notes))}</td></tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function hardwareCard(title, field) {
+      return `<article class="result-card">
+        <div class="metric-label">${escapeHtml(title)}</div>
+        <div class="metric-main">${escapeHtml(display(field?.value))}</div>
+        <div class="kv">
+          <div>source</div><div>${escapeHtml(display(field?.source))}</div>
+          <div>confidence</div><div>${escapeHtml(display(field?.confidence))}</div>
+        </div>
+      </article>`;
     }
 
     function renderAlerts() {
