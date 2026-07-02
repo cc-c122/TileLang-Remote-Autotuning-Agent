@@ -32,4 +32,3 @@ class HardwareProfileLoader:
         if data.get("source") != "builtin_profile":
             raise ValueError(f"hardware profile must declare source: builtin_profile: {path}")
         return normalized, data
-

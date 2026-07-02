@@ -88,4 +88,3 @@ class HardwareInfo:
             "warnings": self.warnings,
             "fields": {name: field_value.to_dict() for name, field_value in sorted(self.fields.items())},
         }
-

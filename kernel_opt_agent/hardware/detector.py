@@ -84,4 +84,3 @@ def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: Hardwa
             yaml.safe_dump(info.to_dict(), f, sort_keys=True)
         _write_log(results_dir / "hardware_detection.log", log_lines)
     return info
-
