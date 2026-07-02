@@ -24,7 +24,7 @@ TileLang Remote Autotuning Agent 是一个面向 TileLang kernel sample 的自�
 - 不让 LLM 生成或执行 shell command。
 - 不让 LLM 自由重写完整 kernel 文件，只允许模板参数替换。
 - 不安装系统包，不修改远程系统环境，不执行高风险系统命令。
-- V1 不实现 SSH password authentication；远程运行请使用 SSH key。
+- 不允许在配置文件、日志或结果文件中保存明文 SSH 密码；远程运行默认使用 password auth，密码必须通过环境变量传入。
 - 前端 V1 不提供 HTTP API，也不会触发后端命令执行。
 
 ## 快速开始：本地 mock 流程
@@ -186,8 +186,36 @@ cp kernel_opt_agent/config.ssh.example.yaml ssh.config.yaml
 - `remote.host`
 - `remote.port`
 - `remote.username`
-- `remote.key_path`
+- `remote.auth_type: password`
+- `remote.password_env`
 - `remote.remote_workspace`
+
+密码必须通过环境变量传入，不允许写入 `ssh.config.yaml`：
+
+```bash
+export KERNEL_AGENT_SSH_PASSWORD='your-password'
+```
+
+PowerShell：
+
+```powershell
+$env:KERNEL_AGENT_SSH_PASSWORD = 'your-password'
+```
+
+推荐的远程认证配置：
+
+```yaml
+runner:
+  type: ssh
+
+remote:
+  host: your-ssh-host
+  port: 22
+  username: your-user
+  auth_type: password
+  password_env: KERNEL_AGENT_SSH_PASSWORD
+  remote_workspace: /tmp/kernel_opt_workspace
+```
 
 运行：
 
@@ -197,7 +225,46 @@ python main.py --config ssh.config.yaml
 
 SSH runner 会把 sample 上传到远程 workspace，只渲染 `kernel.entry_file`，并在 `remote.remote_workspace` 下执行 correctness、build、benchmark。远程产物会拉回到本地结果目录中。
 
-V1 只支持 SSH key authentication。`auth_type: password` 是保留字段，如果配置为 password，程序会给出明确错误。
+V1 必须支持 SSH password authentication。SSH key authentication 可作为兼容方式保留；如果使用 key auth，配置 `auth_type: key` 和 `remote.key_path`，但不要把私钥内容写入配置文件。
+
+## 模力方舟容器连接说明
+
+在模力方舟容器中运行远程调参时，先在控制台创建或启动带 TileLang/mcTileLang 运行环境的容器，并确认容器提供 SSH 连接信息。通常需要记录：
+
+- SSH host
+- SSH port
+- username
+- 登录密码
+- 容器内用于调参的绝对路径，例如 `/root/kernel_opt_workspace` 或 `/tmp/kernel_opt_workspace`
+
+本项目推荐使用 password auth 连接模力方舟容器，但密码只能放在本机环境变量中：
+
+```bash
+export KERNEL_AGENT_SSH_PASSWORD='your-model-ark-container-password'
+```
+
+PowerShell：
+
+```powershell
+$env:KERNEL_AGENT_SSH_PASSWORD = 'your-model-ark-container-password'
+```
+
+配置示例：
+
+```yaml
+runner:
+  type: ssh
+
+remote:
+  host: <模力方舟 SSH Host>
+  port: <模力方舟 SSH Port>
+  username: <容器用户名>
+  auth_type: password
+  password_env: KERNEL_AGENT_SSH_PASSWORD
+  remote_workspace: /root/kernel_opt_workspace
+```
+
+确认 `remote.remote_workspace` 是容器内绝对路径，并且当前用户有写权限。`build_command`、`correctness_command` 和 `run_command` 会默认在这个 workspace 下执行；如果 sample 的 benchmark 需要进入子目录，请在命令中显式 `cd`，但仍会经过 command guard 检查。
 
 ## 硬件探测与 safe probe
 

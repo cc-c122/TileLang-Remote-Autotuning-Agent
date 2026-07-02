@@ -20,7 +20,7 @@ TileLang Remote Autotuning Agent 是一个面向 TileLang kernel sample 的远�
 4. local runner 作为正式能力保留，用于 mock、demo 和 test 模式。
 5. 前端 V1 只读取结果文件，不提供后端 HTTP API。
 6. `build_command`、`correctness_command`、`run_command` 默认都在 workspace 根目录执行；V1 不支持每条命令单独配置 working directory。
-7. SSH Runner V1 必须完整支持 SSH key authentication；password authentication 保留配置字段，但实现可以后置。
+7. SSH Runner V1 必须完整支持 password authentication；SSH key authentication 可作为兼容方式保留。
 8. V1 必须要求用户在 `config.yaml` 中显式声明 `search_space`，所有搜索策略只能从 `search_space` 中选择参数。
 9. LLM Provider V1 只实现 OpenAI-compatible Chat Completions API。
 10. V1 配置中加入 `search.strategy`，支持 `grid | random | llm | rule_based | hybrid`。
@@ -65,6 +65,53 @@ python main.py --config config.yaml
 7. Agent 按策略生成下一批候选配置，逐个执行并记录结果。
 8. Agent 在预算耗尽或达到停止条件后生成报告与产物。
 9. 用户查看 `workspace/results/` 下的结果文件。
+
+## 3.1 模力方舟容器连接说明
+
+当远程算力环境来自模力方舟容器时，用户应先在模力方舟控制台创建或启动目标容器，并确认容器内已经具备 TileLang/mcTileLang、Python、编译工具链和 benchmark/correctness 命令所需依赖。
+
+用户需要从模力方舟控制台或容器详情页获取以下 SSH 信息：
+
+1. SSH host。
+2. SSH port。
+3. username。
+4. 登录 password。
+5. 容器内用于调参的 workspace 绝对路径，例如 `/root/kernel_opt_workspace` 或 `/tmp/kernel_opt_workspace`。
+
+V1 推荐使用 password auth 连接模力方舟容器。password 不得写入 `config.yaml`，必须通过环境变量传入。例如：
+
+```bash
+export KERNEL_AGENT_SSH_PASSWORD='your-model-ark-container-password'
+```
+
+PowerShell：
+
+```powershell
+$env:KERNEL_AGENT_SSH_PASSWORD = 'your-model-ark-container-password'
+```
+
+对应配置示例：
+
+```yaml
+runner:
+  type: ssh
+
+remote:
+  host: <模力方舟 SSH Host>
+  port: <模力方舟 SSH Port>
+  username: <容器用户名>
+  auth_type: password
+  password_env: KERNEL_AGENT_SSH_PASSWORD
+  remote_workspace: /root/kernel_opt_workspace
+```
+
+要求：
+
+1. `remote.remote_workspace` 必须是容器内绝对路径，且当前用户必须有读写权限。
+2. `build_command`、`correctness_command`、`run_command` 默认都在 `remote.remote_workspace` 下执行。
+3. 如果 sample 的 benchmark 需要进入子目录，用户应在命令中显式写 `cd subdir && ...`，但命令仍必须通过 command guard。
+4. 模力方舟 password 不得出现在配置、日志、JSONL、CSV、报告、前端展示或异常堆栈中。
+5. 如果模力方舟容器同时支持 SSH key auth，可以保留 key auth 配置作为兼容路径，但 V1 主路径必须支持 password auth。
 
 ## 4. 技术栈
 
@@ -146,8 +193,7 @@ remote:
   host: 127.0.0.1
   port: 22
   username: user
-  auth_type: key
-  key_path: ~/.ssh/id_rsa
+  auth_type: password
   password_env: KERNEL_AGENT_SSH_PASSWORD
   remote_workspace: /workspace/tilelang_autotune
 
@@ -210,20 +256,21 @@ constraints:
 2. `remote.remote_workspace` 必须是绝对路径。
 3. `search.objective` 只能是 `latency` 或 `tflops`。
 4. `remote.auth_type` 只能是 `password` 或 `key`。
-5. `remote.auth_type=key` 时必须提供 `remote.key_path`，V1 必须完整支持 key auth。
-6. `remote.auth_type=password` 时必须提供 `remote.password_env`，不得在配置文件中直接写密码；如果当前版本尚未实现 password auth，程序必须给出明确错误提示。
-7. `llm.provider` V1 只能是 `openai_compatible`。
-8. `llm.api_key_env` 只保存环境变量名，不直接保存 API Key。
-9. `kernel.sample_path` 必须存在，可以是单个文件或 sample 目录。
-10. 当 `sample_path` 是目录时，`kernel.entry_file` 必须是该目录下的相对路径；V1 只对 `entry_file` 做模板渲染，其他文件原样上传。
-11. `timeout_seconds`、`max_iterations`、`candidates_per_iteration` 必须为正整数。
-12. `search.strategy` 只能是 `grid`、`random`、`llm`、`rule_based`、`hybrid`，默认建议为 `hybrid`。
-13. `search_space` 是 V1 必填字段，不能为空。
-14. 每个模板占位符如果需要被调参，必须在 `search_space` 中声明。
-15. `search_space` 参数名必须和模板占位符完全一致，并且区分大小写。
-16. 如果模板里出现未替换占位符，程序必须报错。
-17. boolean 参数渲染到 Python 文件时统一使用 Python 字面量 `True` / `False`。
-18. `constraints.denied_commands` 必须合并默认高危命令列表，用户不能通过配置清空安全红线。
+5. `remote.auth_type=password` 时必须提供 `remote.password_env`，V1 必须完整支持 password auth，并且只允许从该环境变量读取密码。
+6. `remote.auth_type=key` 时必须提供 `remote.key_path`，key auth 可作为兼容认证方式保留。
+7. 不得在 `config.yaml` 中直接写明文 password；配置模型、日志、JSONL、CSV、报告和异常堆栈都不得保存明文 password。
+8. `llm.provider` V1 只能是 `openai_compatible`。
+9. `llm.api_key_env` 只保存环境变量名，不直接保存 API Key。
+10. `kernel.sample_path` 必须存在，可以是单个文件或 sample 目录。
+11. 当 `sample_path` 是目录时，`kernel.entry_file` 必须是该目录下的相对路径；V1 只对 `entry_file` 做模板渲染，其他文件原样上传。
+12. `timeout_seconds`、`max_iterations`、`candidates_per_iteration` 必须为正整数。
+13. `search.strategy` 只能是 `grid`、`random`、`llm`、`rule_based`、`hybrid`，默认建议为 `hybrid`。
+14. `search_space` 是 V1 必填字段，不能为空。
+15. 每个模板占位符如果需要被调参，必须在 `search_space` 中声明。
+16. `search_space` 参数名必须和模板占位符完全一致，并且区分大小写。
+17. 如果模板里出现未替换占位符，程序必须报错。
+18. boolean 参数渲染到 Python 文件时统一使用 Python 字面量 `True` / `False`。
+19. `constraints.denied_commands` 必须合并默认高危命令列表，用户不能通过配置清空安全红线。
 
 ## 7. 安全规范
 
@@ -296,9 +343,10 @@ cd /root/kernel_opt_workspace && python3 benchmark.py
 5. 捕获 stdout、stderr、return code、start_time、end_time、duration、timeout。
 6. 拉回 `results/`、`logs/`、`best_kernel.py` 等产物。
 7. 连接失败、认证失败、命令超时等异常要转换成结构化结果，不得直接导致全局崩溃。
-8. V1 必须完整支持 SSH key authentication。
-9. password authentication 保留配置字段；若当前版本未实现而用户配置 `auth_type=password`，必须给出明确错误提示。
-10. password、token、API key 不得写入日志。
+8. V1 必须完整支持 password authentication。
+9. SSH key authentication 可作为兼容方式保留；若用户配置 `auth_type=key`，必须提供 `remote.key_path`。
+10. password 必须通过 `password_env` 指定的环境变量读取，不允许直接写入 `config.yaml`。
+11. password、token、API key 不得写入日志、JSONL、CSV、报告或异常堆栈。
 
 认证配置示例：
 
@@ -310,24 +358,26 @@ remote:
   host: example.com
   port: 22
   username: root
-  auth_type: key
-  key_path: ~/.ssh/id_rsa
+  auth_type: password
+  password_env: KERNEL_AGENT_SSH_PASSWORD
   remote_workspace: /root/kernel_opt_workspace
 ```
 
-password auth 预留配置：
+key auth 兼容配置：
 
 ```yaml
 remote:
-  auth_type: password
-  password_env: KERNEL_AGENT_SSH_PASSWORD
+  auth_type: key
+  key_path: ~/.ssh/id_rsa
 ```
 
 要求：
 
-1. 不允许把 password 直接写入 `config.yaml`，必须通过环境变量读取。
-2. `password_env` 只保存环境变量名。
-3. 如果 `auth_type=password` 但当前版本未实现，程序应 fail fast 并给出明确错误提示，而不是静默失败。
+1. V1 必须支持 `auth_type=password`。
+2. 不允许把 password 直接写入 `config.yaml`，必须通过环境变量读取。
+3. `password_env` 只保存环境变量名。
+4. 程序读取密码后不得把密码写入日志、结果文件、报告或异常消息。
+5. 如果 `auth_type=key`，key auth 可以继续使用，但不得影响 password auth 的主路径。
 
 ### 8.2 Command Guard
 
@@ -871,9 +921,9 @@ run_id,iteration,candidate_id,status,latency,tflops,bandwidth,objective_value,co
 1. `build_command`、`correctness_command`、`run_command` 默认都在 workspace 根目录执行；SSH Runner 默认在 `remote.remote_workspace` 下执行。
 2. V1 不支持每条命令单独配置 working directory。
 3. 所有生成文件、日志、结果都应位于 workspace 内。
-4. V1 优先且必须完整支持 SSH key authentication。
-5. password authentication 保留配置字段，允许后置实现；如果用户配置但当前版本未实现，程序必须明确报错。
-6. 密码必须通过 `password_env` 指定的环境变量读取，不允许写入 `config.yaml`。
+4. V1 优先且必须完整支持 SSH password authentication。
+5. SSH key authentication 可作为兼容方式保留；如果用户配置 `auth_type=key`，必须提供 `remote.key_path`。
+6. 密码必须通过 `password_env` 指定的环境变量读取，不允许写入 `config.yaml`，也不得写入日志、JSONL、CSV、报告或异常堆栈。
 7. V1 必须要求用户显式声明 `search_space`，且不能为空。
 8. 所有搜索策略和 LLM Planner 都只能选择 `search_space` 内的参数值。
 9. 如果模板里出现未替换占位符，程序必须报错。

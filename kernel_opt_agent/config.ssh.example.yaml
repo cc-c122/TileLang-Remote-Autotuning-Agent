@@ -7,8 +7,7 @@ remote:
   host: YOUR_SSH_HOST
   port: 22
   username: YOUR_SSH_USER
-  auth_type: key
-  key_path: ~/.ssh/id_rsa
+  auth_type: password
   password_env: KERNEL_AGENT_SSH_PASSWORD
   remote_workspace: /tmp/kernel_opt_workspace
 

@@ -278,9 +278,24 @@ class V1HardeningTests(unittest.TestCase):
         self.assertEqual(runner_exception_category(config, "timed out"), "ssh_connection_failed")
         self.assertEqual(runner_exception_category(config, "SFTP upload failed"), "sftp_upload_failed")
 
-    def test_safe_config_redacts_ssh_key_path(self) -> None:
+    def test_ssh_example_defaults_to_password_auth(self) -> None:
         config = load_config(str(ROOT / "kernel_opt_agent" / "config.ssh.example.yaml"))
-        self.assertEqual(safe_config_dict(config)["remote"]["key_path"], "<redacted:key_path>")
+        safe = safe_config_dict(config)
+        self.assertEqual(safe["remote"]["auth_type"], "password")
+        self.assertEqual(safe["remote"]["password_env"], "KERNEL_AGENT_SSH_PASSWORD")
+        self.assertIsNone(safe["remote"]["key_path"])
+
+    def test_safe_config_redacts_ssh_key_path(self) -> None:
+        config = yaml.safe_load((ROOT / "kernel_opt_agent" / "config.example.yaml").read_text(encoding="utf-8"))
+        config["runner"]["type"] = "ssh"
+        config["remote"]["auth_type"] = "key"
+        config["remote"]["key_path"] = "~/.ssh/id_rsa"
+        config["remote"]["password_env"] = None
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "key.yaml"
+            config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+            loaded = load_config(str(config_path))
+        self.assertEqual(safe_config_dict(loaded)["remote"]["key_path"], "<redacted:key_path>")
 
     def test_ssh_workspace_clear_rejects_broad_paths(self) -> None:
         runner = SSHRunner(
