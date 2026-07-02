@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import stat
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -203,23 +202,76 @@ class V1HardeningTests(unittest.TestCase):
             with (results / "summary.csv").open(newline="", encoding="utf-8") as f:
                 self.assertEqual(list(csv.DictReader(f)), [])
 
-    def test_password_auth_cli_error_is_clear(self) -> None:
+    def test_password_auth_runner_reads_env_password(self) -> None:
+        env_name = "KERNEL_AGENT_TEST_PASSWORD"
+        old = os.environ.get(env_name)
+        os.environ[env_name] = "secret-password"
+        try:
+            runner = SSHRunner(
+                SSHConnectionInfo("example.invalid", 22, "user", "password", None, env_name, "/tmp/kernel-agent"),
+                timeout_seconds=5,
+            )
+            self.assertEqual(runner._password_from_env(), "secret-password")
+        finally:
+            if old is None:
+                os.environ.pop(env_name, None)
+            else:
+                os.environ[env_name] = old
+
+    def test_password_auth_missing_env_fails_clearly(self) -> None:
+        env_name = "KERNEL_AGENT_MISSING_PASSWORD"
+        os.environ.pop(env_name, None)
+        runner = SSHRunner(
+            SSHConnectionInfo("example.invalid", 22, "user", "password", None, env_name, "/tmp/kernel-agent"),
+            timeout_seconds=5,
+        )
+        with self.assertRaisesRegex(ValueError, "SSH password env var is not set"):
+            runner._password_from_env()
+
+    def test_password_auth_missing_password_env_config_fails(self) -> None:
         config = yaml.safe_load((ROOT / "kernel_opt_agent" / "config.example.yaml").read_text(encoding="utf-8"))
         config["runner"]["type"] = "ssh"
         config["remote"]["auth_type"] = "password"
+        config["remote"].pop("password_env", None)
         with tempfile.TemporaryDirectory() as tmp:
-            config_path = Path(tmp) / "password.yaml"
+            config_path = Path(tmp) / "password_missing_env.yaml"
             config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-            proc = subprocess.run(
-                [sys.executable, "main.py", "--config", str(config_path)],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-                timeout=20,
-            )
-        self.assertEqual(proc.returncode, 2)
-        self.assertIn("SSH password authentication is reserved but not implemented", proc.stderr)
-        self.assertNotIn("Traceback", proc.stderr)
+            with self.assertRaisesRegex(ValueError, "remote.password_env is required"):
+                load_config(str(config_path))
+
+    def test_plaintext_remote_password_is_rejected(self) -> None:
+        config = yaml.safe_load((ROOT / "kernel_opt_agent" / "config.example.yaml").read_text(encoding="utf-8"))
+        config["runner"]["type"] = "ssh"
+        config["remote"]["auth_type"] = "password"
+        config["remote"]["password"] = "do-not-store"
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "plaintext_password.yaml"
+            config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "sensitive value field is not allowed"):
+                load_config(str(config_path))
+
+    def test_safe_config_does_not_include_password_value(self) -> None:
+        env_name = "KERNEL_AGENT_TEST_PASSWORD"
+        old = os.environ.get(env_name)
+        os.environ[env_name] = "secret-password"
+        try:
+            config = yaml.safe_load((ROOT / "kernel_opt_agent" / "config.example.yaml").read_text(encoding="utf-8"))
+            config["runner"]["type"] = "ssh"
+            config["remote"]["auth_type"] = "password"
+            config["remote"]["password_env"] = env_name
+            config["remote"]["key_path"] = None
+            with tempfile.TemporaryDirectory() as tmp:
+                config_path = Path(tmp) / "password.yaml"
+                config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+                safe = safe_config_dict(load_config(str(config_path)))
+        finally:
+            if old is None:
+                os.environ.pop(env_name, None)
+            else:
+                os.environ[env_name] = old
+        dumped = json.dumps(safe)
+        self.assertNotIn("secret-password", dumped)
+        self.assertEqual(safe["remote"]["password_env"], env_name)
 
     def test_ssh_runner_exception_is_classified(self) -> None:
         config = load_config(str(ROOT / "kernel_opt_agent" / "config.ssh.example.yaml"))

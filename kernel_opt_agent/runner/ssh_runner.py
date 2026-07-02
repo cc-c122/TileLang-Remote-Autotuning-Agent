@@ -28,13 +28,21 @@ class SSHRunner:
     SYSTEM_PATH_PREFIXES = ("/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/sbin", "/sys", "/usr", "/var")
 
     def __init__(self, info: SSHConnectionInfo, timeout_seconds: int, denied_commands: list[str] | None = None):
-        if info.auth_type == "password":
-            raise NotImplementedError("SSH password authentication is configured but not implemented in V1; use auth_type=key")
         self.info = info
         self.timeout_seconds = timeout_seconds
         self.denied_commands = denied_commands or []
         self.client = None
         self.sftp = None
+
+    def _password_from_env(self) -> str:
+        if self.info.auth_type != "password":
+            return ""
+        if not self.info.password_env:
+            raise ValueError("SSH password authentication requires remote.password_env")
+        password = os.environ.get(self.info.password_env)
+        if not password:
+            raise ValueError(f"SSH password env var is not set: {self.info.password_env}")
+        return password
 
     def connect(self) -> None:
         try:
@@ -42,18 +50,29 @@ class SSHRunner:
         except ImportError as exc:
             raise RuntimeError("SSH runner requires the optional dependency 'paramiko'. Install dependencies with: pip install -r kernel_opt_agent/requirements.txt") from exc
 
-        key_path = os.path.expanduser(self.info.key_path or "")
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        self.client.connect(
-            hostname=self.info.host,
-            port=self.info.port,
-            username=self.info.username,
-            key_filename=key_path,
-            timeout=20,
-            look_for_keys=True,
-            allow_agent=True,
-        )
+        if self.info.auth_type == "password":
+            self.client.connect(
+                hostname=self.info.host,
+                port=self.info.port,
+                username=self.info.username,
+                password=self._password_from_env(),
+                timeout=20,
+                look_for_keys=False,
+                allow_agent=False,
+            )
+        else:
+            key_path = os.path.expanduser(self.info.key_path or "")
+            self.client.connect(
+                hostname=self.info.host,
+                port=self.info.port,
+                username=self.info.username,
+                key_filename=key_path,
+                timeout=20,
+                look_for_keys=True,
+                allow_agent=True,
+            )
         self.sftp = self.client.open_sftp()
         self._mkdir_p(self.info.remote_workspace)
         self._ensure_workspace_marker(self.info.remote_workspace)
