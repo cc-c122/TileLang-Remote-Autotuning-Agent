@@ -207,8 +207,15 @@ def run(config: AppConfig) -> None:
             config.llm.temperature,
             config.llm.max_tokens,
         )
-        planner = Planner(client, config.search_space)
-    policy = OptimizerPolicy(config.search_space, config.search.random_seed, planner=planner)
+        planner = Planner(client, config.search_space, hardware_info.safe_probe_results, hardware_info)
+    policy = OptimizerPolicy(
+        config.search_space,
+        config.search.random_seed,
+        planner=planner,
+        safe_probe_results=hardware_info.safe_probe_results,
+        hardware_info=hardware_info,
+        conservative_mode=hardware_info.conservative_mode,
+    )
     generator = VariantGenerator(
         resolve_path(config.kernel.sample_path),
         config.kernel.entry_file,

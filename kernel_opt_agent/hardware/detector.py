@@ -12,6 +12,7 @@ from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
 from .generic_linux_detector import GenericLinuxDetector
 from .hardware_info import CANONICAL_FIELDS, HardwareInfo
 from .profile_loader import HardwareProfileLoader
+from .safe_probe import run_safe_probes
 
 
 def _profile_field_values(profile: dict[str, Any]) -> dict[str, Any]:
@@ -47,12 +48,37 @@ def _build_detection_runner(config: AppConfig, results_dir: Path):
     return runner
 
 
+def _write_empty_probe_file(results_dir: Path) -> None:
+    probe_path = results_dir / "hardware_probe.jsonl"
+    if not probe_path.exists():
+        probe_path.write_text("", encoding="utf-8")
+
+
+def _is_unknown_field(info: HardwareInfo, field_name: str) -> bool:
+    field = info.fields.get(field_name)
+    if field is None:
+        return True
+    return field.source == "unknown" or field.value is None or field.value == "unknown" or field.value == []
+
+
+def _has_critical_unknowns(info: HardwareInfo) -> bool:
+    critical_fields = [
+        "max_threads_per_block",
+        "shared_memory_per_block_bytes",
+        "vector_alignment_bytes",
+        "supported_dtypes",
+    ]
+    if any(_is_unknown_field(info, field_name) for field_name in critical_fields):
+        return True
+    return _is_unknown_field(info, "warp_size") and _is_unknown_field(info, "wave_size")
+
+
 def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: HardwareProfileLoader | None = None, command_runner: Any | None = None) -> HardwareInfo:
     results_dir.mkdir(parents=True, exist_ok=True)
     log_lines = ["hardware detection started"]
     info = HardwareInfo.unknown()
     info.detection_enabled = config.hardware_detection.enabled
-    info.conservative_mode = config.hardware_detection.conservative_unknown_mode
+    info.conservative_mode = False
     loader = profile_loader or HardwareProfileLoader()
 
     try:
@@ -104,10 +130,43 @@ def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: Hardwa
         for field_name, value in config.hardware.fields.items():
             info.set_field(field_name, value, "user_config", "high", f"from config hardware.fields.{field_name}")
 
+        if config.hardware_detection.enabled and config.hardware_detection.safe_probe:
+            info.safe_probe_used = True
+            runner = command_runner
+            close_runner = False
+            try:
+                if runner is None:
+                    runner = _build_detection_runner(config, results_dir)
+                    close_runner = True
+                probe_records, probe_log_lines = run_safe_probes(
+                    runner,
+                    results_dir,
+                    config.search_space,
+                    config.hardware_detection.timeout_seconds,
+                    info,
+                )
+                info.safe_probe_results = probe_records
+                log_lines.extend(probe_log_lines)
+            except Exception as exc:
+                log_lines.append(f"safe probe failed: {exc}")
+                info.warnings.append(f"safe probe failed: {exc}")
+                _write_empty_probe_file(results_dir)
+            finally:
+                if close_runner and hasattr(runner, "close"):
+                    try:
+                        runner.close()
+                    except Exception as exc:
+                        log_lines.append(f"safe probe runner close failed: {exc}")
+        else:
+            _write_empty_probe_file(results_dir)
+            if config.hardware_detection.safe_probe and not config.hardware_detection.enabled:
+                log_lines.append("hardware_detection.enabled=false; skipping safe probe")
+
         if config.hardware_detection.doc_lookup or config.hardware.allow_doc_lookup:
             log_lines.append("doc lookup requested but not implemented in first-stage detector")
-        if config.hardware_detection.safe_probe:
-            log_lines.append("safe probe requested but not implemented in first-stage detector")
+
+        info.conservative_mode = bool(config.hardware_detection.conservative_unknown_mode and _has_critical_unknowns(info))
+        log_lines.append(f"conservative mode: {info.conservative_mode}")
 
         unknowns = info.unknown_fields()
         if unknowns:
@@ -115,9 +174,11 @@ def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: Hardwa
             log_lines.append(f"unknown fields: {', '.join(unknowns)}")
     except Exception as exc:
         info = HardwareInfo.unknown()
+        info.conservative_mode = bool(config.hardware_detection.conservative_unknown_mode)
         info.warnings.append(f"hardware detection failed: {exc}")
         log_lines.append(f"hardware detection failed: {exc}")
     finally:
+        _write_empty_probe_file(results_dir)
         detected_path = results_dir / "hardware_detected.yaml"
         with detected_path.open("w", encoding="utf-8") as f:
             yaml.safe_dump(info.to_dict(), f, sort_keys=True)

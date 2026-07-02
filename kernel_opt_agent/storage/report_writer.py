@@ -37,6 +37,24 @@ def _hardware_lines(hardware_info: HardwareInfo | None) -> list[str]:
         lines.append(f"  - {name}: source={field.get('source')} confidence={field.get('confidence')} value={field.get('value')}")
     if data.get("unknown_fields"):
         lines.append("- Hardware parameters are incomplete; current search results may not be optimal for the target device.")
+    probe_results = data.get("safe_probe_results") or []
+    lines += [
+        "",
+        "## Safe Probe Summary",
+        "- Safe probe is a low/medium-confidence availability check, not an official hardware limit.",
+        f"- Probe records: {len(probe_results)}",
+    ]
+    if any("runner_mode=local_mock" in str(probe.get("inference", "")) for probe in probe_results):
+        lines.append("- Local mock probe was used; 未验证真实 GPU 能力.")
+    if any("runner_mode=ssh_probe" in str(probe.get("inference", "")) for probe in probe_results):
+        lines.append("- SSH probe attempted TileLang/GPU small kernels.")
+    if any(probe.get("status") == "skipped" for probe in probe_results):
+        lines.append("- Some probes were skipped because TileLang or the target backend runtime was unavailable.")
+    for probe in probe_results:
+        lines.append(
+            f"- {probe.get('probe_name')} {probe.get('param_name')}={probe.get('candidate_value')}: status={probe.get('status')} "
+            f"confidence={probe.get('confidence')} inference={probe.get('inference')}"
+        )
     return lines
 
 
