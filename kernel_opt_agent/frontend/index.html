@@ -453,6 +453,14 @@
 
     <section class="section">
       <div class="section-head">
+        <h2>Hardware Probe</h2>
+        <span class="muted" id="probeStatus">waiting</span>
+      </div>
+      <div id="probePanel"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
         <h2>Baseline vs Best</h2>
         <span class="muted" id="sourceNote">waiting</span>
       </div>
@@ -510,7 +518,8 @@
   </main>
 
   <script>
-    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml"];
+    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml", "hardware_probe.jsonl"];
+    const PROBE_STATUSES = ["pass", "failed", "timeout", "guard_denied", "exception", "skipped"];
     const FIXED_RESULT_DIR = "../workspace/results/";
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
@@ -529,6 +538,8 @@
       failedCases: document.getElementById("failedCases"),
       hardwareStatus: document.getElementById("hardwareStatus"),
       hardwarePanel: document.getElementById("hardwarePanel"),
+      probeStatus: document.getElementById("probeStatus"),
+      probePanel: document.getElementById("probePanel"),
       pathsTable: document.getElementById("pathsTable"),
       reportText: document.getElementById("reportText"),
       chooseDirBtn: document.getElementById("chooseDirBtn"),
@@ -596,6 +607,7 @@
     function parseFiles() {
       const experiments = parseJsonl("experiments.jsonl");
       const failed = parseJsonl("failed_cases.jsonl");
+      const hardwareProbe = parseJsonl("hardware_probe.jsonl");
       const summary = parseCsvFile("summary.csv");
       const allResults = parseCsvFile("all_results.csv");
       const rows = mergeRows(experiments, allResults.rows, summary.rows);
@@ -603,7 +615,7 @@
       const best = findBest(rows, experiments, baseline);
       const runId = pick(baseline?.run_id, best?.run_id, rows.find((row) => row.run_id)?.run_id, experiments.find((row) => row.run_id)?.run_id);
       const hardware = parseHardwareYaml(state.files.get("hardware_detected.yaml") || "");
-      return { experiments, failed, summary, allResults, rows, baseline, best, runId, hardware, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "" };
+      return { experiments, failed, hardwareProbe, summary, allResults, rows, baseline, best, runId, hardware, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "" };
     }
 
     function parseHardwareYaml(text) {
@@ -790,6 +802,7 @@
     function render(data) {
       renderAlerts();
       renderHardware(data.hardware);
+      renderHardwareProbe(data.hardwareProbe);
       renderCompare(data);
       renderTrend(data.rows, data.best);
       renderBestConfig(data.best);
@@ -849,6 +862,104 @@
       </article>`;
     }
 
+    function renderHardwareProbe(rows) {
+      if (!state.files.has("hardware_probe.jsonl")) {
+        el.probeStatus.textContent = "waiting";
+        el.probePanel.innerHTML = `<div class="empty">waiting: hardware_probe.jsonl 尚不可用。后端产出文件后点击刷新即可。</div>`;
+        return;
+      }
+      if (!rows.length) {
+        el.probeStatus.textContent = "0 records";
+        el.probePanel.innerHTML = `<div class="empty">hardware_probe.jsonl 暂无可展示记录。</div>`;
+        return;
+      }
+      const summaries = summarizeProbeRows(rows);
+      const lowConfidence = rows.filter((row) => isLowConfidenceProbe(row));
+      const unavailable = rows.filter((row) => probeStatus(row) !== "pass");
+      el.probeStatus.textContent = `${rows.length} records / ${summaries.length} probe types`;
+      el.probePanel.innerHTML = `
+        <div class="alert warn">local_mock 或 skipped 只能说明本地 mock / 跳过状态，不代表真实硬件能力通过。</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>probe</th><th>param</th>${PROBE_STATUSES.map((status) => `<th>${escapeHtml(status)}</th>`).join("")}<th>unavailable candidates</th><th>low-confidence hints</th></tr></thead>
+            <tbody>
+              ${summaries.map((item) => `<tr><td>${escapeHtml(item.probe)}</td><td>${escapeHtml(item.param)}</td>${PROBE_STATUSES.map((status) => `<td>${item.counts[status]}</td>`).join("")}<td>${escapeHtml(item.unavailable || "none")}</td><td>${escapeHtml(item.lowConfidence || "none")}</td></tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+        <h3>Low Confidence Hints</h3>
+        <div class="chips">${lowConfidence.length ? lowConfidence.map((row) => `<span class="chip">${escapeHtml(probeCandidateLabel(row))}: ${escapeHtml(lowConfidenceReason(row))}</span>`).join("") : `<span class="chip">none</span>`}</div>
+        <h3>Unavailable Candidates</h3>
+        <div class="chips">${unavailable.length ? unavailable.map((row) => `<span class="chip">${escapeHtml(probeCandidateLabel(row))}: ${escapeHtml(probeStatus(row))}</span>`).join("") : `<span class="chip">none</span>`}</div>
+        <h3>Probe Log Paths</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>probe</th><th>candidate</th><th>status</th><th>confidence</th><th>inference</th><th>stdout path</th><th>stderr path</th></tr></thead>
+            <tbody>
+              ${rows.map((row) => `<tr><td>${escapeHtml(display(row.probe_name))}</td><td>${escapeHtml(probeCandidateLabel(row))}</td><td>${probeStatusBadge(row)}</td><td>${escapeHtml(display(row.confidence))}</td><td>${escapeHtml(display(row.inference))}</td><td><div class="path" title="${escapeHtml(display(row.stdout_path))}">${escapeHtml(display(row.stdout_path))}</div></td><td><div class="path" title="${escapeHtml(display(row.stderr_path))}">${escapeHtml(display(row.stderr_path))}</div></td></tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function summarizeProbeRows(rows) {
+      const byProbe = new Map();
+      for (const row of rows) {
+        const key = `${display(row.probe_name)}|${display(row.param_name)}`;
+        if (!byProbe.has(key)) {
+          byProbe.set(key, { probe: display(row.probe_name), param: display(row.param_name), counts: Object.fromEntries(PROBE_STATUSES.map((status) => [status, 0])), unavailable: [], lowConfidence: [] });
+        }
+        const item = byProbe.get(key);
+        const status = probeStatus(row);
+        item.counts[status] = (item.counts[status] || 0) + 1;
+        if (status !== "pass") item.unavailable.push(display(row.candidate_value));
+        if (isLowConfidenceProbe(row)) item.lowConfidence.push(`${display(row.candidate_value)}:${lowConfidenceReason(row)}`);
+      }
+      return [...byProbe.values()].map((item) => ({
+        ...item,
+        unavailable: item.unavailable.join(", "),
+        lowConfidence: item.lowConfidence.join(", "),
+      })).sort((a, b) => a.probe.localeCompare(b.probe));
+    }
+
+    function probeStatus(row) {
+      const status = display(row?.status).toLowerCase();
+      if (status === "pass" || status === "passed" || status === "ok" || status === "probe_ok") return "pass";
+      if (status === "failed" || status === "fail" || status === "probe_failed") return "failed";
+      if (status === "timeout" || status === "timed_out") return "timeout";
+      if (status === "guard_denied" || status === "denied") return "guard_denied";
+      if (status === "exception" || status === "error") return "exception";
+      if (status === "skipped" || status === "skip") return "skipped";
+      return "exception";
+    }
+
+    function isLocalMockProbe(row) {
+      return display(row?.source).toLowerCase() === "local_mock" || display(row?.inference).toLowerCase().includes("runner_mode=local_mock");
+    }
+
+    function isLowConfidenceProbe(row) {
+      const confidence = display(row?.confidence).toLowerCase();
+      return confidence === "low" || confidence === "unknown" || probeStatus(row) === "skipped" || isLocalMockProbe(row);
+    }
+
+    function lowConfidenceReason(row) {
+      if (isLocalMockProbe(row)) return "local_mock: not real hardware verified";
+      if (probeStatus(row) === "skipped") return "skipped";
+      return `confidence=${display(row?.confidence)}`;
+    }
+
+    function probeCandidateLabel(row) {
+      return `${display(row?.param_name)}=${display(row?.candidate_value)}`;
+    }
+
+    function probeStatusBadge(row) {
+      const status = probeStatus(row);
+      const localMock = isLocalMockProbe(row);
+      const cls = status === "pass" && !localMock ? "ok" : status === "timeout" || status === "skipped" || localMock ? "warn" : "bad";
+      const label = status === "pass" && localMock ? "local_mock pass" : status;
+      return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
+    }
     function renderAlerts() {
       el.alerts.innerHTML = "";
       if (state.missing.length) {
