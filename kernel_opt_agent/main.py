@@ -192,8 +192,6 @@ def run_trial(
 
 def run(config: AppConfig) -> None:
     setup_logging()
-    if config.runner.type == "ssh" and config.remote.auth_type == "password":
-        raise NotImplementedError("SSH password authentication is reserved but not implemented in V1; use remote.auth_type=key")
     db = ExperimentDB(RESULTS_DIR)
     run_id = time.strftime("%Y%m%d-%H%M%S")
     (RESULTS_DIR / "effective_config.yaml").write_text(__import__("yaml").safe_dump(safe_config_dict(config), sort_keys=True), encoding="utf-8")
