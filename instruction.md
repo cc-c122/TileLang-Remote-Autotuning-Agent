@@ -1310,3 +1310,95 @@ LLM 输出示例：
 8. 增强 report writer，加入 Hardware Detection 部分。
 9. 增强前端 viewer，展示硬件信息与 unknown 字段。
 10. 最后更新 LLM prompt/schema，使 LLM 读取硬件信息但不伪造未知参数。
+## 20. 当前实现补充：Hardware Probe 状态语义与文档口径
+
+本节是对第 19 章 Hardware Auto Detection and Safe Probing 的当前实现补充。后续后端、前端和文档 PR 必须保持本节语义一致。
+
+### 20.1 `hardware_probe.jsonl` 当前结构
+
+当前 V1 统一使用以下字段：
+
+```json
+{
+  "probe_name": "threads_probe",
+  "param_name": "NUM_THREADS",
+  "candidate_value": 256,
+  "status": "pass",
+  "inference": "runner_mode=ssh_probe; NUM_THREADS=256 compiled and ran a TileLang/GPU small kernel; this is not an official hardware limit",
+  "source": "safe_probe",
+  "confidence": "medium",
+  "stdout_path": "workspace/results/logs/hardware_probe/threads_probe_256.stdout.log",
+  "stderr_path": "workspace/results/logs/hardware_probe/threads_probe_256.stderr.log"
+}
+```
+
+旧版草案中的 `candidate`、`probe_ok` 等字段不再作为 V1 主 schema。前端、报告和测试应以 `probe_name / param_name / candidate_value / status / confidence / inference` 为准。
+
+### 20.2 Probe 状态语义
+
+`status` 允许值：
+
+1. `pass`：probe 在当前 runner mode 下完成。
+2. `failed`：probe 实际执行后失败。
+3. `timeout`：probe 超时。
+4. `guard_denied`：command guard 拒绝执行 probe 命令。
+5. `exception`：runner 或 probe 调度阶段抛出异常。
+6. `skipped`：所需后端、运行时、TileLang/mcTileLang、GPU runtime 或该 backend 的 probe 实现不可用，因此未执行真实 probe。
+
+解释规则：
+
+1. `pass` 只表示“当前 probe 成功”，不表示官方硬件理论上限。
+2. `skipped` 不等于硬件不支持，也不等于 probe 失败；它表示没有得到真实可用性结论。
+3. `failed`、`timeout`、`guard_denied`、`exception` 可以作为“明显不可用或当前不可执行”的低/中置信度信号，但不能伪装成官方硬件限制。
+4. 所有 probe 结论必须保留 stdout/stderr 路径，便于复查。
+
+### 20.3 Runner Mode 语义
+
+当前实现区分：
+
+1. `local_mock`
+   - 用于 local runner 的 mock/demo/test 模式。
+   - 不验证真实 GPU 能力。
+   - 所有结论必须是 `confidence=low`。
+   - 报告和前端必须明确显示“未验证真实 GPU 能力”。
+
+2. `ssh_probe`
+   - 用于 SSH runner。
+   - CUDA 路径会尝试 TileLang/GPU 小 kernel 编译和运行。
+   - 如果 TileLang、torch、CUDA/GPU runtime 不可用，应返回 `skipped`，而不是假装失败或通过。
+
+3. backend-specific probe
+   - mxmaca/metax 需要 backend-aware 处理。
+   - 如果真实 mxmaca/metax probe 尚未实现，应返回 `skipped`，`confidence=low`，并在 reason 中写明 `backend probe not implemented`。
+   - 未来实现真实 mxmaca/metax probe 后，才能在该 backend 上返回 `pass` 的真实 probe 结论。
+
+### 20.4 Safe Probe 与 Optimizer / LLM 的关系
+
+1. optimizer policy 和 LLM planner 可以读取 `hardware_probe.jsonl` 结果。
+2. LLM 仍只能从 `search_space` 中选择参数。
+3. 被 probe 判定为明显不可用的参数可以被过滤或降权。
+4. `local_mock` 和 `skipped` 不应被当作真实硬件通过信号。
+5. 当硬件字段仍未知，或 probe 结果不足以建立约束时，应启用或保持 conservative mode。
+6. Conservative mode 不是性能优化结论，只是硬件信息不足时的保守搜索策略。
+
+### 20.5 Report 和前端展示要求
+
+`report.md` 和前端 viewer 必须遵守：
+
+1. 明确说明 safe probe 是低/中置信度可用性试探，不是官方硬件上限。
+2. 单独提示 `local_mock`：未验证真实 GPU 能力。
+3. 单独提示 `skipped`：probe 未执行，不代表硬件不支持。
+4. 显示每条 probe 的 `status`、`confidence`、`inference`、`stdout_path`、`stderr_path`。
+5. 前端 V1 仍然只读结果文件，不增加 HTTP API，不触发后端命令执行。
+
+### 20.6 当前已合并状态
+
+截至当前 V1：
+
+1. 后端已支持 search-space-aware safe probe。
+2. 后端已支持 local mock 低置信度标记。
+3. 后端已支持 SSH/CUDA TileLang GPU 小 kernel probe 尝试。
+4. 后端已支持 mxmaca/metax backend-aware skip 语义。
+5. optimizer policy 和 LLM prompt 已接入 hardware/probe context。
+6. 前端已支持 `hardware_detected.yaml` 与 `hardware_probe.jsonl` 只读展示。
+7. mxmaca/metax 真实 probe 仍是下一阶段任务，不应在文档中宣称已经完成。
