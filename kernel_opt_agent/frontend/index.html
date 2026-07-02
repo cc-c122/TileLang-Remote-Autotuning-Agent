@@ -367,6 +367,13 @@
     .badge.bad { background: var(--bad-soft); color: #8d1d14; }
     .badge.warn { background: var(--warn-soft); color: #7a4400; }
     .badge.best { background: var(--accent-soft); color: #1d4ed8; }
+    .badge.probe-pass { background: var(--ok-soft); color: #075c3f; }
+    .badge.probe-failed,
+    .badge.probe-guard_denied,
+    .badge.probe-exception { background: var(--bad-soft); color: #8d1d14; }
+    .badge.probe-timeout,
+    .badge.probe-skipped,
+    .badge.probe-local-mock { background: var(--warn-soft); color: #7a4400; }
 
     .chips {
       display: flex;
@@ -384,6 +391,13 @@
       color: #344054;
       padding: 4px 9px;
       font-size: 12px;
+    }
+
+    .chip.warn {
+      border-color: #f2cf85;
+      background: var(--warn-soft);
+      color: #7a4400;
+      font-weight: 760;
     }
 
     .empty {
@@ -876,9 +890,13 @@
       const summaries = summarizeProbeRows(rows);
       const lowConfidence = rows.filter((row) => isLowConfidenceProbe(row));
       const unavailable = rows.filter((row) => probeStatus(row) !== "pass");
+      const allLocalMock = rows.every((row) => isLocalMockProbe(row));
+      const skippedRows = rows.filter((row) => probeStatus(row) === "skipped");
       el.probeStatus.textContent = `${rows.length} records / ${summaries.length} probe types`;
       el.probePanel.innerHTML = `
-        <div class="alert warn">local_mock 或 skipped 只能说明本地 mock / 跳过状态，不代表真实硬件能力通过。</div>
+        ${allLocalMock ? `<div class="alert warn">未进行真实硬件验证：当前所有 probe 都来自 local_mock，只能用于本地流程演示。</div>` : ""}
+        <div class="alert warn">safe_probe 只表示候选值在当前 probe 中可能可用/不可用，不代表官方硬件上限。local_mock 或 skipped 不代表真实硬件能力通过。</div>
+        ${skippedRows.length ? `<div class="alert warn">Skipped summary: ${escapeHtml(skippedSummary(skippedRows))}</div>` : ""}
         <div class="table-wrap">
           <table>
             <thead><tr><th>probe</th><th>param</th>${PROBE_STATUSES.map((status) => `<th>${escapeHtml(status)}</th>`).join("")}<th>unavailable candidates</th><th>low-confidence hints</th></tr></thead>
@@ -888,15 +906,15 @@
           </table>
         </div>
         <h3>Low Confidence Hints</h3>
-        <div class="chips">${lowConfidence.length ? lowConfidence.map((row) => `<span class="chip">${escapeHtml(probeCandidateLabel(row))}: ${escapeHtml(lowConfidenceReason(row))}</span>`).join("") : `<span class="chip">none</span>`}</div>
+        <div class="chips">${lowConfidence.length ? lowConfidence.map((row) => `<span class="chip warn">${escapeHtml(probeCandidateLabel(row))}: ${escapeHtml(lowConfidenceReason(row))}</span>`).join("") : `<span class="chip">none</span>`}</div>
         <h3>Unavailable Candidates</h3>
         <div class="chips">${unavailable.length ? unavailable.map((row) => `<span class="chip">${escapeHtml(probeCandidateLabel(row))}: ${escapeHtml(probeStatus(row))}</span>`).join("") : `<span class="chip">none</span>`}</div>
         <h3>Probe Log Paths</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>probe</th><th>candidate</th><th>status</th><th>confidence</th><th>inference</th><th>stdout path</th><th>stderr path</th></tr></thead>
+            <thead><tr><th>probe</th><th>candidate</th><th>status</th><th>confidence</th><th>reason / inference</th><th>stdout path</th><th>stderr path</th></tr></thead>
             <tbody>
-              ${rows.map((row) => `<tr><td>${escapeHtml(display(row.probe_name))}</td><td>${escapeHtml(probeCandidateLabel(row))}</td><td>${probeStatusBadge(row)}</td><td>${escapeHtml(display(row.confidence))}</td><td>${escapeHtml(display(row.inference))}</td><td><div class="path" title="${escapeHtml(display(row.stdout_path))}">${escapeHtml(display(row.stdout_path))}</div></td><td><div class="path" title="${escapeHtml(display(row.stderr_path))}">${escapeHtml(display(row.stderr_path))}</div></td></tr>`).join("")}
+              ${rows.map((row) => `<tr><td>${escapeHtml(display(row.probe_name))}</td><td>${escapeHtml(probeCandidateLabel(row))}</td><td>${probeStatusBadge(row)}</td><td>${confidenceBadge(row)}</td><td>${escapeHtml(reasonText(row))}</td><td><div class="path" title="${escapeHtml(display(row.stdout_path))}">${escapeHtml(display(row.stdout_path))}</div></td><td><div class="path" title="${escapeHtml(display(row.stderr_path))}">${escapeHtml(display(row.stderr_path))}</div></td></tr>`).join("")}
             </tbody>
           </table>
         </div>
@@ -945,8 +963,23 @@
 
     function lowConfidenceReason(row) {
       if (isLocalMockProbe(row)) return "local_mock: not real hardware verified";
-      if (probeStatus(row) === "skipped") return "skipped";
+      if (probeStatus(row) === "skipped") return `skipped: ${reasonText(row)}`;
       return `confidence=${display(row?.confidence)}`;
+    }
+
+    function reasonText(row) {
+      return display(row?.reason || row?.inference || row?.notes);
+    }
+
+    function skippedSummary(rows) {
+      const summary = rows.slice(0, 4).map((row) => `${probeCandidateLabel(row)} - ${reasonText(row)}`).join("; ");
+      return summary + (rows.length > 4 ? `; +${rows.length - 4} more` : "");
+    }
+
+    function confidenceBadge(row) {
+      const confidence = display(row?.confidence);
+      const low = isLowConfidenceProbe(row);
+      return `<span class="badge ${low ? "warn" : "ok"}">${escapeHtml(confidence)}</span>`;
     }
 
     function probeCandidateLabel(row) {
@@ -956,7 +989,7 @@
     function probeStatusBadge(row) {
       const status = probeStatus(row);
       const localMock = isLocalMockProbe(row);
-      const cls = status === "pass" && !localMock ? "ok" : status === "timeout" || status === "skipped" || localMock ? "warn" : "bad";
+      const cls = status === "pass" && localMock ? "probe-local-mock" : `probe-${status}`;
       const label = status === "pass" && localMock ? "local_mock pass" : status;
       return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
     }
