@@ -87,6 +87,14 @@ CLI 使用：
 tilelang-agent --config config.yaml
 ```
 
+## V2 方向说明
+
+V2 的用户主路径会从“手写 `config.yaml` 再运行 CLI”逐步转向“前端创建优化任务”。普通用户不需要手写 config：在前端输入或上传 TileLang sample，填写目标 GPU 型号，选择 correctness / benchmark 命令后即可创建任务。
+
+Agent 会根据 GPU 型号、远程检测、内置 profile、文档缓存和 safe probe 尝试自动补全硬件参数，并生成内部 `effective_config.yaml` 用于复现。自动补全不是准确性保证；每个硬件字段都必须记录 `value`、`source`、`confidence` 和 `notes`，未知字段必须保持 `unknown` 或 `null`。用户可以覆盖硬件参数，用户覆盖值优先级最高，并会进入审计记录。
+
+V2 仍然只返回当前搜索预算和 patch 预算内实际验证过的 best-seen kernel，不承诺全局最优。
+
 ## 配置文件怎么写
 
 可以从示例配置开始：
