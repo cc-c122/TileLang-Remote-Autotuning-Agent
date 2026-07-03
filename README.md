@@ -49,6 +49,26 @@ python -m compileall -q kernel_opt_agent tests
 kernel_opt_agent/workspace/results/
 ```
 
+## 安装包使用方式
+
+本地开发安装：
+
+```bash
+pip install -e .
+```
+
+wheel 安装：
+
+```bash
+pip install dist/*.whl
+```
+
+CLI 使用：
+
+```bash
+tilelang-agent --config config.yaml
+```
+
 ## 配置文件怎么写
 
 可以从示例配置开始：
