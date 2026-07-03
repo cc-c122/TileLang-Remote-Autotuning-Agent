@@ -17,6 +17,7 @@ from kernel_opt_agent.benchmark.parser import parse_benchmark
 from kernel_opt_agent.config_model import AppConfig, load_config, resolve_path, safe_config_dict
 from kernel_opt_agent.hardware.detector import detect_hardware
 from kernel_opt_agent.kernel.variant_generator import VariantGenerator
+from kernel_opt_agent.run_request import load_config_from_run_request
 from kernel_opt_agent.runner.local_runner import CommandResult, LocalRunner
 from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
 from kernel_opt_agent.storage.experiment_db import ExperimentDB
@@ -275,10 +276,12 @@ def run(config: AppConfig) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True, help="Path to config.yaml")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--config", help="Path to config.yaml")
+    source.add_argument("--run-request", help="Path to V2 run_request.yaml")
     args = parser.parse_args()
     try:
-        config = load_config(args.config)
+        config = load_config_from_run_request(args.run_request) if args.run_request else load_config(args.config)
         run(config)
     except (NotImplementedError, ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)

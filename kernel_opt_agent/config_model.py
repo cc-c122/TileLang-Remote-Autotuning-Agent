@@ -82,6 +82,7 @@ class HardwareConfig(BaseModel):
     allow_doc_lookup: bool = False
     doc_paths: list[str] = Field(default_factory=list)
     fields: dict[str, Any] = Field(default_factory=dict)
+    fields_source: Literal["user_config", "user_override"] = "user_config"
 
 
 class HardwareDetectionConfig(BaseModel):

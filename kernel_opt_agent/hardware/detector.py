@@ -123,12 +123,13 @@ def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: Hardwa
                     except Exception as exc:
                         log_lines.append(f"remote detection runner close failed: {exc}")
 
+        user_source = config.hardware.fields_source
         if config.hardware.target_name:
-            info.set_field("target_name", config.hardware.target_name, "user_config", "high", "from config hardware.target_name")
+            info.set_field("target_name", config.hardware.target_name, user_source, "high", "from config hardware.target_name")
         if config.hardware.backend:
-            info.set_field("backend", config.hardware.backend, "user_config", "high", "from config hardware.backend")
+            info.set_field("backend", config.hardware.backend, user_source, "high", "from config hardware.backend")
         for field_name, value in config.hardware.fields.items():
-            info.set_field(field_name, value, "user_config", "high", f"from config hardware.fields.{field_name}")
+            info.set_field(field_name, value, user_source, "high", f"from config hardware.fields.{field_name}")
 
         if config.hardware_detection.enabled and config.hardware_detection.safe_probe:
             info.safe_probe_used = True
