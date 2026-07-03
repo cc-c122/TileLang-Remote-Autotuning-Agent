@@ -8,6 +8,39 @@ V1 远程 SSH 路径必须支持 password auth。密码只能通过 `remote.pass
 
 SSH key auth 可以作为兼容路径保留，但不再是 V1 远程 smoke 的默认路径。
 
+## V1 最小远程运行示例
+
+V1 最小远程 smoke 应验证 password auth、SFTP 上传、远程 workspace 内执行、correctness-before-benchmark、结果拉回和密码不落盘链路可用。对外文档只保留占位符示例：
+
+```yaml
+runner:
+  type: ssh
+
+remote:
+  host: <SSH_HOST>
+  port: <SSH_PORT>
+  username: <SSH_USER>
+  auth_type: password
+  password_env: KERNEL_AGENT_SSH_PASSWORD
+  remote_workspace: /tmp/kernel_opt_workspace
+```
+
+运行前只在本机 shell 设置密码环境变量。
+
+```bash
+export KERNEL_AGENT_SSH_PASSWORD='<container-password>'
+python main.py --config ssh.config.yaml
+```
+
+PowerShell：
+
+```powershell
+$env:KERNEL_AGENT_SSH_PASSWORD = '<container-password>'
+python main.py --config ssh.config.yaml
+```
+
+不要把真实密码、真实 host、真实端口或 token 写进配置、文档、日志或 PR 评论。
+
 ## Password Auth 配置方式
 
 从 `kernel_opt_agent/config.ssh.example.yaml` 复制一份本地配置，例如：
