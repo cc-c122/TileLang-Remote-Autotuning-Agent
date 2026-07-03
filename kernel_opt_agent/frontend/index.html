@@ -8,7 +8,7 @@
   <style>
     :root {
       color-scheme: light;
-      --bg: #f5f7fb;
+      --bg: #f4f6f9;
       --panel: #ffffff;
       --ink: #172033;
       --muted: #667085;
@@ -22,14 +22,16 @@
       --warn-soft: #fff2d6;
       --bad: #b42318;
       --bad-soft: #fde2df;
-      --shadow: 0 14px 32px rgba(23, 32, 51, 0.08);
+      --shadow: 0 10px 24px rgba(23, 32, 51, 0.07);
     }
 
     * { box-sizing: border-box; }
 
     body {
       margin: 0;
-      background: var(--bg);
+      background:
+        linear-gradient(180deg, #f8fafc 0, var(--bg) 280px),
+        var(--bg);
       color: var(--ink);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       line-height: 1.45;
@@ -42,8 +44,11 @@
       color: #fff;
       cursor: pointer;
       font: inherit;
+      font-weight: 650;
       padding: 9px 13px;
     }
+
+    button:hover { filter: brightness(0.97); }
 
     button.secondary {
       border-color: var(--line);
@@ -106,6 +111,7 @@
     .subtitle {
       color: var(--muted);
       margin-top: 5px;
+      max-width: 760px;
     }
 
     .toolbar {
@@ -137,6 +143,13 @@
       box-shadow: var(--shadow);
     }
 
+    .read-only-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 10px;
+    }
+
     .howto p {
       color: var(--muted);
       font-size: 13px;
@@ -155,6 +168,7 @@
       background: #fff;
       color: #475467;
       padding: 10px 12px;
+      font-size: 13px;
     }
 
     .alert.ok { border-left-color: var(--ok); }
@@ -185,6 +199,13 @@
 
     .section-head h2 { margin: 0; }
 
+    .section-kicker {
+      margin-top: -6px;
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
     .muted {
       color: var(--muted);
       font-size: 13px;
@@ -206,14 +227,14 @@
     .result-card {
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: linear-gradient(180deg, #fff, #f9fbfe);
+      background: linear-gradient(180deg, #fff, #fafcff);
       padding: 14px;
       min-height: 178px;
     }
 
     .best-card {
-      border-color: #9bd7bf;
-      background: linear-gradient(180deg, #ffffff, #f0fbf6);
+      border-color: #9fbdfb;
+      background: linear-gradient(180deg, #ffffff, #f2f6ff);
     }
 
     .metric-label {
@@ -232,6 +253,8 @@
     }
 
     .metric-main.good { color: var(--ok); }
+
+    .metric-main.best { color: var(--accent); }
 
     .metric-row {
       display: grid;
@@ -361,6 +384,7 @@
       font-weight: 760;
       background: var(--soft);
       color: #344054;
+      white-space: nowrap;
     }
 
     .badge.ok { background: var(--ok-soft); color: #075c3f; }
@@ -393,6 +417,20 @@
       font-size: 12px;
     }
 
+    .chip.ok {
+      border-color: #9bd7bf;
+      background: var(--ok-soft);
+      color: #075c3f;
+      font-weight: 760;
+    }
+
+    .chip.bad {
+      border-color: #f2a7a1;
+      background: var(--bad-soft);
+      color: #8d1d14;
+      font-weight: 760;
+    }
+
     .chip.warn {
       border-color: #f2cf85;
       background: var(--warn-soft);
@@ -406,6 +444,7 @@
       background: #fbfcfe;
       color: var(--muted);
       padding: 18px;
+      font-size: 13px;
     }
 
     .path {
@@ -434,7 +473,7 @@
     <header class="topbar">
       <div>
         <h1>TileLang 结果查看器</h1>
-        <p class="subtitle">V1 只消费本地结果文件，不调用 HTTP API，不触发后端命令执行。</p>
+        <p class="subtitle">V1 前端只读结果文件，不执行命令；适合快速验收调参结果、硬件探测和失败案例。</p>
       </div>
       <div class="toolbar">
         <button id="chooseDirBtn" type="button">选择结果目录</button>
@@ -448,6 +487,13 @@
       <div>
         <h3>本地查看说明</h3>
         <p>推荐点击“选择结果目录”，直接选择后端生成的 <code>kernel_opt_agent/workspace/results/</code>。</p>
+        <div class="read-only-list">
+          <span class="chip ok">前端只读结果文件，不执行命令</span>
+          <span class="chip">不读取密钥</span>
+          <span class="chip">不修改结果</span>
+          <span class="chip warn">safe_probe 不是官方硬件上限</span>
+          <span class="chip warn">local_mock 不代表真实硬件验证</span>
+        </div>
       </div>
       <div>
         <h3>静态服务器方式</h3>
@@ -459,25 +505,28 @@
 
     <section class="section">
       <div class="section-head">
-        <h2>Hardware Detection</h2>
+        <h2>硬件识别</h2>
         <span class="muted" id="hardwareStatus">waiting</span>
       </div>
+      <p class="section-kicker">读取 <code>hardware_detected.yaml</code>，展示 hardware name、backend、source、confidence 和 unknown 字段。</p>
       <div id="hardwarePanel"></div>
     </section>
 
     <section class="section">
       <div class="section-head">
-        <h2>Hardware Probe</h2>
+        <h2>硬件 Probe</h2>
         <span class="muted" id="probeStatus">waiting</span>
       </div>
+      <p class="section-kicker">读取 <code>hardware_probe.jsonl</code>。safe_probe 不是官方硬件上限；local_mock 不代表真实硬件验证。</p>
       <div id="probePanel"></div>
     </section>
 
     <section class="section">
       <div class="section-head">
-        <h2>Baseline vs Best</h2>
+        <h2>Baseline vs Best 对比</h2>
         <span class="muted" id="sourceNote">waiting</span>
       </div>
+      <p class="section-kicker">对比 baseline 与预算内 best-seen，默认以 latency 越低越好计算提升。</p>
       <div class="compare-grid" id="compareGrid"></div>
     </section>
 
@@ -485,13 +534,13 @@
       <div>
         <div class="section-head">
           <h2>Latency / TFLOPS / Bandwidth 趋势</h2>
-          <span class="muted">成功候选按 iteration/candidate 排序</span>
+          <span class="muted">成功候选按轮次 / 候选序号排序</span>
         </div>
         <div class="chart" id="trendChart"></div>
       </div>
       <div>
         <div class="section-head">
-          <h2>Best Config</h2>
+          <h2>最佳配置 Best Config</h2>
           <span class="muted" id="bestIdentity">waiting</span>
         </div>
         <pre id="bestConfig">waiting</pre>
@@ -500,7 +549,7 @@
 
     <section class="section">
       <div class="section-head">
-        <h2>Trial Table</h2>
+        <h2>候选明细</h2>
         <span class="muted" id="trialCount">waiting</span>
       </div>
       <div id="candidateTable" class="table-wrap"></div>
@@ -508,7 +557,7 @@
 
     <section class="section">
       <div class="section-head">
-        <h2>Failed Cases</h2>
+        <h2>失败案例</h2>
         <span class="muted" id="failedCount">waiting</span>
       </div>
       <div id="failedCases"></div>
@@ -516,7 +565,7 @@
 
     <section class="section">
       <div class="section-head">
-        <h2>Log / Patch Paths</h2>
+        <h2>日志 / Patch 路径</h2>
         <span class="muted">只展示路径，不读取内容</span>
       </div>
       <div id="pathsTable" class="table-wrap"></div>
@@ -534,6 +583,31 @@
   <script>
     const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml", "hardware_probe.jsonl"];
     const PROBE_STATUSES = ["pass", "failed", "timeout", "guard_denied", "exception", "skipped"];
+    const PROBE_STATUS_LABELS = {
+      pass: "pass / 通过",
+      failed: "failed / 失败",
+      timeout: "timeout / 超时",
+      guard_denied: "guard_denied / 被 guard 拦截",
+      exception: "exception / 异常",
+      skipped: "skipped / 跳过",
+    };
+    const TRIAL_HEADER_LABELS = {
+      iteration: "轮次",
+      candidate_id: "候选",
+      status: "状态",
+      latency: "latency",
+      tflops: "TFLOPS",
+      bandwidth: "bandwidth",
+      objective_value: "目标值",
+      config_hash: "config hash",
+      config: "配置",
+    };
+    const PATH_HEADER_LABELS = {
+      kernel_path: "kernel 路径",
+      patch_path: "patch 路径",
+      stdout: "stdout 路径",
+      stderr: "stderr 路径",
+    };
     const FIXED_RESULT_DIR = "../workspace/results/";
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
@@ -587,7 +661,7 @@
       state.loading = value;
       el.reloadBtn.disabled = value;
       el.chooseDirBtn.disabled = value;
-      el.reloadBtn.textContent = value ? "刷新中" : "刷新";
+      el.reloadBtn.textContent = value ? "读取中" : "刷新";
     }
 
     function resetReadState() {
@@ -698,7 +772,7 @@
       if (!text) return { headers: [], rows: [] };
       const parsed = parseCsv(text);
       if (!parsed.headers.length) {
-        addOneShotWarning(`${name} 没有可用表头，相关区域会显示 waiting。`);
+        addOneShotWarning(`${name} 没有可用表头，相关区域会降级为空状态。`);
         return parsed;
       }
       const missing = ["iteration", "candidate_id", "status"].filter((field) => !parsed.headers.includes(field));
@@ -823,40 +897,40 @@
       renderCandidates(data.rows, data.best);
       renderFailedCases(data.failed);
       renderPaths(data.rows);
-      el.reportText.textContent = data.report || "waiting: report.md 尚不可用";
+      el.reportText.textContent = data.report || "等待 report.md：后端可能仍在生成报告。";
     }
 
     function renderHardware(hardware) {
       if (!hardware?.available) {
         el.hardwareStatus.textContent = "waiting";
-        el.hardwarePanel.innerHTML = `<div class="empty">waiting: hardware_detected.yaml 尚不可用。后端产出文件后点击刷新即可。</div>`;
+        el.hardwarePanel.innerHTML = `<div class="empty">等待 hardware_detected.yaml：后端可能仍在运行，文件出现后点击刷新即可。</div>`;
         return;
       }
       const target = hardware.fields.target_name || {};
       const backend = hardware.fields.backend || {};
-      const conservative = hardware.conservative_mode === true ? "on" : hardware.conservative_mode === false ? "off" : "waiting";
+      const conservative = hardware.conservative_mode === true ? "开启" : hardware.conservative_mode === false ? "关闭" : "waiting";
       const unknown = hardware.unknownFields || [];
       const rows = Object.entries(hardware.fields || {}).sort(([a], [b]) => a.localeCompare(b));
       el.hardwareStatus.textContent = `${display(target.value)} / ${display(backend.value)}`;
       el.hardwarePanel.innerHTML = `
         <div class="hardware-grid">
-          ${hardwareCard("Hardware name", target)}
-          ${hardwareCard("Backend", backend)}
+          ${hardwareCard("硬件名称", target)}
+          ${hardwareCard("后端 Backend", backend)}
           <article class="result-card">
-            <div class="metric-label">Conservative mode</div>
-            <div class="metric-main ${conservative === "on" ? "good" : ""}">${escapeHtml(conservative)}</div>
+            <div class="metric-label">保守模式</div>
+            <div class="metric-main ${conservative === "开启" ? "good" : ""}">${escapeHtml(conservative)}</div>
             <div class="kv">
               <div>profile</div><div>${escapeHtml(display(hardware.profile_used))}</div>
-              <div>detection</div><div>${escapeHtml(display(hardware.detection_enabled))}</div>
-              <div>remote</div><div>${escapeHtml(display(hardware.remote_detection_attempted))}</div>
+              <div>识别启用</div><div>${escapeHtml(display(hardware.detection_enabled))}</div>
+              <div>远程识别</div><div>${escapeHtml(display(hardware.remote_detection_attempted))}</div>
             </div>
           </article>
         </div>
-        <h3>Unknown fields</h3>
-        <div class="chips">${unknown.length ? unknown.map((field) => `<span class="chip">${escapeHtml(display(field))}</span>`).join("") : `<span class="chip">none</span>`}</div>
+        <h3>Unknown 字段</h3>
+        <div class="chips">${unknown.length ? unknown.map((field) => `<span class="chip warn">${escapeHtml(display(field))}</span>`).join("") : `<span class="chip ok">无 unknown 字段</span>`}</div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>field</th><th>value</th><th>source</th><th>confidence</th><th>notes</th></tr></thead>
+            <thead><tr><th>字段</th><th>值</th><th>source</th><th>confidence</th><th>说明</th></tr></thead>
             <tbody>
               ${rows.map(([name, meta]) => `<tr><td>${escapeHtml(name)}</td><td>${escapeHtml(display(meta.value))}</td><td>${escapeHtml(display(meta.source))}</td><td>${escapeHtml(display(meta.confidence))}</td><td>${escapeHtml(display(meta.notes))}</td></tr>`).join("")}
             </tbody>
@@ -879,12 +953,12 @@
     function renderHardwareProbe(rows) {
       if (!state.files.has("hardware_probe.jsonl")) {
         el.probeStatus.textContent = "waiting";
-        el.probePanel.innerHTML = `<div class="empty">waiting: hardware_probe.jsonl 尚不可用。后端产出文件后点击刷新即可。</div>`;
+        el.probePanel.innerHTML = `<div class="empty">等待 hardware_probe.jsonl：后端可能仍在运行，文件出现后点击刷新即可。</div>`;
         return;
       }
       if (!rows.length) {
-        el.probeStatus.textContent = "0 records";
-        el.probePanel.innerHTML = `<div class="empty">hardware_probe.jsonl 暂无可展示记录。</div>`;
+        el.probeStatus.textContent = "0 条记录";
+        el.probePanel.innerHTML = `<div class="empty">hardware_probe.jsonl 已读取，但暂无可展示记录。</div>`;
         return;
       }
       const summaries = summarizeProbeRows(rows);
@@ -892,27 +966,27 @@
       const unavailable = rows.filter((row) => probeStatus(row) !== "pass");
       const allLocalMock = rows.every((row) => isLocalMockProbe(row));
       const skippedRows = rows.filter((row) => probeStatus(row) === "skipped");
-      el.probeStatus.textContent = `${rows.length} records / ${summaries.length} probe types`;
+      el.probeStatus.textContent = `${rows.length} 条记录 / ${summaries.length} 类 probe`;
       el.probePanel.innerHTML = `
         ${allLocalMock ? `<div class="alert warn">未进行真实硬件验证：当前所有 probe 都来自 local_mock，只能用于本地流程演示。</div>` : ""}
         <div class="alert warn">safe_probe 只表示候选值在当前 probe 中可能可用/不可用，不代表官方硬件上限。local_mock 或 skipped 不代表真实硬件能力通过。</div>
-        ${skippedRows.length ? `<div class="alert warn">Skipped summary: ${escapeHtml(skippedSummary(skippedRows))}</div>` : ""}
+        ${skippedRows.length ? `<div class="alert warn">skipped 摘要：${escapeHtml(skippedSummary(skippedRows))}</div>` : ""}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>probe</th><th>param</th>${PROBE_STATUSES.map((status) => `<th>${escapeHtml(status)}</th>`).join("")}<th>unavailable candidates</th><th>low-confidence hints</th></tr></thead>
+            <thead><tr><th>probe</th><th>参数</th>${PROBE_STATUSES.map((status) => `<th>${escapeHtml(PROBE_STATUS_LABELS[status])}</th>`).join("")}<th>不可用候选值</th><th>低置信度提示</th></tr></thead>
             <tbody>
-              ${summaries.map((item) => `<tr><td>${escapeHtml(item.probe)}</td><td>${escapeHtml(item.param)}</td>${PROBE_STATUSES.map((status) => `<td>${item.counts[status]}</td>`).join("")}<td>${escapeHtml(item.unavailable || "none")}</td><td>${escapeHtml(item.lowConfidence || "none")}</td></tr>`).join("")}
+              ${summaries.map((item) => `<tr><td>${escapeHtml(item.probe)}</td><td>${escapeHtml(item.param)}</td>${PROBE_STATUSES.map((status) => `<td>${item.counts[status]}</td>`).join("")}<td>${escapeHtml(item.unavailable || "无")}</td><td>${escapeHtml(item.lowConfidence || "无")}</td></tr>`).join("")}
             </tbody>
           </table>
         </div>
-        <h3>Low Confidence Hints</h3>
-        <div class="chips">${lowConfidence.length ? lowConfidence.map((row) => `<span class="chip warn">${escapeHtml(probeCandidateLabel(row))}: ${escapeHtml(lowConfidenceReason(row))}</span>`).join("") : `<span class="chip">none</span>`}</div>
-        <h3>Unavailable Candidates</h3>
-        <div class="chips">${unavailable.length ? unavailable.map((row) => `<span class="chip">${escapeHtml(probeCandidateLabel(row))}: ${escapeHtml(probeStatus(row))}</span>`).join("") : `<span class="chip">none</span>`}</div>
-        <h3>Probe Log Paths</h3>
+        <h3>低置信度提示</h3>
+        <div class="chips">${lowConfidence.length ? lowConfidence.map((row) => `<span class="chip warn">${escapeHtml(probeCandidateLabel(row))}: ${escapeHtml(lowConfidenceReason(row))}</span>`).join("") : `<span class="chip ok">无低置信度项</span>`}</div>
+        <h3>不可用候选值</h3>
+        <div class="chips">${unavailable.length ? unavailable.map((row) => `<span class="chip ${probeStatus(row) === "skipped" || probeStatus(row) === "timeout" ? "warn" : "bad"}">${escapeHtml(probeCandidateLabel(row))}: ${escapeHtml(PROBE_STATUS_LABELS[probeStatus(row)] || probeStatus(row))}</span>`).join("") : `<span class="chip ok">无不可用候选值</span>`}</div>
+        <h3>Probe 日志路径</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>probe</th><th>candidate</th><th>status</th><th>confidence</th><th>reason / inference</th><th>stdout path</th><th>stderr path</th></tr></thead>
+            <thead><tr><th>probe</th><th>候选值</th><th>状态</th><th>confidence</th><th>reason / inference</th><th>stdout 路径</th><th>stderr 路径</th></tr></thead>
             <tbody>
               ${rows.map((row) => `<tr><td>${escapeHtml(display(row.probe_name))}</td><td>${escapeHtml(probeCandidateLabel(row))}</td><td>${probeStatusBadge(row)}</td><td>${confidenceBadge(row)}</td><td>${escapeHtml(reasonText(row))}</td><td><div class="path" title="${escapeHtml(display(row.stdout_path))}">${escapeHtml(display(row.stdout_path))}</div></td><td><div class="path" title="${escapeHtml(display(row.stderr_path))}">${escapeHtml(display(row.stderr_path))}</div></td></tr>`).join("")}
             </tbody>
@@ -962,8 +1036,8 @@
     }
 
     function lowConfidenceReason(row) {
-      if (isLocalMockProbe(row)) return "local_mock: not real hardware verified";
-      if (probeStatus(row) === "skipped") return `skipped: ${reasonText(row)}`;
+      if (isLocalMockProbe(row)) return "local_mock：不代表真实硬件验证";
+      if (probeStatus(row) === "skipped") return `skipped：${reasonText(row)}`;
       return `confidence=${display(row?.confidence)}`;
     }
 
@@ -973,7 +1047,7 @@
 
     function skippedSummary(rows) {
       const summary = rows.slice(0, 4).map((row) => `${probeCandidateLabel(row)} - ${reasonText(row)}`).join("; ");
-      return summary + (rows.length > 4 ? `; +${rows.length - 4} more` : "");
+      return summary + (rows.length > 4 ? `；另有 ${rows.length - 4} 条` : "");
     }
 
     function confidenceBadge(row) {
@@ -990,26 +1064,26 @@
       const status = probeStatus(row);
       const localMock = isLocalMockProbe(row);
       const cls = status === "pass" && localMock ? "probe-local-mock" : `probe-${status}`;
-      const label = status === "pass" && localMock ? "local_mock pass" : status;
+      const label = status === "pass" && localMock ? "local_mock pass / 非真实验证" : (PROBE_STATUS_LABELS[status] || status);
       return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
     }
     function renderAlerts() {
       el.alerts.innerHTML = "";
       if (state.missing.length) {
         const list = state.missing.map((name) => `<li>${escapeHtml(name)}</li>`).join("");
-        addAlert("warn", `后端结果文件仍在 waiting：<ul class="waiting-list">${list}</ul>后端没跑完或结果目录选错时会出现这个状态。`);
+        addAlert("warn", `以下结果文件仍在 waiting：<ul class="waiting-list">${list}</ul>通常表示后端尚未跑完，或选择的不是 workspace/results/。`);
       }
       for (const warning of state.warnings) addAlert("warn", escapeHtml(warning));
-      if (!state.missing.length && !state.warnings.length) addAlert("ok", "已读取本地结果文件。页面没有 HTTP API 调用，也不会触发后端命令执行。");
+      if (!state.missing.length && !state.warnings.length) addAlert("ok", "已读取本地结果文件。前端只读结果文件，不执行命令。");
     }
 
     function renderCompare(data) {
       const delta = data.improvement;
       el.compareGrid.innerHTML = `
-        ${resultCard("Baseline", data.baseline, "")}
-        ${resultCard("Best-seen", data.best, "best-card")}
+        ${resultCard("Baseline 基线", data.baseline, "")}
+        ${resultCard("Best-seen 最优已见", data.best, "best-card")}
         <article class="result-card">
-          <div class="metric-label">Improvement</div>
+          <div class="metric-label">提升比例</div>
           <div class="metric-main ${delta !== null && delta >= 0 ? "good" : ""}">${delta === null ? "waiting" : `${formatNumber(delta)}%`}</div>
           <div class="kv">
             <div>口径</div><div>基于 latency，越低越好</div>
@@ -1024,14 +1098,14 @@
     function resultCard(title, row, extraClass) {
       return `<article class="result-card ${extraClass}">
         <div class="metric-label">${escapeHtml(title)}</div>
-        <div class="metric-main">${displayNumber(row?.latency)} ms</div>
+        <div class="metric-main ${extraClass ? "best" : ""}">${displayNumber(row?.latency)} ms</div>
         <div class="metric-row">
           <div class="mini"><div class="name">TFLOPS</div><div class="num">${displayNumber(row?.tflops)}</div></div>
           <div class="mini"><div class="name">Bandwidth</div><div class="num">${displayNumber(row?.bandwidth)}</div></div>
-          <div class="mini"><div class="name">Status</div><div class="num">${statusBadge(row)}</div></div>
+          <div class="mini"><div class="name">状态</div><div class="num">${statusBadge(row)}</div></div>
         </div>
         <div class="kv">
-          <div>Candidate</div><div>${escapeHtml(candidateLabel(row))}</div>
+          <div>候选</div><div>${escapeHtml(candidateLabel(row))}</div>
           <div>Config hash</div><div>${escapeHtml(display(row?.config_hash))}</div>
         </div>
       </article>`;
@@ -1040,7 +1114,7 @@
     function renderTrend(rows, best) {
       const successful = rows.filter((row) => isSuccess(row));
       if (!successful.length) {
-        el.trendChart.innerHTML = `<div class="empty">waiting: 尚无成功候选可绘制。若后端仍在运行，请稍后刷新。</div>`;
+        el.trendChart.innerHTML = `<div class="empty">等待趋势数据：尚无成功候选可绘制。若后端仍在运行，请稍后刷新。</div>`;
         return;
       }
       const metrics = [
@@ -1077,29 +1151,29 @@
 
     function renderBestConfig(best) {
       el.bestIdentity.textContent = best ? candidateLabel(best) : "waiting";
-      el.bestConfig.textContent = best ? JSON.stringify(redactObject(best.config || {}), null, 2) : "waiting: 尚无可用 best-seen config";
+      el.bestConfig.textContent = best ? JSON.stringify(redactObject(best.config || {}), null, 2) : "等待 best-seen config：尚无成功候选。";
     }
 
     function renderCandidates(rows, best) {
-      el.trialCount.textContent = rows.length ? `${rows.length} candidates` : "waiting";
+      el.trialCount.textContent = rows.length ? `${rows.length} 个候选` : "waiting";
       if (!rows.length) {
-        el.candidateTable.innerHTML = `<div class="empty">waiting: 还没有候选记录。支持后端运行中状态，文件出现后点击刷新即可。</div>`;
+        el.candidateTable.innerHTML = `<div class="empty">等待候选记录：后端运行中时这里会先为空，summary.csv / experiments.jsonl 出现后点击刷新即可。</div>`;
         return;
       }
       const headers = ["iteration", "candidate_id", "status", "latency", "tflops", "bandwidth", "objective_value", "config_hash", "config"];
-      el.candidateTable.innerHTML = `<table><thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}<th>best</th></tr></thead><tbody>
+      el.candidateTable.innerHTML = `<table><thead><tr>${headers.map((header) => `<th>${escapeHtml(TRIAL_HEADER_LABELS[header] || header)}</th>`).join("")}<th>best-seen</th></tr></thead><tbody>
         ${rows.map((row) => `<tr class="${rowKey(row) === rowKey(best || {}) ? "best-row" : ""}">${headers.map((header) => `<td class="${header === "config" ? "config-cell" : ""}">${cell(row, header)}</td>`).join("")}<td>${rowKey(row) === rowKey(best || {}) ? `<span class="badge best">best-seen</span>` : ""}</td></tr>`).join("")}
       </tbody></table>`;
     }
 
     function renderFailedCases(failed) {
-      el.failedCount.textContent = failed.length ? `${failed.length} failed` : "0 failed";
+      el.failedCount.textContent = failed.length ? `${failed.length} 条失败` : "0 条失败";
       if (!failed.length) {
         el.failedCases.innerHTML = `<div class="empty">暂无失败案例。若 failed_cases.jsonl 缺失，会在顶部显示 waiting。</div>`;
         return;
       }
       el.failedCases.innerHTML = `<div class="chips">${failed.slice(0, 8).map((item) => `<span class="chip">${escapeHtml(candidateLabel(item))}: ${escapeHtml(errorCategory(item))}</span>`).join("")}</div>
-        <div class="table-wrap"><table class="failed-table"><thead><tr><th>candidate</th><th>status</th><th>error category</th><th>reason</th><th>max_error</th><th>stdout path</th><th>stderr path</th><th>patch path</th></tr></thead><tbody>
+        <div class="table-wrap"><table class="failed-table"><thead><tr><th>候选</th><th>状态</th><th>错误类别</th><th>原因</th><th>max_error</th><th>stdout 路径</th><th>stderr 路径</th><th>patch 路径</th></tr></thead><tbody>
           ${failed.map((item) => `<tr><td>${escapeHtml(candidateLabel(item))}</td><td>${statusBadge(item)}</td><td>${escapeHtml(errorCategory(item))}</td><td class="reason-cell">${escapeHtml(errorReason(item))}</td><td>${escapeHtml(display(valueAt(item, ["correctness", "max_error"])))}</td><td><div class="path" title="${escapeHtml(pathValue(item, "stdout"))}">${escapeHtml(pathValue(item, "stdout"))}</div></td><td><div class="path" title="${escapeHtml(pathValue(item, "stderr"))}">${escapeHtml(pathValue(item, "stderr"))}</div></td><td><div class="path" title="${escapeHtml(pathValue(item, "patch"))}">${escapeHtml(pathValue(item, "patch"))}</div></td></tr>`).join("")}
         </tbody></table></div>`;
     }
@@ -1107,11 +1181,11 @@
     function renderPaths(rows) {
       const withPaths = rows.filter((row) => row.kernel_path || row.patch_path || row.stdout || row.stderr);
       if (!withPaths.length) {
-        el.pathsTable.innerHTML = `<div class="empty">waiting: 暂无 log/patch 路径。路径缺失时不会尝试读取文件内容。</div>`;
+        el.pathsTable.innerHTML = `<div class="empty">等待 log/patch 路径：路径缺失时页面不会尝试读取文件内容。</div>`;
         return;
       }
       const fields = ["kernel_path", "patch_path", "stdout", "stderr"];
-      el.pathsTable.innerHTML = `<table><thead><tr><th>candidate</th>${fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr></thead><tbody>
+      el.pathsTable.innerHTML = `<table><thead><tr><th>候选</th>${fields.map((field) => `<th>${escapeHtml(PATH_HEADER_LABELS[field] || field)}</th>`).join("")}</tr></thead><tbody>
         ${withPaths.map((row) => `<tr><td>${escapeHtml(candidateLabel(row))}</td>${fields.map((field) => `<td><div class="path" title="${escapeHtml(display(row[field]))}">${escapeHtml(display(row[field]))}</div></td>`).join("")}</tr>`).join("")}
       </tbody></table>`;
     }
@@ -1123,9 +1197,22 @@
     }
 
     function statusBadge(row) {
-      const text = display(row?.status);
+      const text = displayStatus(row?.status);
       const kind = isSuccess(row) ? "ok" : (text === "waiting" ? "warn" : "bad");
       return `<span class="badge ${kind}">${escapeHtml(text)}</span>`;
+    }
+
+    function displayStatus(status) {
+      const raw = display(status);
+      const normalized = raw.toLowerCase();
+      if (normalized === "waiting") return "waiting";
+      if (normalized.includes("ok") || normalized === "success" || normalized === "pass") return `成功 (${raw})`;
+      if (normalized === "skipped" || normalized === "skip") return "跳过 (skipped)";
+      if (normalized === "timeout" || normalized === "timed_out") return "超时 (timeout)";
+      if (normalized === "guard_denied" || normalized === "denied") return "被 guard 拦截";
+      if (normalized === "exception" || normalized === "error") return "异常";
+      if (normalized.includes("fail")) return `失败 (${raw})`;
+      return raw;
     }
 
     function errorCategory(row) {
@@ -1170,7 +1257,7 @@
 
     function candidateLabel(row) {
       if (!row) return "waiting";
-      return `iter ${display(row.iteration)} / cand ${display(row.candidate_id)}`;
+      return `第 ${display(row.iteration)} 轮 / 候选 ${display(row.candidate_id)}`;
     }
 
     function sourceLabel() {
