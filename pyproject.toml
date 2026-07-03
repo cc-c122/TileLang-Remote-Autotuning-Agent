@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tilelang-remote-autotuning-agent"
+version = "0.1.0"
+description = "V1 MVP for safe, reproducible local and SSH-based TileLang kernel autotuning."
+requires-python = ">=3.10"
+dependencies = [
+  "pydantic>=2.0",
+  "PyYAML>=6.0",
+  "paramiko>=3.0",
+]
+
+[project.scripts]
+tilelang-agent = "kernel_opt_agent.main:main"
+
+[tool.setuptools.packages.find]
+include = ["kernel_opt_agent*"]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.package-data]
+kernel_opt_agent = [
+  "config.example.yaml",
+  "config.ssh.example.yaml",
+  "samples/**",
+  "frontend/index.html",
+  "hardware_profiles/**",
+]
+
+[tool.setuptools.exclude-package-data]
+kernel_opt_agent = [
+  "samples/**/__pycache__/*",
+  "workspace/**",
+]
