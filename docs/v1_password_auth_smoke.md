@@ -10,7 +10,7 @@ SSH key auth 可以作为兼容路径保留，但不再是 V1 远程 smoke 的�
 
 ## V1 最小远程运行示例
 
-本次真实 smoke 已确认 password auth、SFTP 上传、远程 workspace 内执行、correctness-before-benchmark、结果拉回和密码不落盘链路可用。对外文档只保留占位符示例：
+V1 最小远程 smoke 应验证 password auth、SFTP 上传、远程 workspace 内执行、correctness-before-benchmark、结果拉回和密码不落盘链路可用。对外文档只保留占位符示例：
 
 ```yaml
 runner:
