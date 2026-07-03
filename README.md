@@ -51,6 +51,24 @@ kernel_opt_agent/workspace/results/
 
 ## 安装包使用方式
 
+V1.0.0-rc1 预发布安装包：
+
+- [点击下载 wheel 安装包](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/releases/download/v1.0.0-rc1/tilelang_remote_autotuning_agent-1.0.0rc1-py3-none-any.whl)
+- [点击下载源码包](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/releases/download/v1.0.0-rc1/tilelang_remote_autotuning_agent-1.0.0rc1.tar.gz)
+- [查看 GitHub Release 页面](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/releases/tag/v1.0.0-rc1)
+
+下载 wheel 后安装：
+
+```bash
+pip install tilelang_remote_autotuning_agent-1.0.0rc1-py3-none-any.whl
+```
+
+也可以直接从 GitHub Release URL 安装：
+
+```bash
+pip install https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/releases/download/v1.0.0-rc1/tilelang_remote_autotuning_agent-1.0.0rc1-py3-none-any.whl
+```
+
 本地开发安装：
 
 ```bash
