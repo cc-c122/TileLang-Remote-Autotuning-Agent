@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from kernel_opt_agent.agent.diagnosis import diagnose
+from kernel_opt_agent.diagnosis.diagnosis_report import diagnosis_records, profiler_metrics_table
 from kernel_opt_agent.hardware.hardware_info import HardwareInfo
 
 
@@ -122,7 +123,10 @@ def write_final_report(results_dir: Path, records: list[dict[str, Any]], objecti
         lines.append(f"- iter {r.get('iteration')} cand {r.get('candidate_id')}: {r.get('status')} {r.get('config')}")
     failures = [r for r in records if r.get("status") != "benchmark_ok"]
     lines += ["", "## Failures", f"- Failed candidates: {len(failures)}. See `failed_cases.jsonl` for details."]
-    lines += ["", "## Diagnosis"]
+    report_record = best or baseline
+    lines += profiler_metrics_table((report_record or {}).get("profiler") if report_record else None)
+    lines += diagnosis_records((report_record or {}).get("bottleneck_diagnosis") if report_record else None)
+    lines += ["", "## Legacy Diagnosis"]
     lines += [f"- {note}" for note in diagnose(best_records + failures)]
     lines += _hardware_lines(hardware_info)
     lines += ["", "## Next Steps", "- Increase budget or refine search_space after reviewing failure patterns and profiler data."]
