@@ -344,9 +344,15 @@ def main() -> None:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--config", help="Path to config.yaml")
     source.add_argument("--run-request", help="Path to V2 run_request.yaml")
+    parser.add_argument("--settings", help="Path to V2 user settings.yaml; only valid with --run-request")
     args = parser.parse_args()
     try:
-        config = load_config_from_run_request(args.run_request) if args.run_request else load_config(args.config)
+        if args.settings and not args.run_request:
+            raise ValueError("--settings can only be used together with --run-request")
+        if args.run_request:
+            config = load_config_from_run_request(args.run_request, args.settings) if args.settings else load_config_from_run_request(args.run_request)
+        else:
+            config = load_config(args.config)
         run(config)
     except (NotImplementedError, ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)

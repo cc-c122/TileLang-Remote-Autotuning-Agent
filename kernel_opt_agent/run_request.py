@@ -12,8 +12,10 @@ from kernel_opt_agent.hardware.profile_loader import normalize_profile_name
 
 
 SCHEMA_VERSION = "v2.run_request.v1"
+USER_SETTINGS_SCHEMA_VERSION = "v2.user_settings.v1"
 PACKAGE_ROOT = Path(__file__).resolve().parent
 RUN_REQUEST_WORKSPACE = PACKAGE_ROOT / "workspace" / "run_requests"
+USER_SETTINGS_PATH = PACKAGE_ROOT / "workspace" / "user_settings.yaml"
 
 DEFAULT_SEARCH_VALUES: dict[str, list[Any]] = {
     "BM": [16, 32],
@@ -69,6 +71,15 @@ class SettingsRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     use_saved_settings: bool = True
+
+
+class UserSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["v2.user_settings.v1"] = USER_SETTINGS_SCHEMA_VERSION
+    runner: dict[str, Any] = Field(default_factory=dict)
+    remote: dict[str, Any] = Field(default_factory=dict)
+    llm: dict[str, Any] = Field(default_factory=dict)
 
 
 class HardwareOverrides(BaseModel):
@@ -147,6 +158,48 @@ def _load_mapping(path: str | Path) -> dict[str, Any]:
     return raw
 
 
+def _reject_plaintext_secrets(raw: dict[str, Any], label: str) -> None:
+    text = yaml.safe_dump(raw, sort_keys=True)
+    lowered = text.lower()
+    for key in ("api_key:", "password:", "token:"):
+        if key in lowered:
+            raise ValueError(f"sensitive value field is not allowed in {label}: {key.rstrip(':')}")
+
+
+def _normalize_user_settings(raw: dict[str, Any]) -> dict[str, Any]:
+    schema_version = raw.get("schema_version", USER_SETTINGS_SCHEMA_VERSION)
+    if any(key in raw for key in ("runner", "remote", "llm")):
+        normalized = dict(raw)
+        normalized.setdefault("schema_version", schema_version)
+        return normalized
+    runner_type = "ssh" if raw.get("ssh_host") else "local"
+    return {
+        "schema_version": schema_version,
+        "runner": {"type": runner_type},
+        "remote": {
+            "host": raw.get("ssh_host") or "127.0.0.1",
+            "port": raw.get("ssh_port") or 22,
+            "username": raw.get("ssh_username") or "",
+            "auth_type": raw.get("auth_type") or "password",
+            "password_env": raw.get("password_env") or "KERNEL_AGENT_SSH_PASSWORD",
+            "remote_workspace": raw.get("remote_workspace") or "/tmp/kernel_opt_workspace",
+        },
+        "llm": {
+            "base_url": raw.get("llm_base_url") or "https://api.openai.com/v1",
+            "model": raw.get("llm_model") or "gpt-4o-mini",
+            "api_key_env": raw.get("api_key_env") or "OPENAI_API_KEY",
+        },
+    }
+
+
+def _load_user_settings(settings_path: Path = USER_SETTINGS_PATH) -> UserSettings:
+    if not settings_path.exists():
+        raise ValueError(f"user settings file not found: {settings_path}")
+    raw = yaml.safe_load(settings_path.read_text(encoding="utf-8")) or {}
+    _reject_plaintext_secrets(raw, "user settings")
+    return UserSettings.model_validate(_normalize_user_settings(raw))
+
+
 def load_run_request(path: str | Path) -> RunRequest:
     raw = _load_mapping(path)
     raw.pop("_request_dir", None)
@@ -211,22 +264,43 @@ def _infer_search_space(request: RunRequest, sample_path: str) -> dict[str, list
     return {name: DEFAULT_SEARCH_VALUES.get(name, [1]) for name in sorted(placeholders)}
 
 
-def _app_config_from_request(request: RunRequest, request_dir: Path) -> AppConfig:
+def _settings_config(request: RunRequest, settings_path: Path) -> dict[str, Any]:
+    if not request.settings_ref.use_saved_settings:
+        return {
+            "runner": {"type": "local"},
+            "remote": {
+                "host": "127.0.0.1",
+                "port": 22,
+                "username": "user",
+                "auth_type": "key",
+                "key_path": "~/.ssh/id_rsa",
+                "password_env": "KERNEL_AGENT_SSH_PASSWORD",
+                "remote_workspace": "/tmp/kernel_opt_workspace",
+            },
+            "llm": {},
+        }
+    settings = _load_user_settings(settings_path)
+    runner = dict(settings.runner)
+    if runner.get("type") == "local":
+        raise ValueError("saved user settings must configure a non-local runner; set settings_ref.use_saved_settings=false for local mock")
+    remote = dict(settings.remote)
+    if remote.get("auth_type") == "key" and "password_env" not in remote:
+        remote["password_env"] = None
+    if remote.get("auth_type") == "password" and "key_path" not in remote:
+        remote["key_path"] = None
+    return {"runner": runner, "remote": remote, "llm": dict(settings.llm)}
+
+
+def _app_config_from_request(request: RunRequest, request_dir: Path, settings_path: Path = USER_SETTINGS_PATH) -> AppConfig:
+    saved = _settings_config(request, settings_path)
     sample_path = _materialize_sample(request, request_dir)
     gpu_model = request.target.gpu_model.strip() if request.target.gpu_model else None
     backend = request.target.backend if request.target.backend and request.target.backend != "unknown" else None
     raw_config: dict[str, Any] = {
         "project_name": request.project_name,
-        "runner": {"type": "local"},
-        "remote": {
-            "host": "127.0.0.1",
-            "port": 22,
-            "username": "user",
-            "auth_type": "key",
-            "key_path": "~/.ssh/id_rsa",
-            "password_env": "KERNEL_AGENT_SSH_PASSWORD",
-            "remote_workspace": "/tmp/kernel_opt_workspace",
-        },
+        "runner": saved["runner"] or {"type": "local"},
+        "remote": saved["remote"],
+        "llm": saved["llm"] or {},
         "kernel": {
             "sample_path": sample_path,
             "entry_file": request.sample.entry_file,
@@ -249,19 +323,23 @@ def _app_config_from_request(request: RunRequest, request_dir: Path) -> AppConfi
     return AppConfig.model_validate(raw_config)
 
 
-def app_config_from_run_request(request: RunRequest) -> AppConfig:
-    return _app_config_from_request(request, Path.cwd())
+def app_config_from_run_request(request: RunRequest, settings_path: str | Path = USER_SETTINGS_PATH) -> AppConfig:
+    return _app_config_from_request(request, Path.cwd(), Path(settings_path))
 
 
-def load_config_from_run_request(path: str | Path) -> AppConfig:
+def load_config_from_run_request(path: str | Path, settings_path: str | Path = USER_SETTINGS_PATH) -> AppConfig:
     raw = _load_mapping(path)
     request_dir = _request_dir(raw)
     raw.pop("_request_dir", None)
-    return _app_config_from_request(RunRequest.model_validate(raw), request_dir)
+    return _app_config_from_request(RunRequest.model_validate(raw), request_dir, Path(settings_path))
 
 
-def write_effective_config_from_run_request(request: RunRequest, output_path: str | Path) -> AppConfig:
-    config = app_config_from_run_request(request)
+def write_effective_config_from_run_request(
+    request: RunRequest,
+    output_path: str | Path,
+    settings_path: str | Path = USER_SETTINGS_PATH,
+) -> AppConfig:
+    config = app_config_from_run_request(request, settings_path)
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(safe_config_dict(config), sort_keys=True), encoding="utf-8")

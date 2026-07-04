@@ -60,7 +60,10 @@ def minimal_request(**overrides):
 class RunRequestTests(unittest.TestCase):
     def test_inline_run_request_generates_runnable_effective_config_without_base_config(self) -> None:
         request = RunRequest.model_validate(
-            minimal_request(hardware_overrides={"fields": {"max_threads_per_block": 2048}})
+            minimal_request(
+                settings_ref={"use_saved_settings": False},
+                hardware_overrides={"fields": {"max_threads_per_block": 2048}},
+            )
         )
         with tempfile.TemporaryDirectory() as tmp:
             effective_path = Path(tmp) / "effective_config.yaml"
@@ -90,7 +93,8 @@ class RunRequestTests(unittest.TestCase):
                     "inline_text": None,
                     "path": str(ROOT / "kernel_opt_agent" / "samples" / "tilelang_mock_minimal"),
                     "entry_file": "kernel.py",
-                }
+                },
+                settings_ref={"use_saved_settings": False},
             )
         )
         config = app_config_from_run_request(request)
@@ -105,7 +109,8 @@ class RunRequestTests(unittest.TestCase):
                     "inline_text": None,
                     "path": str(ROOT / "kernel_opt_agent" / "samples" / "tilelang_mock_minimal"),
                     "entry_file": "kernel.py",
-                }
+                },
+                settings_ref={"use_saved_settings": False},
             )
         )
         config = app_config_from_run_request(request)
@@ -114,15 +119,117 @@ class RunRequestTests(unittest.TestCase):
     def test_frontend_exported_schema_file_runs_through_cli_config_conversion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             request_path = Path(tmp) / "run_request.yaml"
-            request_path.write_text(yaml.safe_dump(minimal_request(), sort_keys=False), encoding="utf-8")
+            request_path.write_text(yaml.safe_dump(minimal_request(settings_ref={"use_saved_settings": False}), sort_keys=False), encoding="utf-8")
             config = load_config_from_run_request(request_path)
         self.assertEqual(config.project_name, "my-task")
         self.assertEqual(config.hardware.profile, "metax_c500")
         self.assertEqual(config.search.strategy, "rule_based")
 
+    def test_frontend_shape_settings_yaml_starts_ssh_runner(self) -> None:
+        settings = {
+            "runner": {"type": "ssh"},
+            "remote": {
+                "host": "ssh.frontend.internal",
+                "port": 2222,
+                "username": "root",
+                "auth_type": "password",
+                "password_env": "KERNEL_AGENT_SSH_PASSWORD",
+                "remote_workspace": "/tmp/kernel-agent",
+            },
+            "llm": {
+                "provider": "openai_compatible",
+                "base_url": "https://llm.example/v1",
+                "model": "model-from-settings",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.yaml"
+            settings_path.write_text(yaml.safe_dump(settings), encoding="utf-8")
+            config = app_config_from_run_request(RunRequest.model_validate(minimal_request()), settings_path=settings_path)
+        self.assertEqual(config.runner.type, "ssh")
+        self.assertEqual(config.remote.host, "ssh.frontend.internal")
+        self.assertEqual(config.remote.password_env, "KERNEL_AGENT_SSH_PASSWORD")
+        self.assertEqual(config.llm.model, "model-from-settings")
+        self.assertEqual(config.llm.api_key_env, "OPENAI_API_KEY")
+
+    def test_saved_settings_merge_into_effective_config_without_secret_values(self) -> None:
+        settings = {
+            "runner": {"type": "ssh"},
+            "remote": {
+                "host": "ssh.example.internal",
+                "port": 32222,
+                "username": "root+vm-test",
+                "auth_type": "password",
+                "password_env": "KERNEL_AGENT_SSH_PASSWORD",
+                "remote_workspace": "/data/kernel workspace",
+            },
+            "llm": {
+                "base_url": "https://llm.example/v1",
+                "model": "test-model",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+        }
+        request = RunRequest.model_validate(minimal_request())
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.yaml"
+            effective_path = Path(tmp) / "effective_config.yaml"
+            settings_path.write_text(yaml.safe_dump(settings), encoding="utf-8")
+            config = write_effective_config_from_run_request(request, effective_path, settings_path=settings_path)
+            effective_text = effective_path.read_text(encoding="utf-8")
+            effective = yaml.safe_load(effective_text)
+
+        self.assertEqual(config.runner.type, "ssh")
+        self.assertEqual(effective["remote"]["host"], "ssh.example.internal")
+        self.assertEqual(effective["remote"]["password_env"], "KERNEL_AGENT_SSH_PASSWORD")
+        self.assertEqual(effective["llm"]["api_key_env"], "OPENAI_API_KEY")
+        self.assertNotIn("real-password", effective_text)
+        self.assertNotIn("sk-real-secret", effective_text)
+        self.assertNotIn("password:", effective_text.lower())
+
+    def test_missing_saved_settings_fails_clearly(self) -> None:
+        request = RunRequest.model_validate(minimal_request())
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "user settings file not found"):
+                app_config_from_run_request(request, settings_path=Path(tmp) / "missing.yaml")
+
+    def test_use_saved_settings_false_allows_local_mock(self) -> None:
+        request = RunRequest.model_validate(minimal_request(settings_ref={"use_saved_settings": False}))
+        config = app_config_from_run_request(request)
+        self.assertEqual(config.runner.type, "local")
+
+    def test_saved_settings_cannot_enable_local_mock(self) -> None:
+        settings = {"runner": {"type": "local"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.yaml"
+            settings_path.write_text(yaml.safe_dump(settings), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "use_saved_settings=false for local mock"):
+                app_config_from_run_request(RunRequest.model_validate(minimal_request()), settings_path=settings_path)
+
+    def test_plaintext_secret_in_settings_is_rejected(self) -> None:
+        settings = {
+            "runner": {"type": "ssh"},
+            "remote": {
+                "host": "ssh.example.internal",
+                "port": 22,
+                "username": "root",
+                "auth_type": "password",
+                "password": "real-password",
+                "password_env": "KERNEL_AGENT_SSH_PASSWORD",
+                "remote_workspace": "/tmp/kernel-agent",
+            },
+            "llm": {"api_key": "sk-real-secret", "api_key_env": "OPENAI_API_KEY"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.yaml"
+            settings_path.write_text(yaml.safe_dump(settings), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "sensitive value field is not allowed in user settings"):
+                app_config_from_run_request(RunRequest.model_validate(minimal_request()), settings_path=settings_path)
+
     def test_run_request_user_hardware_overrides_win_over_profile_and_remote_detection(self) -> None:
         request = RunRequest.model_validate(
             minimal_request(
+                settings_ref={"use_saved_settings": False},
                 hardware_overrides={
                     "fields": {
                         "total_memory_GB": 128,
