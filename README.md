@@ -87,6 +87,56 @@ CLI 使用：
 tilelang-agent --config config.yaml
 ```
 
+## V2 方向说明
+
+V2 第一批 run request 契约固定为 `schema_version: v2.run_request.v1`。后端、前端、文档都必须严格使用这一套 schema，不能各写一套变体；本节只说明 V2 方向，不改变上面的 V1 安装包使用方式。
+
+V2 的目标是让用户不再手写 `config.yaml`。用户在前端提供 sample、GPU 型号和三条命令，前端生成唯一合法的 run request，后端再基于已保存的 SSH / LLM 设置和硬件信息生成 effective config。
+
+```yaml
+schema_version: v2.run_request.v1
+project_name: my-task
+
+sample:
+  source_type: inline   # inline | path | upload
+  inline_text: "..."
+  path: null
+  entry_file: kernel.py
+
+commands:
+  build_command: python -m py_compile kernel.py
+  correctness_command: python correctness.py
+  benchmark_command: python benchmark.py
+
+target:
+  gpu_model: Metax C500
+  backend: unknown
+
+settings_ref:
+  use_saved_settings: true
+
+hardware_overrides:
+  fields: {}
+
+search:
+  strategy: rule_based
+  max_iterations: 1
+  candidates_per_iteration: 3
+  timeout_seconds: 60
+  objective: latency
+
+profiler:
+  enabled: true
+  type: dummy
+
+patching:
+  enabled: true
+```
+
+GPU 参数自动补全不是准确性保证。effective config 里的硬件字段必须记录来源和置信度；用户也可以通过 `hardware_overrides.fields` 覆盖字段。
+
+V2 仍然只返回当前预算内实际测到的 best-seen kernel，不保证全局最优。
+
 ## 配置文件怎么写
 
 可以从示例配置开始：
