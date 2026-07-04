@@ -137,6 +137,8 @@ GPU 参数自动补全不是准确性保证。effective config 里的硬件字�
 
 V2 仍然只返回当前预算内实际测到的 best-seen kernel，不保证全局最优。
 
+V2 第二批补充 profiler diagnosis 说明，明确 profiler 字段、指标缺失时的 `null` 语义、bottleneck 证据来源和 confidence 规则；没有 profiler 时系统退化为 benchmark + log based diagnosis。详见 `docs/v2_profiler_diagnosis.md`。
+
 ## 配置文件怎么写
 
 可以从示例配置开始：
