@@ -561,9 +561,424 @@
       unicode-bidi: plaintext;
     }
 
+    .app {
+      max-width: none;
+      min-height: 100vh;
+      margin: 0;
+      padding: 0;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      height: 58px;
+      margin: 0;
+      border-bottom: 1px solid #e5eaf1;
+      background: rgba(255, 255, 255, 0.94);
+      padding: 0 22px;
+      backdrop-filter: blur(14px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      display: grid;
+      grid-template-columns: repeat(2, 13px);
+      gap: 4px;
+      flex: 0 0 auto;
+    }
+
+    .brand-mark span {
+      width: 13px;
+      height: 13px;
+      border-radius: 3px;
+      background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    }
+
+    .brand h1 {
+      font-size: 22px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .version-pill {
+      border-radius: 999px;
+      background: #e8f0ff;
+      color: #1d4ed8;
+      padding: 4px 10px;
+      font-size: 13px;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+
+    .user-menu {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #111827;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .icon-chip {
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #344054;
+      font-weight: 800;
+    }
+
+    .avatar {
+      border-color: #1d4ed8;
+      background: #1d4ed8;
+      color: #fff;
+    }
+
+    .product-shell {
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr);
+      min-height: calc(100vh - 58px);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 58px;
+      align-self: start;
+      height: calc(100vh - 58px);
+      border-right: 1px solid #e5eaf1;
+      background: #fbfcff;
+      padding: 22px 16px;
+    }
+
+    .view-tabs {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      overflow: visible;
+    }
+
+    .tab-button {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      align-items: center;
+      gap: 11px;
+      width: 100%;
+      border-color: transparent;
+      background: transparent;
+      color: #475467;
+      padding: 11px 12px;
+      text-align: left;
+    }
+
+    .tab-button.active {
+      border-color: #1d5ceb;
+      background: linear-gradient(135deg, #1763f7, #0f55d8);
+      color: #fff;
+      box-shadow: 0 10px 22px rgba(37, 99, 235, 0.23);
+    }
+
+    .nav-ico {
+      display: inline-grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .collapse-hint {
+      position: absolute;
+      bottom: 22px;
+      right: 18px;
+      color: #111827;
+      font-size: 24px;
+    }
+
+    .workspace {
+      min-width: 0;
+      padding: 20px 20px 30px;
+    }
+
+    .breadcrumb {
+      margin: 0 0 12px;
+      color: #475467;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .task-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 22px;
+      align-items: start;
+    }
+
+    .task-main,
+    .right-rail {
+      display: grid;
+      gap: 12px;
+    }
+
+    .section {
+      margin-bottom: 0;
+      border-color: #e3e8ef;
+      border-radius: 8px;
+      box-shadow: 0 14px 32px rgba(15, 23, 42, 0.05);
+    }
+
+    .step-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .step-num {
+      color: #111827;
+      font-weight: 850;
+    }
+
+    .info-dot {
+      display: inline-grid;
+      place-items: center;
+      width: 16px;
+      height: 16px;
+      border: 1px solid #91b7ff;
+      border-radius: 999px;
+      color: #2563eb;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .sample-tabs {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .sample-tab-left {
+      display: flex;
+      gap: 22px;
+      color: #667085;
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .sample-tab-left span:first-child {
+      border-bottom: 2px solid var(--accent);
+      color: var(--accent);
+      padding-bottom: 8px;
+    }
+
+    .upload-soft {
+      border-style: dashed;
+      background: #fff;
+      color: #0f55d8;
+    }
+
+    .button-like {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      border: 1px dashed var(--accent);
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .code-shell {
+      border: 1px solid #cfd8e3;
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .code-shell textarea {
+      min-height: 232px;
+      border: 0;
+      border-radius: 0;
+      font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+      font-size: 13px;
+      line-height: 1.55;
+      color: #0f172a;
+    }
+
+    .hint-line {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 9px;
+      color: #667085;
+      font-size: 12px;
+    }
+
+    .gpu-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .hardware-card .table-wrap {
+      max-width: 620px;
+    }
+
+    .action-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 22px;
+      align-items: center;
+    }
+
+    .primary-action {
+      min-height: 52px;
+      font-size: 16px;
+      background: linear-gradient(135deg, #1763f7, #0f55d8);
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.26);
+    }
+
+    .right-rail {
+      position: sticky;
+      top: 78px;
+    }
+
+    .rail-card {
+      border: 1px solid #e3e8ef;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 14px 32px rgba(15, 23, 42, 0.05);
+      padding: 16px;
+    }
+
+    .rail-card h2 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+      font-size: 16px;
+    }
+
+    .settings-group {
+      border: 1px solid #eef2f7;
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 10px;
+    }
+
+    .settings-group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      font-weight: 780;
+    }
+
+    .settings-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .settings-grid .field {
+      grid-template-columns: 76px minmax(0, 1fr);
+      display: grid;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .settings-grid label {
+      margin: 0;
+      color: #111827;
+      font-weight: 560;
+    }
+
+    .save-row {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 12px;
+    }
+
+    .flow-steps {
+      display: grid;
+      gap: 16px;
+      margin-top: 6px;
+    }
+
+    .flow-step {
+      display: grid;
+      grid-template-columns: 30px 38px 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .flow-index {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .flow-icon {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      background: #eaf2ff;
+      color: #1d4ed8;
+      font-size: 20px;
+    }
+
+    .flow-step strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 2px;
+    }
+
+    .flow-step span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .settings-note {
+      border: 1px solid #e5eaf1;
+      border-radius: 8px;
+      background: #fbfdff;
+      color: #2563eb;
+      padding: 12px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
     @media (max-width: 980px) {
-      .topbar, .grid-2, .compare-grid, .hardware-grid, .howto, .form-grid, .form-grid.three, .status-grid, .diagnosis-grid { grid-template-columns: 1fr; }
+      .topbar, .grid-2, .compare-grid, .hardware-grid, .howto, .form-grid, .form-grid.three, .status-grid, .diagnosis-grid, .product-shell, .task-layout, .gpu-row, .action-bar { grid-template-columns: 1fr; }
       .toolbar { justify-content: flex-start; }
+      .sidebar, .right-rail { position: static; height: auto; }
+      .sidebar { border-right: 0; border-bottom: 1px solid #e5eaf1; }
+      .view-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
 
     @media (max-width: 560px) {
@@ -577,160 +992,208 @@
 <body>
   <main class="app">
     <header class="topbar">
-      <div>
-        <h1>TileLang 结果查看器</h1>
-        <p class="subtitle">V2 先生成文件驱动 run request，V1/V2 结果继续只读查看；前端不执行后端命令。</p>
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <h1>TileLang 算子优化 Agent</h1>
+        <span class="version-pill">V2 / MVP</span>
       </div>
-      <div class="toolbar">
-        <button id="chooseDirBtn" type="button">选择结果目录</button>
+      <div class="user-menu">
+        <button id="chooseDirBtn" class="secondary" type="button">选择结果目录</button>
         <button id="reloadBtn" class="secondary" type="button">刷新</button>
+        <span class="icon-chip">?</span>
+        <span class="icon-chip avatar">U</span>
+        <span>user</span>
       </div>
     </header>
 
-    <div class="notice">当前结果是搜索预算内 best-seen，不代表全局最优。</div>
+    <div class="product-shell">
+      <aside class="sidebar">
+        <nav class="view-tabs" aria-label="页面入口">
+          <button class="tab-button active" type="button" data-view-target="startView"><span class="nav-ico">＋</span><span>新建任务</span></button>
+          <button class="tab-button" type="button" data-view-target="resultsView"><span class="nav-ico">▣</span><span>实验结果</span></button>
+          <button class="tab-button" type="button" data-view-target="hardwareMirrorView"><span class="nav-ico">◎</span><span>硬件画像</span></button>
+          <button class="tab-button" type="button" data-view-target="templateView"><span class="nav-ico">□</span><span>模板库</span></button>
+          <button class="tab-button" type="button" data-view-target="logsView"><span class="nav-ico">☰</span><span>运行日志</span></button>
+          <button class="tab-button" type="button" data-view-target="startView"><span class="nav-ico">⚙</span><span>设置</span></button>
+        </nav>
+        <div class="collapse-hint">‹</div>
+      </aside>
 
-    <nav class="view-tabs" aria-label="页面入口">
-      <button class="tab-button active" type="button" data-view-target="startView">V2 开始优化</button>
-      <button class="tab-button" type="button" data-view-target="settingsView">用户设置</button>
-      <button class="tab-button" type="button" data-view-target="resultsView">只读结果查看</button>
-    </nav>
+      <div class="workspace">
+        <section id="startView" class="view-panel active">
+          <div class="breadcrumb">首页 / 新建任务</div>
+          <div class="task-layout">
+            <div class="task-main">
+              <section class="section">
+                <div class="step-title">
+                  <span class="step-num">1.</span>
+                  <h2>输入算子 Sample</h2>
+                  <span class="info-dot">i</span>
+                </div>
+                <div class="sample-tabs">
+                  <div class="sample-tab-left"><span>粘贴代码</span><span>上传目录</span></div>
+                  <label class="upload-soft button-like">
+                    <input id="v2SampleFile" type="file" accept=".py,.txt,.yaml,.json" hidden>
+                    上传 sample 目录或粘贴代码
+                  </label>
+                </div>
+                <div class="code-shell">
+                  <textarea id="v2SampleText" placeholder="# TileLang sample: fused_mha_fwd&#10;@T.kernel&#10;def fused_mha_fwd(...):&#10;    # paste TileLang kernel here"></textarea>
+                </div>
+                <div class="form-grid three" style="margin-top:12px">
+                  <div class="field">
+                    <label for="v2ProjectName">项目名称</label>
+                    <input id="v2ProjectName" value="tilelang-v2-run" autocomplete="off">
+                  </div>
+                  <div class="field">
+                    <label for="v2SampleSourceType">source_type</label>
+                    <select id="v2SampleSourceType">
+                      <option value="inline" selected>inline</option>
+                      <option value="path">path</option>
+                      <option value="upload">upload</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="v2EntryFile">entry_file</label>
+                    <input id="v2EntryFile" value="kernel.py" autocomplete="off">
+                  </div>
+                </div>
+                <div class="form-grid three" style="margin-top:12px">
+                  <div class="field">
+                    <label for="v2SamplePath">sample path</label>
+                    <input id="v2SamplePath" placeholder="./samples/my_kernel" autocomplete="off">
+                  </div>
+                  <div class="field">
+                    <label for="v2BuildCommand">build 命令</label>
+                    <input id="v2BuildCommand" value="python -m py_compile kernel.py" autocomplete="off">
+                  </div>
+                  <div class="field">
+                    <label for="v2CorrectnessCommand">correctness 命令</label>
+                    <input id="v2CorrectnessCommand" value="python correctness.py" autocomplete="off">
+                  </div>
+                </div>
+                <div class="form-grid" style="margin-top:12px">
+                  <div class="field">
+                    <label for="v2BenchmarkCommand">benchmark 命令</label>
+                    <input id="v2BenchmarkCommand" value="python benchmark.py" autocomplete="off">
+                  </div>
+                  <div class="field">
+                    <label for="v2ProfilerType">profiler</label>
+                    <select id="v2ProfilerType">
+                      <option value="dummy">dummy：只解析 benchmark</option>
+                      <option value="tilelang_log">tilelang_log：编译日志 + 生成代码</option>
+                      <option value="mxmaca">mxmaca：命令接口占位</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="hint-line"><span class="info-dot">i</span><span>无需手写 config.yaml，前端只生成脱敏 run_request 文件。</span></div>
+              </section>
 
-    <section id="startView" class="view-panel active">
-      <section class="section">
-        <div class="section-head">
-          <h2>开始优化</h2>
-          <span class="muted">文件驱动入口，不执行后端命令</span>
-        </div>
-        <p class="section-kicker">填写 sample、目标 GPU 和运行命令后，前端只生成 <code>run_request.json</code> / YAML 文本，交给后端 CLI 读取。</p>
-        <div class="form-grid">
-          <div class="field">
-            <label for="v2ProjectName">项目名称</label>
-            <input id="v2ProjectName" value="tilelang-v2-run" autocomplete="off">
-          </div>
-          <div class="field">
-            <label for="v2GpuModel">GPU 型号</label>
-            <input id="v2GpuModel" placeholder="例如 Metax C500 / NVIDIA H100 / A100">
-          </div>
-          <div class="field">
-            <label for="v2BenchmarkCommand">benchmark 命令</label>
-            <input id="v2BenchmarkCommand" value="python benchmark.py" autocomplete="off">
-          </div>
-          <div class="field">
-            <label for="v2CorrectnessCommand">correctness 命令</label>
-            <input id="v2CorrectnessCommand" value="python correctness.py" autocomplete="off">
-          </div>
-          <div class="field">
-            <label for="v2BuildCommand">build 命令</label>
-            <input id="v2BuildCommand" value="python -m py_compile kernel.py" autocomplete="off">
-          </div>
-          <div class="field">
-            <label for="v2EntryFile">entry_file</label>
-            <input id="v2EntryFile" value="kernel.py" autocomplete="off">
-          </div>
-        </div>
-        <div class="form-grid three" style="margin-top:12px">
-          <div class="field">
-            <label for="v2SampleSourceType">sample source_type</label>
-            <select id="v2SampleSourceType">
-              <option value="inline" selected>inline</option>
-              <option value="path">path</option>
-              <option value="upload">upload</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="v2SamplePath">sample path</label>
-            <input id="v2SamplePath" placeholder="./samples/my_kernel" autocomplete="off">
-          </div>
-          <div class="field">
-            <label for="v2BudgetMode">优化预算</label>
-            <select id="v2BudgetMode">
-              <option value="quick">快速验证：1 round / 3 candidates / 1 patch</option>
-              <option value="standard" selected>标准：3 rounds / 4 candidates / 3 patches</option>
-              <option value="deep">深入：5 rounds / 6 candidates / 5 patches</option>
-            </select>
-          </div>
-        </div>
-        <div class="form-grid three" style="margin-top:12px">
-          <div class="field">
-            <label for="v2ProfilerType">profiler</label>
-            <select id="v2ProfilerType">
-              <option value="dummy">dummy：只解析 benchmark</option>
-              <option value="tilelang_log">tilelang_log：编译日志 + 生成代码</option>
-              <option value="mxmaca">mxmaca：命令接口占位</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="v2SampleFile">上传 TileLang sample</label>
-            <input id="v2SampleFile" type="file" accept=".py,.txt,.yaml,.json">
-          </div>
-        </div>
-        <div class="field" style="margin-top:12px">
-          <label for="v2SampleText">TileLang sample 内容</label>
-          <textarea id="v2SampleText" placeholder="粘贴 kernel.py 或上传 sample 文件。前端只读取文件内容，不执行。"></textarea>
-        </div>
-      </section>
+              <section class="section">
+                <div class="step-title">
+                  <span class="step-num">2.</span>
+                  <h2>选择 GPU 型号</h2>
+                  <span class="info-dot">i</span>
+                </div>
+                <div class="gpu-row">
+                  <div class="field">
+                    <label for="v2GpuModel">GPU 型号</label>
+                    <input id="v2GpuModel" value="Metax C500" placeholder="例如 Metax C500 / 沐曦 C500 / NVIDIA H100" autocomplete="off">
+                  </div>
+                  <button class="secondary" type="button">自动搜索硬件参数</button>
+                </div>
+                <div class="form-grid three" style="margin-top:12px">
+                  <div class="field">
+                    <label for="v2BudgetMode">优化预算</label>
+                    <select id="v2BudgetMode">
+                      <option value="quick">快速验证：1 round / 3 candidates / 1 patch</option>
+                      <option value="standard" selected>标准：3 rounds / 4 candidates / 3 patches</option>
+                      <option value="deep">深入：5 rounds / 6 candidates / 5 patches</option>
+                    </select>
+                  </div>
+                </div>
+                <p class="section-kicker">LLM 自动补全 SM / warp 线程数 / shared memory / 寄存器等硬件信息，用户可手动修改。</p>
+              </section>
 
-      <section class="section">
-        <div class="section-head">
-          <h2>硬件参数确认</h2>
-          <span class="muted">用户覆盖优先级最高</span>
-        </div>
-        <p class="section-kicker">展示 Agent 自动补全字段的 value/source/confidence；如需覆盖，请填写 override，导出的 request 会标记 <code>source=user_override</code>。</p>
-        <div id="v2HardwareEditor" class="table-wrap"></div>
-      </section>
+              <section class="section hardware-card">
+                <div class="step-title">
+                  <span class="step-num">3.</span>
+                  <h2>自动补全的硬件参数（可编辑）</h2>
+                  <span class="info-dot">i</span>
+                </div>
+                <div id="v2HardwareEditor" class="table-wrap"></div>
+              </section>
 
-      <section class="section">
-        <div class="section-head">
-          <h2>Run Request 输出</h2>
-          <span class="muted">给后端 CLI 读取</span>
-        </div>
-        <div class="inline-actions">
-          <button id="generateRunRequestBtn" type="button">生成 run_request</button>
-          <button id="downloadRunRequestJsonBtn" class="secondary" type="button">下载 JSON</button>
-          <button id="downloadRunRequestYamlBtn" class="secondary" type="button">下载 YAML</button>
-        </div>
-        <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“生成 run_request”后显示脱敏 JSON。"></textarea>
-      </section>
-    </section>
+              <section class="section">
+                <div class="action-bar">
+                  <button id="generateRunRequestBtn" class="primary-action" type="button">开始优化</button>
+                  <button id="downloadRunRequestJsonBtn" class="secondary" type="button">预览生成配置</button>
+                  <button id="downloadRunRequestYamlBtn" class="secondary" type="button">保存为模板</button>
+                </div>
+                <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“开始优化”后显示脱敏 run_request JSON。"></textarea>
+              </section>
+            </div>
 
-    <section id="settingsView" class="view-panel">
-      <section class="section">
-        <div class="section-head">
-          <h2>用户设置</h2>
-          <span class="muted">只保存非密钥配置</span>
-        </div>
-        <p class="section-kicker">这里保存 SSH 和 LLM 的长期设置。密钥只填写环境变量名，页面不显示、不读取真实密钥。</p>
-        <div class="form-grid three">
-          <div class="field"><label for="settingSshHost">SSH host</label><input id="settingSshHost" autocomplete="off"></div>
-          <div class="field"><label for="settingSshPort">SSH port</label><input id="settingSshPort" type="number" value="22"></div>
-          <div class="field"><label for="settingSshUsername">SSH username</label><input id="settingSshUsername" autocomplete="off"></div>
-          <div class="field">
-            <label for="settingAuthType">auth type</label>
-            <select id="settingAuthType">
-              <option value="password">password</option>
-              <option value="key">key</option>
-            </select>
+            <aside class="right-rail">
+              <section class="rail-card">
+                <h2>▣ 系统设置（长期保存）</h2>
+                <div class="settings-group">
+                  <div class="settings-group-head"><span>模型方案 / 远程容器 SSH</span><span class="chip ok" id="sshStatus">SSH：未配置</span></div>
+                  <div class="settings-grid">
+                    <div class="field"><label for="settingSshHost">Host</label><input id="settingSshHost" placeholder="ssh.modelforge.com" autocomplete="off"></div>
+                    <div class="field"><label for="settingSshPort">Port</label><input id="settingSshPort" type="number" value="22"></div>
+                    <div class="field"><label for="settingSshUsername">Username</label><input id="settingSshUsername" placeholder="ubuntu" autocomplete="off"></div>
+                    <div class="field"><label for="settingAuthType">Auth</label><select id="settingAuthType"><option value="password">password</option><option value="key">key</option></select></div>
+                    <div class="field"><label for="settingPasswordEnv">Password</label><input id="settingPasswordEnv" value="KERNEL_AGENT_SSH_PASSWORD" autocomplete="off"></div>
+                    <div class="field"><label for="settingRemoteWorkspace">Workspace</label><input id="settingRemoteWorkspace" placeholder="/tmp/kernel_opt_workspace" autocomplete="off"></div>
+                  </div>
+                </div>
+                <div class="settings-group">
+                  <div class="settings-group-head"><span>LLM API 设置</span><span class="chip ok" id="llmStatus">LLM：未配置</span></div>
+                  <div class="settings-grid">
+                    <div class="field"><label for="settingLlmBaseUrl">Base URL</label><input id="settingLlmBaseUrl" value="https://api.openai.com/v1" autocomplete="off"></div>
+                    <div class="field"><label for="settingApiKeyEnv">API Key</label><input id="settingApiKeyEnv" value="OPENAI_API_KEY" autocomplete="off"></div>
+                    <div class="field"><label for="settingLlmModel">Model</label><input id="settingLlmModel" value="gpt-4o-mini" autocomplete="off"></div>
+                  </div>
+                </div>
+                <div class="status-grid">
+                  <span class="chip" id="passwordEnvStatus">password env：未配置</span>
+                  <span class="chip" id="apiKeyEnvStatus">API key env：未配置</span>
+                </div>
+                <div class="save-row">
+                  <button id="saveSettingsBtn" type="button">保存设置</button>
+                  <button id="clearSettingsBtn" class="secondary" type="button">清空</button>
+                </div>
+                <div class="settings-note" style="margin-top:12px">这些设置在浏览器本地长期保存，新建任务时无需重复填写。</div>
+              </section>
+
+              <section class="rail-card">
+                <h2>预期流程</h2>
+                <div class="flow-steps">
+                  <div class="flow-step"><span class="flow-index">1</span><span class="flow-icon">⌘</span><div><strong>输入 sample</strong><span>上传或粘贴算子 sample</span></div></div>
+                  <div class="flow-step"><span class="flow-index">2</span><span class="flow-icon">▣</span><div><strong>选择 GPU</strong><span>选择目标 GPU 型号</span></div></div>
+                  <div class="flow-step"><span class="flow-index">3</span><span class="flow-icon">⚙</span><div><strong>自动补全硬件参数</strong><span>LLM 自动补全并可编辑</span></div></div>
+                  <div class="flow-step"><span class="flow-index">4</span><span class="flow-icon">☁</span><div><strong>远程运行</strong><span>SSH 远程编译与 benchmark</span></div></div>
+                  <div class="flow-step"><span class="flow-index">5</span><span class="flow-icon">▤</span><div><strong>返回 best kernel / report</strong><span>优化 kernel 与性能报告</span></div></div>
+                </div>
+              </section>
+            </aside>
           </div>
-          <div class="field"><label for="settingPasswordEnv">password 环境变量名</label><input id="settingPasswordEnv" value="KERNEL_AGENT_SSH_PASSWORD" autocomplete="off"></div>
-          <div class="field"><label for="settingRemoteWorkspace">remote workspace</label><input id="settingRemoteWorkspace" placeholder="/tmp/kernel_opt_workspace" autocomplete="off"></div>
-          <div class="field"><label for="settingLlmBaseUrl">LLM base URL</label><input id="settingLlmBaseUrl" value="https://api.openai.com/v1" autocomplete="off"></div>
-          <div class="field"><label for="settingLlmModel">LLM model</label><input id="settingLlmModel" value="gpt-4o-mini" autocomplete="off"></div>
-          <div class="field"><label for="settingApiKeyEnv">API key 环境变量名</label><input id="settingApiKeyEnv" value="OPENAI_API_KEY" autocomplete="off"></div>
-        </div>
-        <div class="status-grid">
-          <span class="chip" id="passwordEnvStatus">password env：未配置</span>
-          <span class="chip" id="apiKeyEnvStatus">API key env：未配置</span>
-          <span class="chip" id="sshStatus">SSH：未配置</span>
-          <span class="chip" id="llmStatus">LLM：未配置</span>
-        </div>
-        <div class="inline-actions">
-          <button id="saveSettingsBtn" type="button">保存设置</button>
-          <button id="clearSettingsBtn" class="secondary" type="button">清空本地设置</button>
-        </div>
-      </section>
-    </section>
+        </section>
 
-    <section id="resultsView" class="view-panel">
+        <section id="hardwareMirrorView" class="view-panel">
+          <section class="section"><h2>硬件画像</h2><p class="section-kicker">硬件画像会在读取结果目录后展示；当前可在“实验结果”页查看 hardware_detected.yaml 和 safe probe。</p></section>
+        </section>
+
+        <section id="templateView" class="view-panel">
+          <section class="section"><h2>模板库</h2><p class="section-kicker">模板库将在后续版本承载常用 TileLang sample 和优化模板。</p></section>
+        </section>
+
+        <section id="logsView" class="view-panel">
+          <section class="section"><h2>运行日志</h2><p class="section-kicker">运行日志会从结果目录中的 logs/ 和 agent.log 读取。</p></section>
+        </section>
+
+        <section id="resultsView" class="view-panel">
 
     <section class="howto" aria-label="本地查看说明">
       <div>
@@ -845,7 +1308,9 @@
       </div>
       <pre id="reportText">waiting</pre>
     </section>
-    </section>
+        </section>
+      </div>
+    </div>
   </main>
 
   <script>
