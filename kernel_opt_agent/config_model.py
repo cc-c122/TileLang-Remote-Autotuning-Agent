@@ -97,7 +97,10 @@ class HardwareDetectionConfig(BaseModel):
 
 class ProfilerConfig(BaseModel):
     enabled: bool = True
-    type: str = "dummy"
+    type: Literal["dummy", "tilelang_log", "mxmaca"] = "dummy"
+    command: str | None = None
+    timeout_seconds: int = Field(default=120, gt=0)
+    log_paths: list[str] = Field(default_factory=list)
 
 
 class PatchingConfig(BaseModel):

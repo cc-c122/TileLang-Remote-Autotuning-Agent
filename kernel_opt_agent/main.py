@@ -15,8 +15,14 @@ from kernel_opt_agent.benchmark.correctness import parse_correctness
 from kernel_opt_agent.benchmark.metrics import is_better
 from kernel_opt_agent.benchmark.parser import parse_benchmark
 from kernel_opt_agent.config_model import AppConfig, load_config, resolve_path, safe_config_dict
+from kernel_opt_agent.diagnosis import EvidenceBundle, diagnose_bottlenecks
 from kernel_opt_agent.hardware.detector import detect_hardware
+from kernel_opt_agent.hardware.hardware_info import HardwareInfo
 from kernel_opt_agent.kernel.variant_generator import VariantGenerator
+from kernel_opt_agent.profiler.base import BaseProfiler, ProfilerResult
+from kernel_opt_agent.profiler.dummy_profiler import DummyProfiler
+from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
+from kernel_opt_agent.profiler.tilelang_log_profiler import TileLangLogProfiler
 from kernel_opt_agent.run_request import load_config_from_run_request
 from kernel_opt_agent.runner.local_runner import CommandResult, LocalRunner
 from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
@@ -79,6 +85,51 @@ def runner_exception_category(config: AppConfig, message: str) -> str:
     return "runner_exception"
 
 
+def build_profiler(profiler_type: str) -> BaseProfiler:
+    if profiler_type == "dummy":
+        return DummyProfiler()
+    if profiler_type == "tilelang_log":
+        return TileLangLogProfiler()
+    if profiler_type == "mxmaca":
+        return MxmacaProfiler()
+    raise ValueError(f"unsupported profiler.type: {profiler_type}")
+
+
+def collect_profiler_result(
+    config: AppConfig,
+    paths: dict[str, Path],
+    benchmark_stdout: str,
+    benchmark_stderr: str,
+    compile_log: str,
+) -> tuple[dict[str, Any], ProfilerResult]:
+    if not config.profiler.enabled:
+        result = ProfilerResult.empty()
+        return {"enabled": False, "type": config.profiler.type, "result": result.to_dict(), "error": None}, result
+    generated_code = ""
+    try:
+        if paths.get("kernel") and paths["kernel"].exists():
+            generated_code = paths["kernel"].read_text(encoding="utf-8")
+        profiler = build_profiler(config.profiler.type)
+        result = profiler.collect(
+            {
+                "benchmark_stdout": benchmark_stdout,
+                "benchmark_stderr": benchmark_stderr,
+                "compile_log": compile_log,
+                "generated_code": generated_code,
+            }
+        )
+        return {"enabled": True, "type": config.profiler.type, "result": result.to_dict(), "error": None}, result
+    except Exception as exc:
+        result = ProfilerResult.empty()
+        return {"enabled": True, "type": config.profiler.type, "result": result.to_dict(), "error": str(exc)}, result
+
+
+def hardware_fields(hardware_info: HardwareInfo | None) -> dict[str, Any]:
+    if hardware_info is None:
+        return {}
+    return hardware_info.to_dict().get("fields", {})
+
+
 def run_trial(
     config: AppConfig,
     db: ExperimentDB,
@@ -87,6 +138,7 @@ def run_trial(
     candidate_id: int,
     candidate_config: dict[str, Any],
     paths: dict[str, Path],
+    hardware_info: HardwareInfo | None = None,
 ) -> dict[str, Any]:
     label = f"iter{iteration:03d}_cand{candidate_id:03d}"
     config_path = paths["trial_dir"] / "trial_config.yaml"
@@ -104,6 +156,9 @@ def run_trial(
     metrics_data: dict[str, Any] = {"latency": None, "tflops": None, "bandwidth": None}
     objective = {"name": config.search.objective, "value": None, "better": "lower" if config.search.objective == "latency" else "higher"}
     runner = None
+    benchmark_stdout = ""
+    benchmark_stderr = ""
+    compile_log = ""
 
     try:
         runner = build_runner(config, paths["trial_dir"])
@@ -123,6 +178,7 @@ def run_trial(
             build = runner.run("build", config.kernel.build_command)
             stdout_all.append(build.stdout)
             stderr_all.append(build.stderr)
+            compile_log = "\n".join([build.stdout, build.stderr])
             if build.returncode != 0:
                 status = command_failure_status(build, "build")
                 error = {"category": status, "message": build.error_message or build.stderr[-500:]}
@@ -130,6 +186,8 @@ def run_trial(
             bench = runner.run("benchmark", config.kernel.run_command)
             stdout_all.append(bench.stdout)
             stderr_all.append(bench.stderr)
+            benchmark_stdout = bench.stdout
+            benchmark_stderr = bench.stderr
             if bench.returncode != 0:
                 status = command_failure_status(bench, "run")
                 error = {"category": status, "message": bench.error_message or bench.stderr[-500:]}
@@ -165,6 +223,11 @@ def run_trial(
             except Exception:
                 pass
 
+    profiler_record, profiler_result = collect_profiler_result(config, paths, benchmark_stdout, benchmark_stderr, compile_log)
+    diagnosis = [
+        item.to_dict()
+        for item in diagnose_bottlenecks(EvidenceBundle(profiler=profiler_result, hardware_fields=hardware_fields(hardware_info)))
+    ]
     stdout_path, stderr_path = db.write_logs(label, "\n".join(stdout_all), "\n".join(stderr_all))
     record = {
         "run_id": run_id,
@@ -175,6 +238,8 @@ def run_trial(
         "status": status,
         "correctness": correctness_data,
         "metrics": metrics_data,
+        "profiler": profiler_record,
+        "bottleneck_diagnosis": diagnosis,
         "objective": objective,
         "paths": {
             "kernel": str(paths["kernel"]),
@@ -232,7 +297,7 @@ def run(config: AppConfig) -> None:
     tried.add(config_hash(baseline))
     paths = generator.create_trial(0, 0, baseline)
     logging.info("running baseline")
-    record = run_trial(config, db, run_id, 0, 0, baseline, paths)
+    record = run_trial(config, db, run_id, 0, 0, baseline, paths, hardware_info)
     history.append(record)
     if record["status"] == "benchmark_ok":
         best_value = record["objective"]["value"]
@@ -249,7 +314,7 @@ def run(config: AppConfig) -> None:
             tried.add(h)
             try:
                 paths = generator.create_trial(iteration, candidate_id, cand)
-                record = run_trial(config, db, run_id, iteration, candidate_id, cand, paths)
+                record = run_trial(config, db, run_id, iteration, candidate_id, cand, paths, hardware_info)
             except Exception as exc:
                 record = {
                     "run_id": run_id,

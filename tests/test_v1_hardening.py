@@ -191,14 +191,20 @@ class V1HardeningTests(unittest.TestCase):
                     "candidate_id": 0,
                     "status": "benchmark_ok",
                     "metrics": {},
+                    "profiler": {"enabled": True, "type": "dummy", "result": {"latency": None}},
+                    "bottleneck_diagnosis": [{"bottleneck_type": "memory_bound", "confidence": "low"}],
                     "objective": {},
                     "paths": {},
                 }
             )
             self.assertEqual(len((results / "experiments.jsonl").read_text(encoding="utf-8").splitlines()), 1)
+            self.assertEqual(len((results / "profiler_results.jsonl").read_text(encoding="utf-8").splitlines()), 1)
+            self.assertEqual(len((results / "diagnosis.jsonl").read_text(encoding="utf-8").splitlines()), 1)
             ExperimentDB(results)
             self.assertEqual((results / "experiments.jsonl").read_text(encoding="utf-8"), "")
             self.assertEqual((results / "failed_cases.jsonl").read_text(encoding="utf-8"), "")
+            self.assertEqual((results / "profiler_results.jsonl").read_text(encoding="utf-8"), "")
+            self.assertEqual((results / "diagnosis.jsonl").read_text(encoding="utf-8"), "")
             with (results / "summary.csv").open(newline="", encoding="utf-8") as f:
                 self.assertEqual(list(csv.DictReader(f)), [])
 

@@ -29,6 +29,8 @@ class ExperimentDB:
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.experiments_path = results_dir / "experiments.jsonl"
         self.failed_path = results_dir / "failed_cases.jsonl"
+        self.profiler_path = results_dir / "profiler_results.jsonl"
+        self.diagnosis_path = results_dir / "diagnosis.jsonl"
         self.summary_path = results_dir / "summary.csv"
         self.records: list[dict[str, Any]] = []
         self._init_run_files()
@@ -36,6 +38,8 @@ class ExperimentDB:
     def _init_run_files(self) -> None:
         self.experiments_path.write_text("", encoding="utf-8")
         self.failed_path.write_text("", encoding="utf-8")
+        self.profiler_path.write_text("", encoding="utf-8")
+        self.diagnosis_path.write_text("", encoding="utf-8")
         for log_path in self.logs_dir.glob("*.log"):
             log_path.unlink()
         with self.summary_path.open("w", newline="", encoding="utf-8") as f:
@@ -55,6 +59,26 @@ class ExperimentDB:
         if record.get("status") != "benchmark_ok":
             with self.failed_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        profiler_record = {
+            "run_id": record.get("run_id"),
+            "iteration": record.get("iteration"),
+            "candidate_id": record.get("candidate_id"),
+            "config_hash": record.get("config_hash"),
+            "status": record.get("status"),
+            "profiler": record.get("profiler"),
+        }
+        with self.profiler_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(profiler_record, ensure_ascii=False, default=str) + "\n")
+        diagnosis_record = {
+            "run_id": record.get("run_id"),
+            "iteration": record.get("iteration"),
+            "candidate_id": record.get("candidate_id"),
+            "config_hash": record.get("config_hash"),
+            "status": record.get("status"),
+            "bottleneck_diagnosis": record.get("bottleneck_diagnosis") or [],
+        }
+        with self.diagnosis_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(diagnosis_record, ensure_ascii=False, default=str) + "\n")
         metrics = record.get("metrics") or {}
         paths = record.get("paths") or {}
         objective = record.get("objective") or {}
