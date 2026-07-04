@@ -1,0 +1,37 @@
+schema_version: v2.run_request.v1
+project_name: v2-smoke-local
+
+sample:
+  source_type: path
+  inline_text: null
+  path: ../kernel_opt_agent/samples/tilelang_mock_minimal
+  entry_file: kernel.py
+
+commands:
+  build_command: python -m py_compile kernel.py
+  correctness_command: python correctness.py
+  benchmark_command: python benchmark.py
+
+target:
+  gpu_model: Metax C500
+  backend: unknown
+
+settings_ref:
+  use_saved_settings: false
+
+hardware_overrides:
+  fields: {}
+
+search:
+  strategy: rule_based
+  max_iterations: 1
+  candidates_per_iteration: 3
+  timeout_seconds: 60
+  objective: latency
+
+profiler:
+  enabled: true
+  type: dummy
+
+patching:
+  enabled: true
