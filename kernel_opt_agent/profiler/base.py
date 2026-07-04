@@ -47,6 +47,10 @@ class ProfilerResult:
     def empty(cls, raw_logs: dict[str, str] | None = None) -> "ProfilerResult":
         return cls(raw_logs=raw_logs or {})
 
+    @property
+    def latency_ms(self) -> float | None:
+        return self.latency
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "latency": self.latency,
