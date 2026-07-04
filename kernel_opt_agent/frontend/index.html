@@ -121,6 +121,29 @@
       justify-content: flex-end;
     }
 
+    .view-tabs {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 14px;
+      overflow-x: auto;
+    }
+
+    .tab-button {
+      border-color: var(--line);
+      background: #fff;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+
+    .tab-button.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: #1d4ed8;
+    }
+
+    .view-panel { display: none; }
+    .view-panel.active { display: block; }
+
     .notice, .howto {
       margin-bottom: 14px;
       border-radius: 8px;
@@ -209,6 +232,61 @@
     .muted {
       color: var(--muted);
       font-size: 13px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(260px, 1fr));
+      gap: 12px;
+    }
+
+    .form-grid.three {
+      grid-template-columns: repeat(3, minmax(180px, 1fr));
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .field label {
+      color: #344054;
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      padding: 9px 10px;
+    }
+
+    textarea {
+      min-height: 140px;
+      resize: vertical;
+      font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+      font-size: 12px;
+    }
+
+    .inline-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 8px;
+      margin-top: 12px;
     }
 
     .compare-grid {
@@ -456,7 +534,7 @@
     }
 
     @media (max-width: 980px) {
-      .topbar, .grid-2, .compare-grid, .hardware-grid, .howto { grid-template-columns: 1fr; }
+      .topbar, .grid-2, .compare-grid, .hardware-grid, .howto, .form-grid, .form-grid.three, .status-grid { grid-template-columns: 1fr; }
       .toolbar { justify-content: flex-start; }
     }
 
@@ -473,7 +551,7 @@
     <header class="topbar">
       <div>
         <h1>TileLang 结果查看器</h1>
-        <p class="subtitle">V1 前端只读结果文件，不执行命令；适合快速验收调参结果、硬件探测和失败案例。</p>
+        <p class="subtitle">V2 先生成文件驱动 run request，V1/V2 结果继续只读查看；前端不执行后端命令。</p>
       </div>
       <div class="toolbar">
         <button id="chooseDirBtn" type="button">选择结果目录</button>
@@ -482,6 +560,149 @@
     </header>
 
     <div class="notice">当前结果是搜索预算内 best-seen，不代表全局最优。</div>
+
+    <nav class="view-tabs" aria-label="页面入口">
+      <button class="tab-button active" type="button" data-view-target="startView">V2 开始优化</button>
+      <button class="tab-button" type="button" data-view-target="settingsView">用户设置</button>
+      <button class="tab-button" type="button" data-view-target="resultsView">只读结果查看</button>
+    </nav>
+
+    <section id="startView" class="view-panel active">
+      <section class="section">
+        <div class="section-head">
+          <h2>开始优化</h2>
+          <span class="muted">文件驱动入口，不执行后端命令</span>
+        </div>
+        <p class="section-kicker">填写 sample、目标 GPU 和运行命令后，前端只生成 <code>run_request.json</code> / YAML 文本，交给后端 CLI 读取。</p>
+        <div class="form-grid">
+          <div class="field">
+            <label for="v2ProjectName">项目名称</label>
+            <input id="v2ProjectName" value="tilelang-v2-run" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="v2GpuModel">GPU 型号</label>
+            <input id="v2GpuModel" placeholder="例如 Metax C500 / NVIDIA H100 / A100">
+          </div>
+          <div class="field">
+            <label for="v2BenchmarkCommand">benchmark 命令</label>
+            <input id="v2BenchmarkCommand" value="python benchmark.py" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="v2CorrectnessCommand">correctness 命令</label>
+            <input id="v2CorrectnessCommand" value="python correctness.py" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="v2BuildCommand">build 命令</label>
+            <input id="v2BuildCommand" value="python -m py_compile kernel.py" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="v2EntryFile">entry_file</label>
+            <input id="v2EntryFile" value="kernel.py" autocomplete="off">
+          </div>
+        </div>
+        <div class="form-grid three" style="margin-top:12px">
+          <div class="field">
+            <label for="v2SampleSourceType">sample source_type</label>
+            <select id="v2SampleSourceType">
+              <option value="inline" selected>inline</option>
+              <option value="path">path</option>
+              <option value="upload">upload</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="v2SamplePath">sample path</label>
+            <input id="v2SamplePath" placeholder="./samples/my_kernel" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="v2BudgetMode">优化预算</label>
+            <select id="v2BudgetMode">
+              <option value="quick">快速验证：1 round / 3 candidates / 1 patch</option>
+              <option value="standard" selected>标准：3 rounds / 4 candidates / 3 patches</option>
+              <option value="deep">深入：5 rounds / 6 candidates / 5 patches</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid three" style="margin-top:12px">
+          <div class="field">
+            <label for="v2ProfilerType">profiler</label>
+            <select id="v2ProfilerType">
+              <option value="dummy">dummy：只解析 benchmark</option>
+              <option value="tilelang_log">tilelang_log：编译日志 + 生成代码</option>
+              <option value="mxmaca">mxmaca：命令接口占位</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="v2SampleFile">上传 TileLang sample</label>
+            <input id="v2SampleFile" type="file" accept=".py,.txt,.yaml,.json">
+          </div>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <label for="v2SampleText">TileLang sample 内容</label>
+          <textarea id="v2SampleText" placeholder="粘贴 kernel.py 或上传 sample 文件。前端只读取文件内容，不执行。"></textarea>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>硬件参数确认</h2>
+          <span class="muted">用户覆盖优先级最高</span>
+        </div>
+        <p class="section-kicker">展示 Agent 自动补全字段的 value/source/confidence；如需覆盖，请填写 override，导出的 request 会标记 <code>source=user_override</code>。</p>
+        <div id="v2HardwareEditor" class="table-wrap"></div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Run Request 输出</h2>
+          <span class="muted">给后端 CLI 读取</span>
+        </div>
+        <div class="inline-actions">
+          <button id="generateRunRequestBtn" type="button">生成 run_request</button>
+          <button id="downloadRunRequestJsonBtn" class="secondary" type="button">下载 JSON</button>
+          <button id="downloadRunRequestYamlBtn" class="secondary" type="button">下载 YAML</button>
+        </div>
+        <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“生成 run_request”后显示脱敏 JSON。"></textarea>
+      </section>
+    </section>
+
+    <section id="settingsView" class="view-panel">
+      <section class="section">
+        <div class="section-head">
+          <h2>用户设置</h2>
+          <span class="muted">只保存非密钥配置</span>
+        </div>
+        <p class="section-kicker">这里保存 SSH 和 LLM 的长期设置。密钥只填写环境变量名，页面不显示、不读取真实密钥。</p>
+        <div class="form-grid three">
+          <div class="field"><label for="settingSshHost">SSH host</label><input id="settingSshHost" autocomplete="off"></div>
+          <div class="field"><label for="settingSshPort">SSH port</label><input id="settingSshPort" type="number" value="22"></div>
+          <div class="field"><label for="settingSshUsername">SSH username</label><input id="settingSshUsername" autocomplete="off"></div>
+          <div class="field">
+            <label for="settingAuthType">auth type</label>
+            <select id="settingAuthType">
+              <option value="password">password</option>
+              <option value="key">key</option>
+            </select>
+          </div>
+          <div class="field"><label for="settingPasswordEnv">password 环境变量名</label><input id="settingPasswordEnv" value="KERNEL_AGENT_SSH_PASSWORD" autocomplete="off"></div>
+          <div class="field"><label for="settingRemoteWorkspace">remote workspace</label><input id="settingRemoteWorkspace" placeholder="/tmp/kernel_opt_workspace" autocomplete="off"></div>
+          <div class="field"><label for="settingLlmBaseUrl">LLM base URL</label><input id="settingLlmBaseUrl" value="https://api.openai.com/v1" autocomplete="off"></div>
+          <div class="field"><label for="settingLlmModel">LLM model</label><input id="settingLlmModel" value="gpt-4o-mini" autocomplete="off"></div>
+          <div class="field"><label for="settingApiKeyEnv">API key 环境变量名</label><input id="settingApiKeyEnv" value="OPENAI_API_KEY" autocomplete="off"></div>
+        </div>
+        <div class="status-grid">
+          <span class="chip" id="passwordEnvStatus">password env：未配置</span>
+          <span class="chip" id="apiKeyEnvStatus">API key env：未配置</span>
+          <span class="chip" id="sshStatus">SSH：未配置</span>
+          <span class="chip" id="llmStatus">LLM：未配置</span>
+        </div>
+        <div class="inline-actions">
+          <button id="saveSettingsBtn" type="button">保存设置</button>
+          <button id="clearSettingsBtn" class="secondary" type="button">清空本地设置</button>
+        </div>
+      </section>
+    </section>
+
+    <section id="resultsView" class="view-panel">
 
     <section class="howto" aria-label="本地查看说明">
       <div>
@@ -578,6 +799,7 @@
       </div>
       <pre id="reportText">waiting</pre>
     </section>
+    </section>
   </main>
 
   <script>
@@ -608,11 +830,33 @@
       stdout: "stdout 路径",
       stderr: "stderr 路径",
     };
+    const V2_SETTINGS_KEY = "tilelang_v2_user_settings_v1";
+    const HARDWARE_FIELD_NAMES = [
+      "target_name",
+      "backend",
+      "device_count",
+      "warp_size",
+      "wave_size",
+      "max_threads_per_block",
+      "shared_memory_per_block_bytes",
+      "max_registers_per_thread",
+      "total_memory_GB",
+      "available_memory_GB",
+      "vector_alignment_bytes",
+      "supported_dtypes",
+      "matrix_intrinsic",
+      "hbm_bandwidth_GBps",
+    ];
+    const BUDGET_PRESETS = {
+      quick: { max_iterations: 1, candidates_per_iteration: 3 },
+      standard: { max_iterations: 3, candidates_per_iteration: 4 },
+      deep: { max_iterations: 5, candidates_per_iteration: 6 },
+    };
     const FIXED_RESULT_DIR = "../workspace/results/";
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
-    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null };
+    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, hardware: null, settings: {}, runRequest: null };
     const el = {
       alerts: document.getElementById("alerts"),
       compareGrid: document.getElementById("compareGrid"),
@@ -632,11 +876,54 @@
       reportText: document.getElementById("reportText"),
       chooseDirBtn: document.getElementById("chooseDirBtn"),
       reloadBtn: document.getElementById("reloadBtn"),
+      v2ProjectName: document.getElementById("v2ProjectName"),
+      v2GpuModel: document.getElementById("v2GpuModel"),
+      v2BuildCommand: document.getElementById("v2BuildCommand"),
+      v2BenchmarkCommand: document.getElementById("v2BenchmarkCommand"),
+      v2CorrectnessCommand: document.getElementById("v2CorrectnessCommand"),
+      v2EntryFile: document.getElementById("v2EntryFile"),
+      v2SampleSourceType: document.getElementById("v2SampleSourceType"),
+      v2SamplePath: document.getElementById("v2SamplePath"),
+      v2BudgetMode: document.getElementById("v2BudgetMode"),
+      v2ProfilerType: document.getElementById("v2ProfilerType"),
+      v2SampleFile: document.getElementById("v2SampleFile"),
+      v2SampleText: document.getElementById("v2SampleText"),
+      v2HardwareEditor: document.getElementById("v2HardwareEditor"),
+      generateRunRequestBtn: document.getElementById("generateRunRequestBtn"),
+      downloadRunRequestJsonBtn: document.getElementById("downloadRunRequestJsonBtn"),
+      downloadRunRequestYamlBtn: document.getElementById("downloadRunRequestYamlBtn"),
+      runRequestOutput: document.getElementById("runRequestOutput"),
+      saveSettingsBtn: document.getElementById("saveSettingsBtn"),
+      clearSettingsBtn: document.getElementById("clearSettingsBtn"),
+      passwordEnvStatus: document.getElementById("passwordEnvStatus"),
+      apiKeyEnvStatus: document.getElementById("apiKeyEnvStatus"),
+      sshStatus: document.getElementById("sshStatus"),
+      llmStatus: document.getElementById("llmStatus"),
     };
 
+    document.querySelectorAll("[data-view-target]").forEach((button) => {
+      button.addEventListener("click", () => activateView(button.dataset.viewTarget));
+    });
     el.chooseDirBtn.addEventListener("click", chooseDirectory);
     el.reloadBtn.addEventListener("click", loadAndRender);
+    el.v2SampleFile.addEventListener("change", readSampleFile);
+    el.v2GpuModel.addEventListener("input", renderHardwareEditor);
+    el.generateRunRequestBtn.addEventListener("click", generateRunRequest);
+    el.downloadRunRequestJsonBtn.addEventListener("click", () => downloadRunRequest("json"));
+    el.downloadRunRequestYamlBtn.addEventListener("click", () => downloadRunRequest("yaml"));
+    el.saveSettingsBtn.addEventListener("click", saveSettings);
+    el.clearSettingsBtn.addEventListener("click", clearSettings);
+    ["settingSshHost", "settingSshPort", "settingSshUsername", "settingAuthType", "settingPasswordEnv", "settingRemoteWorkspace", "settingLlmBaseUrl", "settingLlmModel", "settingApiKeyEnv"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", updateSettingStatus);
+    });
+    loadSettings();
+    renderHardwareEditor();
     loadAndRender();
+
+    function activateView(targetId) {
+      document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.viewTarget === targetId));
+      document.querySelectorAll(".view-panel").forEach((panel) => panel.classList.toggle("active", panel.id === targetId));
+    }
 
     async function chooseDirectory() {
       if (!("showDirectoryPicker" in window)) {
@@ -646,6 +933,83 @@
       }
       state.dirHandle = await window.showDirectoryPicker({ mode: "read" });
       await loadAndRender();
+    }
+
+    async function readSampleFile() {
+      const file = el.v2SampleFile.files?.[0];
+      if (!file) return;
+      el.v2SampleText.value = sanitizeText(await file.text());
+      el.v2SampleSourceType.value = "upload";
+      if (!el.v2ProjectName.value || el.v2ProjectName.value === "tilelang-v2-run") {
+        el.v2ProjectName.value = file.name.replace(/\.[^.]+$/, "") || "tilelang-v2-run";
+      }
+    }
+
+    function loadSettings() {
+      try {
+        state.settings = JSON.parse(localStorage.getItem(V2_SETTINGS_KEY) || "{}");
+      } catch (error) {
+        state.settings = {};
+      }
+      setSettingValue("settingSshHost", state.settings.ssh_host || "");
+      setSettingValue("settingSshPort", state.settings.ssh_port || "22");
+      setSettingValue("settingSshUsername", state.settings.ssh_username || "");
+      setSettingValue("settingAuthType", state.settings.auth_type || "password");
+      setSettingValue("settingPasswordEnv", state.settings.password_env || "KERNEL_AGENT_SSH_PASSWORD");
+      setSettingValue("settingRemoteWorkspace", state.settings.remote_workspace || "");
+      setSettingValue("settingLlmBaseUrl", state.settings.llm_base_url || "https://api.openai.com/v1");
+      setSettingValue("settingLlmModel", state.settings.llm_model || "gpt-4o-mini");
+      setSettingValue("settingApiKeyEnv", state.settings.api_key_env || "OPENAI_API_KEY");
+      updateSettingStatus();
+    }
+
+    function saveSettings() {
+      state.settings = readSettings();
+      localStorage.setItem(V2_SETTINGS_KEY, JSON.stringify(state.settings));
+      updateSettingStatus();
+      addOneShotWarning("用户设置已保存在当前浏览器本地；只保存环境变量名，不保存密钥值。");
+      renderAlerts();
+    }
+
+    function clearSettings() {
+      localStorage.removeItem(V2_SETTINGS_KEY);
+      state.settings = {};
+      loadSettings();
+    }
+
+    function readSettings() {
+      return {
+        ssh_host: inputValue("settingSshHost"),
+        ssh_port: Number(inputValue("settingSshPort") || 22),
+        ssh_username: inputValue("settingSshUsername"),
+        auth_type: inputValue("settingAuthType") || "password",
+        password_env: inputValue("settingPasswordEnv"),
+        remote_workspace: inputValue("settingRemoteWorkspace"),
+        llm_base_url: inputValue("settingLlmBaseUrl"),
+        llm_model: inputValue("settingLlmModel"),
+        api_key_env: inputValue("settingApiKeyEnv"),
+      };
+    }
+
+    function updateSettingStatus() {
+      const settings = readSettings();
+      setStatusChip(el.passwordEnvStatus, "password env", !!settings.password_env);
+      setStatusChip(el.apiKeyEnvStatus, "API key env", !!settings.api_key_env);
+      setStatusChip(el.sshStatus, "SSH", !!(settings.ssh_host && settings.ssh_username && settings.remote_workspace));
+      setStatusChip(el.llmStatus, "LLM", !!(settings.llm_base_url && settings.llm_model && settings.api_key_env));
+    }
+
+    function setStatusChip(node, label, configured) {
+      node.className = `chip ${configured ? "ok" : "warn"}`;
+      node.textContent = `${label}：${configured ? "已配置" : "未配置"}`;
+    }
+
+    function setSettingValue(id, value) {
+      document.getElementById(id).value = value ?? "";
+    }
+
+    function inputValue(id) {
+      return sanitizeText(document.getElementById(id).value.trim());
     }
 
     async function loadAndRender() {
@@ -888,6 +1252,7 @@
     }
 
     function render(data) {
+      state.hardware = data.hardware;
       renderAlerts();
       renderHardware(data.hardware);
       renderHardwareProbe(data.hardwareProbe);
@@ -898,6 +1263,134 @@
       renderFailedCases(data.failed);
       renderPaths(data.rows);
       el.reportText.textContent = data.report || "等待 report.md：后端可能仍在生成报告。";
+      renderHardwareEditor();
+    }
+
+    function renderHardwareEditor() {
+      const hardware = state.hardware || { fields: {} };
+      const detectedFields = hardware.fields || {};
+      const gpuModel = el.v2GpuModel.value.trim();
+      const rows = HARDWARE_FIELD_NAMES.map((field) => {
+        const detected = detectedFields[field] || {};
+        const userTarget = field === "target_name" && gpuModel;
+        const value = userTarget ? gpuModel : pick(detected.value, field === "target_name" ? gpuModel : "", "");
+        const source = userTarget ? "user_input" : pick(detected.source, value ? "user_input" : "unknown");
+        const confidence = userTarget ? "medium" : pick(detected.confidence, value ? "medium" : "unknown");
+        const notes = userTarget ? "from V2 GPU model input" : pick(detected.notes, value ? "from V2 form input" : "not available yet");
+        return { field, value, source, confidence, notes };
+      });
+      el.v2HardwareEditor.innerHTML = `<table>
+        <thead><tr><th>字段</th><th>自动补全值</th><th>source</th><th>confidence</th><th>用户覆盖</th><th>说明</th></tr></thead>
+        <tbody>
+          ${rows.map((row) => `<tr>
+            <td>${escapeHtml(row.field)}</td>
+            <td>${escapeHtml(display(row.value))}</td>
+            <td>${escapeHtml(display(row.source))}</td>
+            <td>${escapeHtml(display(row.confidence))}</td>
+            <td><input data-hardware-override="${escapeHtml(row.field)}" value="${escapeHtml(readHardwareOverride(row.field))}" placeholder="可选"></td>
+            <td>${escapeHtml(display(row.notes))}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`;
+    }
+
+    function readHardwareOverride(field) {
+      const existing = document.querySelector(`[data-hardware-override="${CSS.escape(field)}"]`);
+      return existing ? sanitizeText(existing.value) : "";
+    }
+
+    function readHardwareFields() {
+      const fields = {};
+      for (const field of HARDWARE_FIELD_NAMES) {
+        const detected = state.hardware?.fields?.[field] || {};
+        const gpuModel = el.v2GpuModel.value.trim();
+        const fallbackValue = field === "target_name" ? gpuModel : "";
+        const override = readHardwareOverride(field);
+        const detectedValue = field === "target_name" && gpuModel ? gpuModel : detected.value;
+        const detectedSource = field === "target_name" && gpuModel ? "user_input" : detected.source;
+        const detectedConfidence = field === "target_name" && gpuModel ? "medium" : detected.confidence;
+        const detectedNotes = field === "target_name" && gpuModel ? "from V2 GPU model input" : detected.notes;
+        fields[field] = {
+          value: parseRequestValue(override || pick(detectedValue, fallbackValue, null)),
+          source: override ? "user_override" : pick(detectedSource, fallbackValue ? "user_input" : "unknown"),
+          confidence: override ? "high" : pick(detectedConfidence, fallbackValue ? "medium" : "unknown"),
+          notes: override ? "overridden in V2 frontend request" : pick(detectedNotes, fallbackValue ? "from V2 form input" : "not available yet"),
+        };
+      }
+      return fields;
+    }
+
+    function readHardwareOverrideFields() {
+      const fields = {};
+      for (const field of HARDWARE_FIELD_NAMES) {
+        const override = readHardwareOverride(field);
+        if (!override) continue;
+        fields[field] = {
+          value: parseRequestValue(override),
+          source: "user_override",
+          confidence: "high",
+          notes: "overridden in V2 frontend request",
+        };
+      }
+      return fields;
+    }
+
+    function generateRunRequest() {
+      const budget = BUDGET_PRESETS[el.v2BudgetMode.value] || BUDGET_PRESETS.standard;
+      const sampleText = sanitizeText(el.v2SampleText.value);
+      const sourceType = el.v2SampleSourceType.value || "inline";
+      const request = {
+        schema_version: "v2.run_request.v1",
+        project_name: sanitizeText(el.v2ProjectName.value.trim() || "tilelang-v2-run"),
+        sample: {
+          source_type: sourceType,
+          inline_text: sourceType === "path" ? null : (sampleText || null),
+          path: sourceType === "path" ? (sanitizeText(el.v2SamplePath.value.trim()) || null) : null,
+          entry_file: sanitizeText(el.v2EntryFile.value.trim() || "kernel.py"),
+        },
+        commands: {
+          build_command: sanitizeText(el.v2BuildCommand.value.trim() || "python -m py_compile kernel.py"),
+          correctness_command: sanitizeText(el.v2CorrectnessCommand.value.trim() || "python correctness.py"),
+          benchmark_command: sanitizeText(el.v2BenchmarkCommand.value.trim() || "python benchmark.py"),
+        },
+        target: {
+          gpu_model: sanitizeText(el.v2GpuModel.value.trim()),
+          backend: "unknown",
+        },
+        settings_ref: {
+          use_saved_settings: true,
+        },
+        hardware_overrides: {
+          fields: readHardwareOverrideFields(),
+        },
+        search: {
+          strategy: "rule_based",
+          max_iterations: budget.max_iterations,
+          candidates_per_iteration: budget.candidates_per_iteration,
+          timeout_seconds: 60,
+          objective: "latency",
+        },
+        profiler: {
+          enabled: true,
+          type: el.v2ProfilerType.value,
+        },
+        patching: {
+          enabled: true,
+        },
+      };
+      state.runRequest = redactObject(request);
+      el.runRequestOutput.value = JSON.stringify(state.runRequest, null, 2);
+    }
+
+    function downloadRunRequest(format) {
+      if (!state.runRequest) generateRunRequest();
+      const body = format === "yaml" ? toYaml(state.runRequest) : JSON.stringify(state.runRequest, null, 2);
+      const blob = new Blob([body], { type: format === "yaml" ? "text/yaml" : "application/json" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = format === "yaml" ? "run_request.yaml" : "run_request.json";
+      link.click();
+      URL.revokeObjectURL(link.href);
     }
 
     function renderHardware(hardware) {
@@ -1289,6 +1782,17 @@
       return sanitizeText(String(value));
     }
 
+    function parseRequestValue(value) {
+      if (value === null || value === undefined || value === "") return null;
+      const text = String(value).trim();
+      if (text === "true") return true;
+      if (text === "false") return false;
+      if (text === "null" || text === "unknown") return null;
+      if (/^-?\d+(?:\.\d+)?$/.test(text)) return Number(text);
+      if (text.includes(",") && !text.includes("{") && !text.includes("[")) return text.split(",").map((item) => parseRequestValue(item.trim()));
+      return sanitizeText(text);
+    }
+
     function valueAt(object, path) {
       return path.reduce((current, part) => current && current[part], object);
     }
@@ -1315,8 +1819,37 @@
       if (value && typeof value === "object") {
         return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, redactObject(childValue, childKey)]));
       }
-      if (SENSITIVE_KEY_RE.test(key)) return "[REDACTED]";
+      if (/(_env|Env)$/.test(key)) return typeof value === "string" ? sanitizeText(value) : value;
+      if (SENSITIVE_KEY_RE.test(key)) return typeof value === "string" ? "[REDACTED]" : value;
       return typeof value === "string" ? sanitizeText(value) : value;
+    }
+
+    function toYaml(value, indent = 0) {
+      const pad = " ".repeat(indent);
+      if (Array.isArray(value)) {
+        if (!value.length) return "[]";
+        return value.map((item) => `${pad}- ${isScalar(item) ? yamlScalar(item) : `\n${toYaml(item, indent + 2)}`}`).join("\n");
+      }
+      if (value && typeof value === "object") {
+        return Object.entries(value).map(([key, item]) => {
+          if (isScalar(item)) return `${pad}${key}: ${yamlScalar(item)}`;
+          return `${pad}${key}:\n${toYaml(item, indent + 2)}`;
+        }).join("\n");
+      }
+      return `${pad}${yamlScalar(value)}`;
+    }
+
+    function isScalar(value) {
+      return value === null || value === undefined || typeof value !== "object";
+    }
+
+    function yamlScalar(value) {
+      if (value === null || value === undefined) return "null";
+      if (typeof value === "number" || typeof value === "boolean") return String(value);
+      const text = String(value);
+      if (!text) return '""';
+      if (/^[A-Za-z0-9_./:-]+$/.test(text)) return text;
+      return JSON.stringify(text);
     }
 
     function escapeHtml(value) {
