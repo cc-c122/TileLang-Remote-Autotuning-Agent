@@ -139,6 +139,82 @@ V2 仍然只返回当前预算内实际测到的 best-seen kernel，不保证全
 
 V2 第二批补充 profiler diagnosis 说明，明确 profiler 字段、指标缺失时的 `null` 语义、bottleneck 证据来源和 confidence 规则；没有 profiler 时系统退化为 benchmark + log based diagnosis。详见 `docs/v2_profiler_diagnosis.md`。
 
+## V2 真实运行流程
+
+V2 当前是文件驱动流程：前端只生成 `run_request.yaml` 和 `settings.yaml`，不直接执行后端，不调用后端 HTTP API。用户下载这两个文件后，在本机 shell 里运行后端 CLI：
+
+```bash
+python main.py --run-request run_request.yaml --settings settings.yaml
+```
+
+`run_request.yaml` 是单次任务文件，使用 `schema_version: v2.run_request.v1`，包含 sample、GPU 型号、运行命令、搜索预算和 profiler/patching 开关。
+
+`settings.yaml` 是长期设置文件，只保存环境变量名和非密钥连接信息，不能保存 SSH 密码、LLM API Key、token 或私钥内容。示例：
+
+可从 `examples/run_request.yaml` 和 `examples/settings.yaml.example` 开始，复制 `settings.yaml.example` 为 `settings.yaml` 后再填写 host、username、remote_workspace 等非密钥字段。
+
+```yaml
+schema_version: v2.user_settings.v1
+
+runner:
+  type: ssh
+
+remote:
+  host: your-ssh-host
+  port: 22
+  username: your-user
+  auth_type: password
+  password_env: KERNEL_AGENT_SSH_PASSWORD
+  remote_workspace: /tmp/kernel_opt_workspace
+
+llm:
+  provider: openai_compatible
+  base_url: https://api.openai.com/v1
+  model: gpt-4o-mini
+  api_key_env: OPENAI_API_KEY
+```
+
+真实 secret 必须由用户在运行 CLI 的 shell 中设置。
+
+Linux / macOS bash：
+
+```bash
+export KERNEL_AGENT_SSH_PASSWORD='your-ssh-password'
+export OPENAI_API_KEY='your-llm-api-key'
+python main.py --run-request run_request.yaml --settings settings.yaml
+```
+
+Windows cmd.exe：
+
+```cmd
+set KERNEL_AGENT_SSH_PASSWORD=your-ssh-password
+set OPENAI_API_KEY=your-llm-api-key
+python main.py --run-request run_request.yaml --settings settings.yaml
+```
+
+Windows PowerShell：
+
+```powershell
+$env:KERNEL_AGENT_SSH_PASSWORD = 'your-ssh-password'
+$env:OPENAI_API_KEY = 'your-llm-api-key'
+python main.py --run-request run_request.yaml --settings settings.yaml
+```
+
+运行结果写入：
+
+```text
+kernel_opt_agent/workspace/results/
+```
+
+前端结果页只读取这个目录下的结果文件，用于查看 best-seen、trial、日志、报告、硬件信息和 profiler/diagnosis 摘要；它暂不提供 HTTP API，也不会替用户执行后端命令。
+
+当前限制：
+
+- V1 / V2 都不保证全局最优，只返回当前预算内实际测到的 best-seen 结果。
+- profiler 不可用或指标缺失时，系统退化为 benchmark / log based analysis，缺失指标必须保持 `null`。
+- 前端暂不提供 HTTP API；真实执行入口仍是后端 CLI。
+- 远程 build、correctness、benchmark 命令必须受 `kernel_opt_agent/runner/command_guard.py` 约束。
+
 ## 配置文件怎么写
 
 可以从示例配置开始：
