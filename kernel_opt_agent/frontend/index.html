@@ -1126,11 +1126,15 @@
 
               <section class="section">
                 <div class="action-bar">
-                  <button id="generateRunRequestBtn" class="primary-action" type="button">开始优化</button>
-                  <button id="downloadRunRequestJsonBtn" class="secondary" type="button">预览生成配置</button>
-                  <button id="downloadRunRequestYamlBtn" class="secondary" type="button">保存为模板</button>
+                  <button id="generateRunRequestBtn" class="primary-action" type="button">生成任务文件</button>
+                  <button id="downloadRunRequestYamlBtn" class="secondary" type="button">下载 run_request.yaml</button>
+                  <button id="copyRunCommandBtn" class="secondary" type="button">复制运行命令</button>
                 </div>
-                <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“开始优化”后显示脱敏 run_request JSON。"></textarea>
+                <div class="field" style="margin-top:12px">
+                  <label for="runCommandOutput">下一步真实命令</label>
+                  <input id="runCommandOutput" readonly value="python main.py --run-request path/to/run_request.yaml">
+                </div>
+                <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“生成任务文件”后显示脱敏 run_request YAML。"></textarea>
               </section>
             </div>
 
@@ -1138,7 +1142,7 @@
               <section class="rail-card">
                 <h2>▣ 系统设置（长期保存）</h2>
                 <div class="settings-group">
-                  <div class="settings-group-head"><span>模型方案 / 远程容器 SSH</span><span class="chip ok" id="sshStatus">SSH：未配置</span></div>
+                  <div class="settings-group-head"><span>模型方案 / 远程容器 SSH</span><span class="chip ok" id="sshStatus">SSH：未填写</span></div>
                   <div class="settings-grid">
                     <div class="field"><label for="settingSshHost">Host</label><input id="settingSshHost" placeholder="ssh.modelforge.com" autocomplete="off"></div>
                     <div class="field"><label for="settingSshPort">Port</label><input id="settingSshPort" type="number" value="22"></div>
@@ -1149,7 +1153,7 @@
                   </div>
                 </div>
                 <div class="settings-group">
-                  <div class="settings-group-head"><span>LLM API 设置</span><span class="chip ok" id="llmStatus">LLM：未配置</span></div>
+                  <div class="settings-group-head"><span>LLM API 设置</span><span class="chip ok" id="llmStatus">LLM：未填写</span></div>
                   <div class="settings-grid">
                     <div class="field"><label for="settingLlmBaseUrl">Base URL</label><input id="settingLlmBaseUrl" value="https://api.openai.com/v1" autocomplete="off"></div>
                     <div class="field"><label for="settingApiKeyEnv">API Key</label><input id="settingApiKeyEnv" value="OPENAI_API_KEY" autocomplete="off"></div>
@@ -1157,14 +1161,16 @@
                   </div>
                 </div>
                 <div class="status-grid">
-                  <span class="chip" id="passwordEnvStatus">password env：未配置</span>
-                  <span class="chip" id="apiKeyEnvStatus">API key env：未配置</span>
+                  <span class="chip" id="passwordEnvStatus">password env：未填写</span>
+                  <span class="chip" id="apiKeyEnvStatus">API key env：未填写</span>
                 </div>
                 <div class="save-row">
-                  <button id="saveSettingsBtn" type="button">保存设置</button>
-                  <button id="clearSettingsBtn" class="secondary" type="button">清空</button>
+                  <button id="saveSettingsBtn" type="button">保存到浏览器（后端不可读取）</button>
+                  <button id="downloadSettingsBtn" class="secondary" type="button">下载 settings.yaml</button>
+                  <button id="clearSettingsBtn" class="secondary" type="button">清空浏览器设置</button>
                 </div>
-                <div class="settings-note" style="margin-top:12px">这些设置在浏览器本地长期保存，新建任务时无需重复填写。</div>
+                <div class="settings-note" style="margin-top:12px">仅浏览器保存，后端暂不可读取；请下载 settings.yaml 交给后端 CLI 使用。页面只保存环境变量名，不保存密钥值。</div>
+                <textarea id="settingsOutput" readonly style="margin-top:12px" placeholder="settings.yaml 预览；只包含环境变量名，不包含密钥值。"></textarea>
               </section>
 
               <section class="rail-card">
@@ -1406,11 +1412,14 @@
       v2SampleText: document.getElementById("v2SampleText"),
       v2HardwareEditor: document.getElementById("v2HardwareEditor"),
       generateRunRequestBtn: document.getElementById("generateRunRequestBtn"),
-      downloadRunRequestJsonBtn: document.getElementById("downloadRunRequestJsonBtn"),
       downloadRunRequestYamlBtn: document.getElementById("downloadRunRequestYamlBtn"),
+      copyRunCommandBtn: document.getElementById("copyRunCommandBtn"),
+      runCommandOutput: document.getElementById("runCommandOutput"),
       runRequestOutput: document.getElementById("runRequestOutput"),
       saveSettingsBtn: document.getElementById("saveSettingsBtn"),
+      downloadSettingsBtn: document.getElementById("downloadSettingsBtn"),
       clearSettingsBtn: document.getElementById("clearSettingsBtn"),
+      settingsOutput: document.getElementById("settingsOutput"),
       passwordEnvStatus: document.getElementById("passwordEnvStatus"),
       apiKeyEnvStatus: document.getElementById("apiKeyEnvStatus"),
       sshStatus: document.getElementById("sshStatus"),
@@ -1425,12 +1434,13 @@
     el.v2SampleFile.addEventListener("change", readSampleFile);
     el.v2GpuModel.addEventListener("input", renderHardwareEditor);
     el.generateRunRequestBtn.addEventListener("click", generateRunRequest);
-    el.downloadRunRequestJsonBtn.addEventListener("click", () => downloadRunRequest("json"));
-    el.downloadRunRequestYamlBtn.addEventListener("click", () => downloadRunRequest("yaml"));
+    el.downloadRunRequestYamlBtn.addEventListener("click", downloadRunRequest);
+    el.copyRunCommandBtn.addEventListener("click", copyRunCommand);
     el.saveSettingsBtn.addEventListener("click", saveSettings);
+    el.downloadSettingsBtn.addEventListener("click", downloadSettings);
     el.clearSettingsBtn.addEventListener("click", clearSettings);
     ["settingSshHost", "settingSshPort", "settingSshUsername", "settingAuthType", "settingPasswordEnv", "settingRemoteWorkspace", "settingLlmBaseUrl", "settingLlmModel", "settingApiKeyEnv"].forEach((id) => {
-      document.getElementById(id).addEventListener("input", updateSettingStatus);
+      document.getElementById(id).addEventListener("input", () => { updateSettingStatus(); renderSettingsOutput(); });
     });
     loadSettings();
     renderHardwareEditor();
@@ -1477,13 +1487,15 @@
       setSettingValue("settingLlmModel", state.settings.llm_model || "gpt-4o-mini");
       setSettingValue("settingApiKeyEnv", state.settings.api_key_env || "OPENAI_API_KEY");
       updateSettingStatus();
+      renderSettingsOutput();
     }
 
     function saveSettings() {
       state.settings = readSettings();
       localStorage.setItem(V2_SETTINGS_KEY, JSON.stringify(state.settings));
       updateSettingStatus();
-      addOneShotWarning("用户设置已保存在当前浏览器本地；只保存环境变量名，不保存密钥值。");
+      renderSettingsOutput();
+      addOneShotWarning("设置仅浏览器保存，后端暂不可读取。请下载 settings.yaml 并交给后端 CLI 使用；页面只保存环境变量名，不保存密钥值。");
       renderAlerts();
     }
 
@@ -1515,9 +1527,40 @@
       setStatusChip(el.llmStatus, "LLM", !!(settings.llm_base_url && settings.llm_model && settings.api_key_env));
     }
 
+    function settingsFileObject() {
+      const settings = readSettings();
+      return {
+        runner: {
+          type: "ssh",
+        },
+        remote: {
+          host: settings.ssh_host,
+          port: settings.ssh_port || 22,
+          username: settings.ssh_username,
+          auth_type: settings.auth_type || "password",
+          password_env: settings.password_env || "KERNEL_AGENT_SSH_PASSWORD",
+          remote_workspace: settings.remote_workspace,
+        },
+        llm: {
+          provider: "openai_compatible",
+          base_url: settings.llm_base_url,
+          model: settings.llm_model,
+          api_key_env: settings.api_key_env || "OPENAI_API_KEY",
+        },
+      };
+    }
+
+    function renderSettingsOutput() {
+      if (el.settingsOutput) el.settingsOutput.value = toYaml(settingsFileObject());
+    }
+
+    function downloadSettings() {
+      downloadTextFile("settings.yaml", toYaml(settingsFileObject()), "text/yaml");
+    }
+
     function setStatusChip(node, label, configured) {
       node.className = `chip ${configured ? "ok" : "warn"}`;
-      node.textContent = `${label}：${configured ? "已配置" : "未配置"}`;
+      node.textContent = `${label}：${configured ? "已填写" : "未填写"}`;
     }
 
     function setSettingValue(id, value) {
@@ -1899,16 +1942,30 @@
         },
       };
       state.runRequest = redactObject(request);
-      el.runRequestOutput.value = JSON.stringify(state.runRequest, null, 2);
+      el.runCommandOutput.value = runRequestCommand();
+      el.runRequestOutput.value = toYaml(state.runRequest);
     }
 
-    function downloadRunRequest(format) {
+    function downloadRunRequest() {
       if (!state.runRequest) generateRunRequest();
-      const body = format === "yaml" ? toYaml(state.runRequest) : JSON.stringify(state.runRequest, null, 2);
-      const blob = new Blob([body], { type: format === "yaml" ? "text/yaml" : "application/json" });
+      downloadTextFile("run_request.yaml", toYaml(state.runRequest), "text/yaml");
+    }
+
+    function runRequestCommand() {
+      return "python main.py --run-request path/to/run_request.yaml";
+    }
+
+    async function copyRunCommand() {
+      const command = runRequestCommand();
+      el.runCommandOutput.value = command;
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(command);
+    }
+
+    function downloadTextFile(filename, body, type) {
+      const blob = new Blob([body], { type });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = format === "yaml" ? "run_request.yaml" : "run_request.json";
+      link.download = filename;
       link.click();
       URL.revokeObjectURL(link.href);
     }
@@ -2441,9 +2498,11 @@
         return value.map((item) => `${pad}- ${isScalar(item) ? yamlScalar(item) : `\n${toYaml(item, indent + 2)}`}`).join("\n");
       }
       if (value && typeof value === "object") {
-        return Object.entries(value).map(([key, item]) => {
+        const entries = Object.entries(value);
+        if (!entries.length) return "{}";
+        return entries.map(([key, item]) => {
           if (isScalar(item)) return `${pad}${key}: ${yamlScalar(item)}`;
-          return `${pad}${key}:\n${toYaml(item, indent + 2)}`;
+          return Object.keys(item || {}).length ? `${pad}${key}:\n${toYaml(item, indent + 2)}` : `${pad}${key}: {}`;
         }).join("\n");
       }
       return `${pad}${yamlScalar(value)}`;
