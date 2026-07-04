@@ -151,6 +151,8 @@ python main.py --run-request run_request.yaml --settings settings.yaml
 
 `settings.yaml` 是长期设置文件，只保存环境变量名和非密钥连接信息，不能保存 SSH 密码、LLM API Key、token 或私钥内容。示例：
 
+可从 `examples/run_request.yaml` 和 `examples/settings.yaml.example` 开始，复制 `settings.yaml.example` 为 `settings.yaml` 后再填写 host、username、remote_workspace 等非密钥字段。
+
 ```yaml
 schema_version: v2.user_settings.v1
 
