@@ -1132,8 +1132,9 @@
                 </div>
                 <div class="field" style="margin-top:12px">
                   <label for="runCommandOutput">下一步真实命令</label>
-                  <input id="runCommandOutput" readonly value="python main.py --run-request path/to/run_request.yaml">
+                  <input id="runCommandOutput" readonly value="python main.py --run-request run_request.yaml --settings settings.yaml">
                 </div>
+                <div class="settings-note" style="margin-top:12px">run_request.yaml 是任务文件，settings.yaml 是长期设置文件；两个文件都要交给后端 CLI。密码和 API key 仍然只通过环境变量读取。</div>
                 <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“生成任务文件”后显示脱敏 run_request YAML。"></textarea>
               </section>
             </div>
@@ -1169,7 +1170,7 @@
                   <button id="downloadSettingsBtn" class="secondary" type="button">下载 settings.yaml</button>
                   <button id="clearSettingsBtn" class="secondary" type="button">清空浏览器设置</button>
                 </div>
-                <div class="settings-note" style="margin-top:12px">仅浏览器保存，后端暂不可读取；请下载 settings.yaml 交给后端 CLI 使用。页面只保存环境变量名，不保存密钥值。</div>
+                <div class="settings-note" style="margin-top:12px">settings.yaml 是长期设置文件，需与 run_request.yaml 一起交给后端 CLI。仅浏览器保存，后端暂不可读取；页面只保存环境变量名，密码和 API key 仍然只通过环境变量读取。</div>
                 <textarea id="settingsOutput" readonly style="margin-top:12px" placeholder="settings.yaml 预览；只包含环境变量名，不包含密钥值。"></textarea>
               </section>
 
@@ -1495,7 +1496,7 @@
       localStorage.setItem(V2_SETTINGS_KEY, JSON.stringify(state.settings));
       updateSettingStatus();
       renderSettingsOutput();
-      addOneShotWarning("设置仅浏览器保存，后端暂不可读取。请下载 settings.yaml 并交给后端 CLI 使用；页面只保存环境变量名，不保存密钥值。");
+      addOneShotWarning("设置仅浏览器保存，后端暂不可读取。请下载 settings.yaml，并和 run_request.yaml 一起交给后端 CLI；密码和 API key 仍然只通过环境变量读取。");
       renderAlerts();
     }
 
@@ -1952,7 +1953,7 @@
     }
 
     function runRequestCommand() {
-      return "python main.py --run-request path/to/run_request.yaml";
+      return "python main.py --run-request run_request.yaml --settings settings.yaml";
     }
 
     async function copyRunCommand() {
