@@ -95,6 +95,15 @@ class HardwareDetectionConfig(BaseModel):
     timeout_seconds: int = Field(default=60, gt=0)
 
 
+class ProfilerConfig(BaseModel):
+    enabled: bool = True
+    type: str = "dummy"
+
+
+class PatchingConfig(BaseModel):
+    enabled: bool = False
+
+
 class AppConfig(BaseModel):
     project_name: str = "tilelang-autotune-demo"
     runner: RunnerConfig = Field(default_factory=RunnerConfig)
@@ -107,6 +116,8 @@ class AppConfig(BaseModel):
     constraints: ConstraintsConfig = Field(default_factory=ConstraintsConfig)
     hardware: HardwareConfig = Field(default_factory=HardwareConfig)
     hardware_detection: HardwareDetectionConfig = Field(default_factory=HardwareDetectionConfig)
+    profiler: ProfilerConfig = Field(default_factory=ProfilerConfig)
+    patching: PatchingConfig = Field(default_factory=PatchingConfig)
 
     @model_validator(mode="after")
     def validate_app(self) -> "AppConfig":
