@@ -6,7 +6,7 @@ V2 的用户体验目标是减少手写配置：用户在前端输入 sample 和
 
 ## 第一次设置 SSH / LLM
 
-用户先在设置页保存远程 SSH 和 LLM 配置。run request 里只引用设置，不写明文密码、API key、token 或私钥内容。
+用户先在设置页保存远程 SSH 和 LLM 配置。前端可以把设置下载为 `settings.yaml`；run request 里只引用设置，不写明文密码、API key、token 或私钥内容。
 
 V2 第一批 schema 使用：
 
@@ -15,7 +15,53 @@ settings_ref:
   use_saved_settings: true
 ```
 
-当 `use_saved_settings` 为 `true` 时，后端从已保存设置读取 SSH / LLM 连接信息，并在生成 effective config 时使用环境变量或密钥引用。run request、日志和结果文件都不能保存明文 secret。
+当 `use_saved_settings` 为 `true` 时，后端从 `settings.yaml` 读取 SSH / LLM 连接信息，并在生成 effective config 时使用环境变量名。run request、settings、日志和结果文件都不能保存明文 secret。
+
+`settings.yaml` 只保存环境变量名和非密钥连接信息：
+
+```yaml
+schema_version: v2.user_settings.v1
+
+runner:
+  type: ssh
+
+remote:
+  host: your-ssh-host
+  port: 22
+  username: your-user
+  auth_type: password
+  password_env: KERNEL_AGENT_SSH_PASSWORD
+  remote_workspace: /tmp/kernel_opt_workspace
+
+llm:
+  provider: openai_compatible
+  base_url: https://api.openai.com/v1
+  model: gpt-4o-mini
+  api_key_env: OPENAI_API_KEY
+```
+
+用户需要在运行后端 CLI 的 shell 里自行设置真实 secret。
+
+Linux / macOS bash：
+
+```bash
+export KERNEL_AGENT_SSH_PASSWORD='your-ssh-password'
+export OPENAI_API_KEY='your-llm-api-key'
+```
+
+Windows cmd.exe：
+
+```cmd
+set KERNEL_AGENT_SSH_PASSWORD=your-ssh-password
+set OPENAI_API_KEY=your-llm-api-key
+```
+
+Windows PowerShell：
+
+```powershell
+$env:KERNEL_AGENT_SSH_PASSWORD = 'your-ssh-password'
+$env:OPENAI_API_KEY = 'your-llm-api-key'
+```
 
 ## 新建优化任务
 
@@ -70,6 +116,12 @@ patching:
 - GPU 型号写入 `target.gpu_model`，后端类型写入 `target.backend`。
 - 搜索预算写入 `search.max_iterations`、`search.candidates_per_iteration` 和 `search.timeout_seconds`。
 
+前端只生成并下载文件，不直接执行后端，也不调用后端 HTTP API。真实执行命令是：
+
+```bash
+python main.py --run-request run_request.yaml --settings settings.yaml
+```
+
 ## GPU 参数自动补全
 
 用户输入 `target.gpu_model` 后，前端或后端可以尝试补全硬件参数，用于生成 effective config。自动补全不是准确性保证，不能把推测值当作官方事实。
@@ -91,6 +143,19 @@ hardware_overrides:
 
 ## 查看结果
 
-任务完成后，前端展示当前预算内实际测到的 best-seen kernel、候选运行状态、失败原因、指标、日志路径和脱敏后的 effective config。
+任务完成后，结果写入：
+
+```text
+kernel_opt_agent/workspace/results/
+```
+
+前端读取这个目录，展示当前预算内实际测到的 best-seen kernel、候选运行状态、失败原因、指标、日志路径和脱敏后的 effective config。
 
 V2 仍然只返回 best-seen，不保证全局最优。用户需要根据预算、命令正确性、硬件字段来源和置信度判断结果是否足够可信。
+
+当前限制：
+
+- V1 / V2 都不保证全局最优，只返回当前预算内实际测到的 best-seen。
+- profiler 不可用或指标缺失时，系统退化为 benchmark / log based analysis，缺失指标必须保持 `null`。
+- 前端暂不提供 HTTP API；真实执行入口仍是后端 CLI。
+- 远程 build、correctness、benchmark 命令必须受 `kernel_opt_agent/runner/command_guard.py` 约束。
