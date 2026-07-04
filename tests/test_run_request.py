@@ -97,19 +97,19 @@ class RunRequestTests(unittest.TestCase):
         self.assertEqual(Path(config.kernel.sample_path), ROOT / "kernel_opt_agent" / "samples" / "tilelang_mock_minimal")
         self.assertIn("VECTOR_WIDTH", config.search_space)
 
-    def test_upload_first_stage_can_use_inline_text(self) -> None:
+    def test_upload_run_request_uses_materialized_path(self) -> None:
         request = RunRequest.model_validate(
             minimal_request(
                 sample={
                     "source_type": "upload",
-                    "inline_text": INLINE_KERNEL,
-                    "path": None,
+                    "inline_text": None,
+                    "path": str(ROOT / "kernel_opt_agent" / "samples" / "tilelang_mock_minimal"),
                     "entry_file": "kernel.py",
                 }
             )
         )
         config = app_config_from_run_request(request)
-        self.assertTrue((Path(config.kernel.sample_path) / "kernel.py").exists())
+        self.assertEqual(Path(config.kernel.sample_path), ROOT / "kernel_opt_agent" / "samples" / "tilelang_mock_minimal")
 
     def test_frontend_exported_schema_file_runs_through_cli_config_conversion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
