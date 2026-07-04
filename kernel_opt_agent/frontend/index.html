@@ -1260,11 +1260,29 @@
 
     <section class="section">
       <div class="section-head">
+        <h2>Patch 尝试记录</h2>
+        <span class="muted" id="patchTrialsStatus">waiting</span>
+      </div>
+      <p class="section-kicker">只读 <code>patch_trials.jsonl</code>，展示 patch 假设、验证状态、confidence / uncertainty 和日志路径。</p>
+      <div id="patchTrialsPanel" class="table-wrap"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
         <h2>Baseline vs Best 对比</h2>
         <span class="muted" id="sourceNote">waiting</span>
       </div>
       <p class="section-kicker">对比 baseline 与预算内 best-seen，默认以 latency 越低越好计算提升。</p>
       <div class="compare-grid" id="compareGrid"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>Baseline vs Best Diff</h2>
+        <span class="muted" id="bestDiffStatus">waiting</span>
+      </div>
+      <p class="section-kicker">只读 <code>best_vs_baseline.diff</code>，用于验收 best kernel 相对 baseline 的代码差异。</p>
+      <pre id="bestDiffText">waiting</pre>
     </section>
 
     <section class="section grid-2">
@@ -1321,7 +1339,7 @@
   </main>
 
   <script>
-    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml", "hardware_probe.jsonl", "profiler_results.jsonl", "diagnosis.jsonl"];
+    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml", "hardware_probe.jsonl", "profiler_results.jsonl", "diagnosis.jsonl", "patch_trials.jsonl", "best_vs_baseline.diff"];
     const PROFILER_METRIC_FIELDS = ["latency_ms", "tflops", "estimated_hbm_bandwidth", "register_count", "shared_memory_bytes", "private_memory_bytes", "occupancy", "warp_active_ratio", "hbm_read_bandwidth", "hbm_write_bandwidth", "shared_bank_conflict", "memory_coalescing_efficiency"];
     const PROBE_STATUSES = ["pass", "failed", "timeout", "guard_denied", "exception", "skipped"];
     const PROBE_STATUS_LABELS = {
@@ -1395,6 +1413,10 @@
       profilerPanel: document.getElementById("profilerPanel"),
       diagnosisStatus: document.getElementById("diagnosisStatus"),
       diagnosisPanel: document.getElementById("diagnosisPanel"),
+      patchTrialsStatus: document.getElementById("patchTrialsStatus"),
+      patchTrialsPanel: document.getElementById("patchTrialsPanel"),
+      bestDiffStatus: document.getElementById("bestDiffStatus"),
+      bestDiffText: document.getElementById("bestDiffText"),
       pathsTable: document.getElementById("pathsTable"),
       reportText: document.getElementById("reportText"),
       chooseDirBtn: document.getElementById("chooseDirBtn"),
@@ -1622,6 +1644,7 @@
       const hardwareProbe = parseJsonl("hardware_probe.jsonl");
       const profilerResults = normalizeProfilerRows(parseJsonl("profiler_results.jsonl"));
       const diagnosis = normalizeDiagnosisRows(parseJsonl("diagnosis.jsonl"));
+      const patchTrials = normalizePatchTrialRows(parseJsonl("patch_trials.jsonl"));
       const summary = parseCsvFile("summary.csv");
       const allResults = parseCsvFile("all_results.csv");
       const rows = mergeRows(experiments, allResults.rows, summary.rows);
@@ -1629,7 +1652,7 @@
       const best = findBest(rows, experiments, baseline);
       const runId = pick(baseline?.run_id, best?.run_id, rows.find((row) => row.run_id)?.run_id, experiments.find((row) => row.run_id)?.run_id);
       const hardware = parseHardwareYaml(state.files.get("hardware_detected.yaml") || "");
-      return { experiments, failed, hardwareProbe, profilerResults, diagnosis, summary, allResults, rows, baseline, best, runId, hardware, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "" };
+      return { experiments, failed, hardwareProbe, profilerResults, diagnosis, patchTrials, summary, allResults, rows, baseline, best, runId, hardware, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "", bestDiff: state.files.get("best_vs_baseline.diff") || "" };
     }
 
     function parseHardwareYaml(text) {
@@ -1820,7 +1843,9 @@
       renderHardwareProbe(data.hardwareProbe);
       renderProfiler(data.profilerResults);
       renderDiagnosis(data.diagnosis);
+      renderPatchTrials(data.patchTrials);
       renderCompare(data);
+      renderBestDiff(data.bestDiff);
       renderTrend(data.rows, data.best);
       renderBestConfig(data.best);
       renderCandidates(data.rows, data.best);
@@ -2085,6 +2110,16 @@
       });
     }
 
+    function normalizePatchTrialRows(rows) {
+      return rows.flatMap((row) => {
+        const nested = row?.patch_trials || row?.patches || row?.trials;
+        if (Array.isArray(nested)) {
+          return nested.map((item) => ({ ...item, run_id: row.run_id, iteration: row.iteration, candidate_id: row.candidate_id }));
+        }
+        return [row];
+      });
+    }
+
     function renderProfiler(rows) {
       if (!state.files.has("profiler_results.jsonl")) {
         el.profilerStatus.textContent = "waiting";
@@ -2131,6 +2166,49 @@
       </div>`;
     }
 
+    function renderPatchTrials(rows) {
+      if (!state.files.has("patch_trials.jsonl")) {
+        el.patchTrialsStatus.textContent = "waiting";
+        el.patchTrialsPanel.innerHTML = `<div class="empty">等待 patch_trials.jsonl：后端产出 patch 尝试记录后点击刷新即可。</div>`;
+        return;
+      }
+      if (!rows.length) {
+        el.patchTrialsStatus.textContent = "0 条 patch";
+        el.patchTrialsPanel.innerHTML = `<div class="empty">patch_trials.jsonl 已读取，但暂无 patch 尝试记录。</div>`;
+        return;
+      }
+      el.patchTrialsStatus.textContent = `${rows.length} 条 patch 尝试`;
+      el.patchTrialsPanel.innerHTML = `<table>
+        <thead><tr><th>候选</th><th>optimization</th><th>region</th><th>状态</th><th>hypothesis</th><th>expected</th><th>latency</th><th>confidence</th><th>uncertainty</th><th>patch 路径</th><th>stdout</th><th>stderr</th></tr></thead>
+        <tbody>
+          ${rows.map((row) => `<tr>
+            <td>${escapeHtml(candidateLabel(row))}</td>
+            <td>${escapeHtml(display(patchField(row, ["optimization_name", "selected_optimization", "template", "name"])))}</td>
+            <td>${escapeHtml(display(patchField(row, ["target_region", "region", "patch_region"])))}</td>
+            <td>${patchStatusBadge(row)}</td>
+            <td class="reason-cell">${escapeHtml(display(patchField(row, ["hypothesis", "diagnosis_summary", "reason"])))}</td>
+            <td class="reason-cell">${escapeHtml(display(patchField(row, ["expected_improvement", "expected", "expected_delta"])))}</td>
+            <td>${escapeHtml(display(patchMetric(row, "latency")))}</td>
+            <td>${confidenceBadgeFor(patchField(row, ["confidence"]))}</td>
+            <td class="reason-cell">${escapeHtml(displayList(patchField(row, ["uncertainty", "uncertainties"])))}</td>
+            <td><div class="path" title="${escapeHtml(patchPath(row))}">${escapeHtml(patchPath(row))}</div></td>
+            <td><div class="path" title="${escapeHtml(pathValue(row, "stdout"))}">${escapeHtml(pathValue(row, "stdout"))}</div></td>
+            <td><div class="path" title="${escapeHtml(pathValue(row, "stderr"))}">${escapeHtml(pathValue(row, "stderr"))}</div></td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`;
+    }
+
+    function renderBestDiff(text) {
+      if (!state.files.has("best_vs_baseline.diff")) {
+        el.bestDiffStatus.textContent = "waiting";
+        el.bestDiffText.textContent = "等待 best_vs_baseline.diff：后端生成 baseline vs best diff 后点击刷新即可。";
+        return;
+      }
+      el.bestDiffStatus.textContent = text.trim() ? "已读取" : "empty";
+      el.bestDiffText.textContent = text.trim() ? text : "best_vs_baseline.diff 已读取，但内容为空。";
+    }
+
     function displayProfilerMetric(row, field) {
       const value = field === "latency_ms" ? pick(row.latency_ms, row.latency) : row[field];
       return value === null || value === undefined || value === "" ? "waiting" : display(value);
@@ -2154,6 +2232,40 @@
       const items = Array.isArray(value) ? value : (value ? [value] : []);
       const body = items.length ? items.map((item) => `<li>${escapeHtml(display(item))}</li>`).join("") : `<li>waiting</li>`;
       return `<div><div class="metric-label">${escapeHtml(title)}</div><ul class="list-plain">${body}</ul></div>`;
+    }
+
+    function patchField(row, fields) {
+      for (const field of fields) {
+        const direct = row?.[field];
+        if (direct !== undefined && direct !== null && direct !== "") return direct;
+        const nested = valueAt(row, ["patch", field]) || valueAt(row, ["result", field]) || valueAt(row, ["validation", field]);
+        if (nested !== undefined && nested !== null && nested !== "") return nested;
+      }
+      return "";
+    }
+
+    function patchMetric(row, key) {
+      return pick(row?.[key], row?.[`${key}_ms`], valueAt(row, ["metrics", key]), valueAt(row, ["benchmark", key]), valueAt(row, ["result", key]));
+    }
+
+    function patchPath(row) {
+      return display(valueAt(row, ["paths", "patch"]) || row?.patch_path || row?.patch_file || row?.diff_path || row?.diff_file);
+    }
+
+    function patchStatus(row) {
+      return display(patchField(row, ["status", "validation_status", "result_status", "outcome"])).toLowerCase();
+    }
+
+    function patchStatusBadge(row) {
+      const status = patchStatus(row) || "waiting";
+      const ok = ["pass", "passed", "success", "accepted", "best", "improved"].includes(status);
+      const warn = ["neutral", "regressed", "rollback", "rolled_back", "not_applicable", "skipped"].includes(status);
+      return `<span class="badge ${ok ? "ok" : warn ? "warn" : "bad"}">${escapeHtml(status)}</span>`;
+    }
+
+    function displayList(value) {
+      if (Array.isArray(value)) return value.length ? value.map((item) => display(item)).join("; ") : "waiting";
+      return display(value);
     }
 
     function summarizeProbeRows(rows) {
