@@ -289,6 +289,34 @@
       margin-top: 12px;
     }
 
+    .diagnosis-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(260px, 1fr));
+      gap: 12px;
+    }
+
+    .diagnosis-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+    }
+
+    .diagnosis-card h3 {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .list-plain {
+      margin: 6px 0 10px;
+      padding-left: 18px;
+      color: #344054;
+      font-size: 13px;
+    }
+
     .compare-grid {
       display: grid;
       grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr) minmax(220px, 0.65fr);
@@ -534,7 +562,7 @@
     }
 
     @media (max-width: 980px) {
-      .topbar, .grid-2, .compare-grid, .hardware-grid, .howto, .form-grid, .form-grid.three, .status-grid { grid-template-columns: 1fr; }
+      .topbar, .grid-2, .compare-grid, .hardware-grid, .howto, .form-grid, .form-grid.three, .status-grid, .diagnosis-grid { grid-template-columns: 1fr; }
       .toolbar { justify-content: flex-start; }
     }
 
@@ -744,6 +772,24 @@
 
     <section class="section">
       <div class="section-head">
+        <h2>Profiler 指标</h2>
+        <span class="muted" id="profilerStatus">waiting</span>
+      </div>
+      <p class="section-kicker">只读 <code>profiler_results.jsonl</code>。指标不可用时显示 waiting/null，不伪造 profiler 结果。</p>
+      <div id="profilerPanel"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>Bottleneck diagnosis</h2>
+        <span class="muted" id="diagnosisStatus">waiting</span>
+      </div>
+      <p class="section-kicker">只读 <code>diagnosis.jsonl</code>，展示 evidence、uncertainty 和 recommended_actions。</p>
+      <div id="diagnosisPanel"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
         <h2>Baseline vs Best 对比</h2>
         <span class="muted" id="sourceNote">waiting</span>
       </div>
@@ -803,7 +849,8 @@
   </main>
 
   <script>
-    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml", "hardware_probe.jsonl"];
+    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml", "hardware_probe.jsonl", "profiler_results.jsonl", "diagnosis.jsonl"];
+    const PROFILER_METRIC_FIELDS = ["latency_ms", "tflops", "estimated_hbm_bandwidth", "register_count", "shared_memory_bytes", "private_memory_bytes", "occupancy", "warp_active_ratio", "hbm_read_bandwidth", "hbm_write_bandwidth", "shared_bank_conflict", "memory_coalescing_efficiency"];
     const PROBE_STATUSES = ["pass", "failed", "timeout", "guard_denied", "exception", "skipped"];
     const PROBE_STATUS_LABELS = {
       pass: "pass / 通过",
@@ -872,6 +919,10 @@
       hardwarePanel: document.getElementById("hardwarePanel"),
       probeStatus: document.getElementById("probeStatus"),
       probePanel: document.getElementById("probePanel"),
+      profilerStatus: document.getElementById("profilerStatus"),
+      profilerPanel: document.getElementById("profilerPanel"),
+      diagnosisStatus: document.getElementById("diagnosisStatus"),
+      diagnosisPanel: document.getElementById("diagnosisPanel"),
       pathsTable: document.getElementById("pathsTable"),
       reportText: document.getElementById("reportText"),
       chooseDirBtn: document.getElementById("chooseDirBtn"),
@@ -1060,6 +1111,8 @@
       const experiments = parseJsonl("experiments.jsonl");
       const failed = parseJsonl("failed_cases.jsonl");
       const hardwareProbe = parseJsonl("hardware_probe.jsonl");
+      const profilerResults = normalizeProfilerRows(parseJsonl("profiler_results.jsonl"));
+      const diagnosis = normalizeDiagnosisRows(parseJsonl("diagnosis.jsonl"));
       const summary = parseCsvFile("summary.csv");
       const allResults = parseCsvFile("all_results.csv");
       const rows = mergeRows(experiments, allResults.rows, summary.rows);
@@ -1067,7 +1120,7 @@
       const best = findBest(rows, experiments, baseline);
       const runId = pick(baseline?.run_id, best?.run_id, rows.find((row) => row.run_id)?.run_id, experiments.find((row) => row.run_id)?.run_id);
       const hardware = parseHardwareYaml(state.files.get("hardware_detected.yaml") || "");
-      return { experiments, failed, hardwareProbe, summary, allResults, rows, baseline, best, runId, hardware, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "" };
+      return { experiments, failed, hardwareProbe, profilerResults, diagnosis, summary, allResults, rows, baseline, best, runId, hardware, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "" };
     }
 
     function parseHardwareYaml(text) {
@@ -1256,6 +1309,8 @@
       renderAlerts();
       renderHardware(data.hardware);
       renderHardwareProbe(data.hardwareProbe);
+      renderProfiler(data.profilerResults);
+      renderDiagnosis(data.diagnosis);
       renderCompare(data);
       renderTrend(data.rows, data.best);
       renderBestConfig(data.best);
@@ -1486,6 +1541,96 @@
           </table>
         </div>
       `;
+    }
+
+    function normalizeProfilerRows(rows) {
+      return rows.flatMap((row) => {
+        if (row?.profiler && typeof row.profiler === "object") {
+          return [{ ...row.profiler, run_id: row.run_id, iteration: row.iteration, candidate_id: row.candidate_id }];
+        }
+        return [row];
+      });
+    }
+
+    function normalizeDiagnosisRows(rows) {
+      return rows.flatMap((row) => {
+        const nested = row?.bottleneck_diagnosis || row?.diagnosis || row?.diagnoses;
+        if (Array.isArray(nested)) {
+          return nested.map((item) => ({ ...item, run_id: row.run_id, iteration: row.iteration, candidate_id: row.candidate_id }));
+        }
+        return [row];
+      });
+    }
+
+    function renderProfiler(rows) {
+      if (!state.files.has("profiler_results.jsonl")) {
+        el.profilerStatus.textContent = "waiting";
+        el.profilerPanel.innerHTML = `<div class="empty">等待 profiler_results.jsonl：后端产出 profiler 结果后点击刷新即可。指标不可用时应保持 null/waiting。</div>`;
+        return;
+      }
+      if (!rows.length) {
+        el.profilerStatus.textContent = "0 条记录";
+        el.profilerPanel.innerHTML = `<div class="empty">profiler_results.jsonl 已读取，但暂无 profiler 指标记录。</div>`;
+        return;
+      }
+      el.profilerStatus.textContent = `${rows.length} 条 profiler 记录`;
+      const visibleRows = rows.slice(-20);
+      el.profilerPanel.innerHTML = `<div class="table-wrap">
+        <table>
+          <thead><tr><th>候选</th>${PROFILER_METRIC_FIELDS.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}<th>available_metrics</th></tr></thead>
+          <tbody>
+            ${visibleRows.map((row) => `<tr><td>${escapeHtml(candidateLabel(row))}</td>${PROFILER_METRIC_FIELDS.map((field) => `<td>${escapeHtml(displayProfilerMetric(row, field))}</td>`).join("")}<td class="config-cell">${escapeHtml(availableMetricsSummary(row))}</td></tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`;
+    }
+
+    function renderDiagnosis(rows) {
+      if (!state.files.has("diagnosis.jsonl")) {
+        el.diagnosisStatus.textContent = "waiting";
+        el.diagnosisPanel.innerHTML = `<div class="empty">等待 diagnosis.jsonl：后端产出瓶颈诊断后点击刷新即可。</div>`;
+        return;
+      }
+      if (!rows.length) {
+        el.diagnosisStatus.textContent = "0 条诊断";
+        el.diagnosisPanel.innerHTML = `<div class="empty">diagnosis.jsonl 已读取，但暂无 bottleneck diagnosis 记录。</div>`;
+        return;
+      }
+      el.diagnosisStatus.textContent = `${rows.length} 条诊断`;
+      el.diagnosisPanel.innerHTML = `<div class="diagnosis-grid">
+        ${rows.map((row) => `<article class="diagnosis-card">
+          <h3><span>${escapeHtml(display(row.bottleneck_type || row.type || row.name))}</span>${confidenceBadgeFor(row.confidence)}</h3>
+          <div class="muted">${escapeHtml(candidateLabel(row))}</div>
+          ${diagnosisList("evidence", row.evidence)}
+          ${diagnosisList("uncertainty", row.uncertainty)}
+          ${diagnosisList("recommended_actions", row.recommended_actions)}
+        </article>`).join("")}
+      </div>`;
+    }
+
+    function displayProfilerMetric(row, field) {
+      const value = field === "latency_ms" ? pick(row.latency_ms, row.latency) : row[field];
+      return value === null || value === undefined || value === "" ? "waiting" : display(value);
+    }
+
+    function availableMetricsSummary(row) {
+      const metrics = row?.available_metrics;
+      if (!metrics || typeof metrics !== "object") return "waiting";
+      const available = Object.entries(metrics).filter(([, value]) => Boolean(value)).map(([key]) => key);
+      return available.length ? available.join(", ") : "none";
+    }
+
+    function confidenceBadgeFor(confidence) {
+      const text = display(confidence);
+      const normalized = text.toLowerCase();
+      const kind = normalized === "high" ? "ok" : normalized === "medium" || normalized === "low" || normalized === "unknown" ? "warn" : "bad";
+      return `<span class="badge ${kind}">${escapeHtml(text)}</span>`;
+    }
+
+    function diagnosisList(title, value) {
+      const items = Array.isArray(value) ? value : (value ? [value] : []);
+      const body = items.length ? items.map((item) => `<li>${escapeHtml(display(item))}</li>`).join("") : `<li>waiting</li>`;
+      return `<div><div class="metric-label">${escapeHtml(title)}</div><ul class="list-plain">${body}</ul></div>`;
     }
 
     function summarizeProbeRows(rows) {
