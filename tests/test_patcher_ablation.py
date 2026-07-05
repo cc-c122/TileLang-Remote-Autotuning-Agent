@@ -13,10 +13,12 @@ from kernel_opt_agent.patcher import (
     apply_validated_patch,
     find_patch_regions,
     rollback_file,
+    run_patch_trial,
     validate_patch_proposal,
     write_patch_trials_jsonl,
 )
 from kernel_opt_agent.profiler.base import ProfilerResult
+from kernel_opt_agent.runner.local_runner import LocalRunner
 
 
 SOURCE = """def kernel():
@@ -142,6 +144,142 @@ class PatcherAblationTests(unittest.TestCase):
             with csv_path.open(newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual(rows[0]["patch_ids"], "patch-a")
+
+    def test_patch_runner_build_failure_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "kernel.py"
+            target.write_text(SOURCE, encoding="utf-8")
+            original = target.read_text(encoding="utf-8")
+            runner = LocalRunner(root, timeout_seconds=5)
+            result = run_patch_trial(
+                PatchTrial("trial-1", "patch-a", "improve_thread_mapping", "compute", "h", "e", "r"),
+                target,
+                root,
+                PatchProposal("improve_thread_mapping", "compute", "h", "e", "r", "    x = 2\n"),
+                "python -c \"import sys; sys.exit(3)\"",
+                "python -c \"print('ok')\"",
+                "python -c \"print('BENCHMARK_RESULT latency_ms=8.0 tflops=1.0 bandwidth_gbps=2.0')\"",
+                runner,
+                5,
+            )
+            self.assertEqual(result.status, "build_failed")
+            self.assertTrue(result.artifacts["rollback"]["verified"])
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+
+    def test_patch_runner_correctness_failure_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "kernel.py"
+            target.write_text(SOURCE, encoding="utf-8")
+            original = target.read_text(encoding="utf-8")
+            runner = LocalRunner(root, timeout_seconds=5)
+            result = run_patch_trial(
+                PatchTrial("trial-1", "patch-a", "improve_thread_mapping", "compute", "h", "e", "r"),
+                target,
+                root,
+                PatchProposal("improve_thread_mapping", "compute", "h", "e", "r", "    x = 2\n"),
+                None,
+                "python -c \"import sys; sys.exit(4)\"",
+                "python -c \"print('BENCHMARK_RESULT latency_ms=8.0 tflops=1.0 bandwidth_gbps=2.0')\"",
+                runner,
+                5,
+            )
+            self.assertEqual(result.status, "correctness_failed")
+            self.assertTrue(result.artifacts["rollback"]["verified"])
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+
+    def test_patch_runner_syntax_failure_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "kernel.py"
+            target.write_text(SOURCE, encoding="utf-8")
+            original = target.read_text(encoding="utf-8")
+            runner = LocalRunner(root, timeout_seconds=5)
+            result = run_patch_trial(
+                PatchTrial("trial-1", "patch-a", "improve_thread_mapping", "compute", "h", "e", "r"),
+                target,
+                root,
+                PatchProposal("improve_thread_mapping", "compute", "h", "e", "r", "    x =\n"),
+                None,
+                "python -c \"print('ok')\"",
+                "python -c \"print('BENCHMARK_RESULT latency_ms=8.0 tflops=1.0 bandwidth_gbps=2.0')\"",
+                runner,
+                5,
+            )
+            self.assertEqual(result.status, "syntax_failed")
+            self.assertTrue(result.artifacts["rollback"]["verified"])
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+
+    def test_patch_runner_rejects_workspace_outside_target(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            workspace = Path(workspace_tmp)
+            target = Path(outside_tmp) / "kernel.py"
+            target.write_text(SOURCE, encoding="utf-8")
+            runner = LocalRunner(workspace, timeout_seconds=5)
+            result = run_patch_trial(
+                PatchTrial("trial-1", "patch-a", "improve_thread_mapping", "compute", "h", "e", "r"),
+                target,
+                workspace,
+                PatchProposal("improve_thread_mapping", "compute", "h", "e", "r", "    x = 2\n"),
+                None,
+                "python -c \"print('ok')\"",
+                "python -c \"print('BENCHMARK_RESULT latency_ms=8.0 tflops=1.0 bandwidth_gbps=2.0')\"",
+                runner,
+                5,
+            )
+            self.assertEqual(result.status, "validation_failed")
+            self.assertIn("workspace_root", result.error or "")
+
+    def test_patch_runner_rejects_unmarked_region(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "kernel.py"
+            target.write_text("def kernel():\n    return 1\n", encoding="utf-8")
+            runner = LocalRunner(root, timeout_seconds=5)
+            result = run_patch_trial(
+                PatchTrial("trial-1", "patch-a", "improve_thread_mapping", "compute", "h", "e", "r"),
+                target,
+                root,
+                PatchProposal("improve_thread_mapping", "compute", "h", "e", "r", "    x = 2\n"),
+                None,
+                "python -c \"print('ok')\"",
+                "python -c \"print('BENCHMARK_RESULT latency_ms=8.0 tflops=1.0 bandwidth_gbps=2.0')\"",
+                runner,
+                5,
+            )
+            self.assertEqual(result.status, "validation_failed")
+            self.assertIn("target_region is not present", result.error or "")
+
+    def test_patch_runner_records_benchmark_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "kernel.py"
+            target.write_text(SOURCE, encoding="utf-8")
+            runner = LocalRunner(root, timeout_seconds=5)
+            result = run_patch_trial(
+                PatchTrial(
+                    "trial-1",
+                    "patch-a",
+                    "improve_thread_mapping",
+                    "compute",
+                    "h",
+                    "e",
+                    "r",
+                    metrics_before={"latency_ms": 10.0},
+                ),
+                target,
+                root,
+                PatchProposal("improve_thread_mapping", "compute", "h", "e", "r", "    x = 2\n"),
+                None,
+                "python -c \"print('ok')\"",
+                "python -c \"print('BENCHMARK_RESULT latency_ms=12.0 tflops=1.0 bandwidth_gbps=2.0')\"",
+                runner,
+                5,
+            )
+            self.assertEqual(result.status, "benchmark_regressed")
+            self.assertEqual(result.metrics_after["latency_ms"], 12.0)
+            self.assertEqual(result.improvement, -2.0)
 
 
 if __name__ == "__main__":
