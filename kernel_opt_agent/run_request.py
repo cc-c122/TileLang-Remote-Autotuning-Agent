@@ -101,7 +101,7 @@ class SearchRequest(BaseModel):
 class ProfilerRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
+    enabled: bool = True
     type: Literal["dummy"] = "dummy"
 
 
