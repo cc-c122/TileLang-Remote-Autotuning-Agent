@@ -35,7 +35,7 @@ profiler:
   error: null
 
 metrics:
-  latency: 1.0
+  latency_ms: 1.0
   tflops: 1.0
   estimated_hbm_bandwidth: 1.0
   register_count: null
@@ -49,7 +49,7 @@ metrics:
   memory_coalescing_efficiency: null
 
 available_metrics:
-  latency: true
+  latency_ms: true
   tflops: true
   estimated_hbm_bandwidth: true
   register_count: false
@@ -73,7 +73,7 @@ evidence_sources:
 
 Profiler 类型语义：
 
-- `dummy`：只解析 benchmark 输出，通常只能提供 latency、tflops、estimated_hbm_bandwidth。
+- `dummy`：只解析 benchmark 输出，通常只能提供 latency_ms、tflops、estimated_hbm_bandwidth。
 - `tilelang_log`：解析 benchmark 输出、编译日志、benchmark stderr 和 generated code 中的结构化线索。
 - `mxmaca`：保留真实 profiler 接口和日志解析框架；命令不可用时必须降级，不能填造 MXMACA 指标。
 
@@ -97,7 +97,7 @@ diagnoses:
     confidence: medium
     evidence:
       - estimated_hbm_bandwidth=1.0 from benchmark_stdout
-      - benchmark latency available
+      - benchmark latency_ms available
     uncertainty:
       - hbm_read_bandwidth unavailable
       - hbm_write_bandwidth unavailable

@@ -8,13 +8,13 @@
 
 `profiler.type` 表示证据采集器类型：
 
-- `dummy`：只解析 benchmark stdout 中的 `latency`、`tflops` 和 `bandwidth`。
+- `dummy`：只解析 benchmark stdout 中的 `latency_ms`、`tflops` 和 `bandwidth`。
 - `tilelang_log`：解析 benchmark 输出、benchmark stderr、TileLang 编译日志和生成代码里的结构化线索。
 - `mxmaca`：保留 MXMACA profiler 接口和日志解析框架；真实命令接入前，只解析显式出现在 profiler stdout/stderr 或 compile log 中的指标，不能伪造指标。
 
 Profiler 输出字段：
 
-- `latency`：benchmark 解析到的延迟，通常越低越好。
+- `latency_ms`：benchmark 解析到的毫秒级延迟，通常越低越好。
 - `tflops`：benchmark 解析到的吞吐。
 - `estimated_hbm_bandwidth`：benchmark 输出中的带宽估计。
 - `register_count`：编译日志或 profiler 日志中的寄存器数量。
