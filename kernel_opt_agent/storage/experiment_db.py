@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from kernel_opt_agent.patcher import PatchTrial
+
 
 SUMMARY_FIELDS = [
     "run_id",
@@ -67,6 +69,10 @@ class ExperimentDB:
         stdout_path.write_text(stdout or "", encoding="utf-8")
         stderr_path.write_text(stderr or "", encoding="utf-8")
         return stdout_path, stderr_path
+
+    def append_patch_trial(self, trial: PatchTrial) -> None:
+        with self.patch_trials_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(trial.to_dict(), ensure_ascii=False, default=str) + "\n")
 
     def append(self, record: dict[str, Any]) -> None:
         self.records.append(record)

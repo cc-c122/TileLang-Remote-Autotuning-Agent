@@ -108,7 +108,8 @@ class ProfilerRequest(BaseModel):
 class PatchingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = True
+    enabled: bool = False
+    run_controlled_trial: bool = False
 
 
 class RunRequest(BaseModel):

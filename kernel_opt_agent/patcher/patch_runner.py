@@ -130,7 +130,8 @@ def run_patch_trial(
 
     benchmark = _run_command(runner, "benchmark", benchmark_command, artifacts)
     if benchmark.returncode != 0:
-        return _with_status(trial, "benchmark_failed", benchmark.error_message or benchmark.stderr or "benchmark command failed", artifacts=artifacts)
+        failed = _with_status(trial, "benchmark_failed", benchmark.error_message or benchmark.stderr or "benchmark command failed", artifacts=artifacts)
+        return _rollback(failed, applied, original_hash, target, artifacts)
     parsed = parse_benchmark(benchmark.stdout, {"latency": None, "tflops": None, "bandwidth": None})
     metrics_after = {
         "latency_ms": parsed.latency,
@@ -141,7 +142,8 @@ def run_patch_trial(
     }
     artifacts["benchmark_metrics"] = metrics_after
     if parsed.parse_error:
-        return replace(trial, status="benchmark_failed", metrics_after=metrics_after, artifacts=artifacts, error=parsed.reason or "benchmark metrics not found")
+        failed = replace(trial, status="benchmark_failed", metrics_after=metrics_after, artifacts=artifacts, error=parsed.reason or "benchmark metrics not found")
+        return _rollback(failed, applied, original_hash, target, artifacts)
     before = _latency(trial.metrics_before)
     after = parsed.latency
     improvement = None
@@ -150,4 +152,5 @@ def run_patch_trial(
         improvement = before - after
         if after > before:
             status = "benchmark_regressed"
-    return replace(trial, status=status, metrics_after=metrics_after, improvement=improvement, artifacts=artifacts, error=None)
+    completed = replace(trial, status=status, metrics_after=metrics_after, improvement=improvement, artifacts=artifacts, error=None)
+    return _rollback(completed, applied, original_hash, target, artifacts)
