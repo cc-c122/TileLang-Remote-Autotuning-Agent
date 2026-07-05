@@ -57,7 +57,7 @@
     }
 
     button:disabled {
-      cursor: wait;
+      cursor: not-allowed;
       opacity: 0.65;
     }
 
@@ -691,6 +691,11 @@
       box-shadow: 0 10px 22px rgba(37, 99, 235, 0.23);
     }
 
+    .tab-button.is-disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+    }
+
     .nav-ico {
       display: inline-grid;
       place-items: center;
@@ -802,6 +807,21 @@
       padding: 8px 12px;
       cursor: pointer;
       font-weight: 700;
+    }
+
+    .static-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      border: 1px solid #c7d7fe;
+      border-radius: 6px;
+      background: #f5f8ff;
+      color: #1d4ed8;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 760;
+      white-space: nowrap;
     }
 
     .code-shell {
@@ -1011,10 +1031,10 @@
         <nav class="view-tabs" aria-label="页面入口">
           <button class="tab-button active" type="button" data-view-target="startView"><span class="nav-ico">＋</span><span>新建任务</span></button>
           <button class="tab-button" type="button" data-view-target="resultsView"><span class="nav-ico">▣</span><span>实验结果</span></button>
-          <button class="tab-button" type="button" data-view-target="hardwareMirrorView"><span class="nav-ico">◎</span><span>硬件画像</span></button>
-          <button class="tab-button" type="button" data-view-target="templateView"><span class="nav-ico">□</span><span>模板库</span></button>
-          <button class="tab-button" type="button" data-view-target="logsView"><span class="nav-ico">☰</span><span>运行日志</span></button>
-          <button class="tab-button" type="button" data-view-target="startView"><span class="nav-ico">⚙</span><span>设置</span></button>
+          <button class="tab-button" type="button" data-view-target="resultsView" data-focus-section="hardwareSection"><span class="nav-ico">◎</span><span>硬件画像</span></button>
+          <button class="tab-button is-disabled" type="button" disabled title="模板库尚未接入真实数据"><span class="nav-ico">□</span><span>模板库</span></button>
+          <button class="tab-button" type="button" data-view-target="resultsView" data-focus-section="pathsSection"><span class="nav-ico">☰</span><span>运行日志</span></button>
+          <button class="tab-button" type="button" data-view-target="startView" data-focus-settings="true"><span class="nav-ico">⚙</span><span>设置</span></button>
         </nav>
         <div class="collapse-hint">‹</div>
       </aside>
@@ -1100,7 +1120,7 @@
                     <label for="v2GpuModel">GPU 型号</label>
                     <input id="v2GpuModel" value="Metax C500" placeholder="例如 Metax C500 / 沐曦 C500 / NVIDIA H100" autocomplete="off">
                   </div>
-                  <button class="secondary" type="button">自动搜索硬件参数</button>
+                  <span class="static-action">后端结果读取后展示硬件参数</span>
                 </div>
                 <div class="form-grid three" style="margin-top:12px">
                   <div class="field">
@@ -1112,7 +1132,7 @@
                     </select>
                   </div>
                 </div>
-                <p class="section-kicker">LLM 自动补全 SM / warp 线程数 / shared memory / 寄存器等硬件信息，用户可手动修改。</p>
+                <p class="section-kicker">前端不调用 LLM 或后端 API；硬件字段来自用户输入、已保存设置或后端写入的结果文件，用户可手动覆盖。</p>
               </section>
 
               <section class="section hardware-card">
@@ -1141,7 +1161,7 @@
 
             <aside class="right-rail">
               <section class="rail-card">
-                <h2>▣ 系统设置（长期保存）</h2>
+                <h2 id="settingsCard">▣ 系统设置（长期保存）</h2>
                 <div class="settings-group">
                   <div class="settings-group-head"><span>模型方案 / 远程容器 SSH</span><span class="chip ok" id="sshStatus">SSH：未填写</span></div>
                   <div class="settings-grid">
@@ -1179,25 +1199,13 @@
                 <div class="flow-steps">
                   <div class="flow-step"><span class="flow-index">1</span><span class="flow-icon">⌘</span><div><strong>输入 sample</strong><span>上传或粘贴算子 sample</span></div></div>
                   <div class="flow-step"><span class="flow-index">2</span><span class="flow-icon">▣</span><div><strong>选择 GPU</strong><span>选择目标 GPU 型号</span></div></div>
-                  <div class="flow-step"><span class="flow-index">3</span><span class="flow-icon">⚙</span><div><strong>自动补全硬件参数</strong><span>LLM 自动补全并可编辑</span></div></div>
-                  <div class="flow-step"><span class="flow-index">4</span><span class="flow-icon">☁</span><div><strong>远程运行</strong><span>SSH 远程编译与 benchmark</span></div></div>
-                  <div class="flow-step"><span class="flow-index">5</span><span class="flow-icon">▤</span><div><strong>返回 best kernel / report</strong><span>优化 kernel 与性能报告</span></div></div>
+                  <div class="flow-step"><span class="flow-index">3</span><span class="flow-icon">⚙</span><div><strong>确认硬件参数</strong><span>只生成 run_request，不直接补全或执行</span></div></div>
+                  <div class="flow-step"><span class="flow-index">4</span><span class="flow-icon">☁</span><div><strong>交给后端 CLI</strong><span>使用 run_request.yaml 和 settings.yaml</span></div></div>
+                  <div class="flow-step"><span class="flow-index">5</span><span class="flow-icon">▤</span><div><strong>读取真实结果</strong><span>结果页只读 best kernel / report</span></div></div>
                 </div>
               </section>
             </aside>
           </div>
-        </section>
-
-        <section id="hardwareMirrorView" class="view-panel">
-          <section class="section"><h2>硬件画像</h2><p class="section-kicker">硬件画像会在读取结果目录后展示；当前可在“实验结果”页查看 hardware_detected.yaml 和 safe probe。</p></section>
-        </section>
-
-        <section id="templateView" class="view-panel">
-          <section class="section"><h2>模板库</h2><p class="section-kicker">模板库将在后续版本承载常用 TileLang sample 和优化模板。</p></section>
-        </section>
-
-        <section id="logsView" class="view-panel">
-          <section class="section"><h2>运行日志</h2><p class="section-kicker">运行日志会从结果目录中的 logs/ 和 agent.log 读取。</p></section>
         </section>
 
         <section id="resultsView" class="view-panel">
@@ -1222,9 +1230,9 @@
 
     <div id="alerts" class="alerts"></div>
 
-    <section class="section">
+    <section class="section" id="hardwareSection">
       <div class="section-head">
-        <h2>硬件识别</h2>
+        <h2>????</h2>
         <span class="muted" id="hardwareStatus">waiting</span>
       </div>
       <p class="section-kicker">读取 <code>hardware_detected.yaml</code>，展示 hardware name、backend、source、confidence 和 unknown 字段。</p>
@@ -1258,7 +1266,7 @@
       <div id="diagnosisPanel"></div>
     </section>
 
-    <section class="section">
+    <section class="section" id="pathsSection">
       <div class="section-head">
         <h2>Patch 尝试记录</h2>
         <span class="muted" id="patchTrialsStatus">waiting</span>
@@ -1450,7 +1458,15 @@
     };
 
     document.querySelectorAll("[data-view-target]").forEach((button) => {
-      button.addEventListener("click", () => activateView(button.dataset.viewTarget));
+      button.addEventListener("click", () => {
+        activateView(button.dataset.viewTarget);
+        if (button.dataset.focusSettings === "true") {
+          document.getElementById("settingsCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        if (button.dataset.focusSection) {
+          document.getElementById(button.dataset.focusSection)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
     });
     el.chooseDirBtn.addEventListener("click", chooseDirectory);
     el.reloadBtn.addEventListener("click", loadAndRender);
