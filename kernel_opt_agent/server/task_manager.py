@@ -16,13 +16,12 @@ class TaskManager:
         self._lock = threading.Lock()
 
     def create(self, request: TaskCreateRequest) -> TaskRecord:
-        del request
         task_id = uuid.uuid4().hex
         workspace = self.tasks_root / task_id
         results_dir = workspace / "results"
         workspace.mkdir(parents=True, exist_ok=True)
         results_dir.mkdir(parents=True, exist_ok=True)
-        record = TaskRecord(task_id=task_id, workspace=str(workspace), results_dir=str(results_dir))
+        record = TaskRecord(task_id=task_id, project_name=request.project_name, workspace=str(workspace), results_dir=str(results_dir))
         self.add_event(task_id, "task_created", "task created", create_if_missing=record)
         return record
 
@@ -62,6 +61,11 @@ class TaskManager:
             task.cancel_requested = True
             task.events.append({"time": utc_now(), "type": "task_cancel_requested", "message": "cancel requested", "data": {}})
             return task.model_copy(deep=True)
+
+    def list_recent(self, limit: int = 50) -> list[TaskRecord]:
+        with self._lock:
+            tasks = sorted(self._tasks.values(), key=lambda task: task.created_at, reverse=True)
+            return [task.model_copy(deep=True) for task in tasks[:limit]]
 
     def is_cancel_requested(self, task_id: str) -> bool:
         with self._lock:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 import unittest
 from pathlib import Path
@@ -28,7 +29,16 @@ class FastApiServerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(app)
 
+    def test_health(self) -> None:
+        response = self.client.get("/api/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "service": "tilelang-agent", "mode": "local-runner"})
+
     def test_settings_are_redacted_and_plaintext_secrets_rejected(self) -> None:
+        old_password = os.environ.get("KERNEL_AGENT_TEST_PASSWORD_EXISTS")
+        old_key = os.environ.get("KERNEL_AGENT_TEST_API_KEY_EXISTS")
+        os.environ["KERNEL_AGENT_TEST_PASSWORD_EXISTS"] = "secret-password"
+        os.environ.pop("KERNEL_AGENT_TEST_API_KEY_EXISTS", None)
         payload = {
             "ssh": {
                 "host": "example.invalid",
@@ -36,20 +46,36 @@ class FastApiServerTests(unittest.TestCase):
                 "username": "user",
                 "auth_type": "key",
                 "key_path": "~/.ssh/id_rsa",
+                "password_env": "KERNEL_AGENT_TEST_PASSWORD_EXISTS",
                 "remote_workspace": "/tmp/kernel-agent",
             },
             "llm": {
                 "provider": "openai_compatible",
                 "base_url": "https://api.openai.com/v1",
                 "model": "gpt-4o-mini",
-                "api_key_env": "OPENAI_API_KEY",
+                "api_key_env": "KERNEL_AGENT_TEST_API_KEY_EXISTS",
             },
         }
-        response = self.client.post("/api/settings", json=payload)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["settings"]["ssh"]["key_path"], "<redacted:key_path>")
-        rejected = self.client.post("/api/settings", json={"ssh": {"password": "secret"}})
-        self.assertEqual(rejected.status_code, 422)
+        try:
+            response = self.client.post("/api/settings", json=payload)
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertEqual(body["settings"]["ssh"]["key_path"], "<redacted:key_path>")
+            self.assertTrue(body["settings"]["ssh"]["password_env_exists"])
+            self.assertFalse(body["settings"]["llm"]["api_key_env_exists"])
+            dumped = str(body).lower()
+            self.assertNotIn("secret-password", dumped)
+            rejected = self.client.post("/api/settings", json={"ssh": {"password": "secret"}})
+            self.assertEqual(rejected.status_code, 422)
+        finally:
+            if old_password is None:
+                os.environ.pop("KERNEL_AGENT_TEST_PASSWORD_EXISTS", None)
+            else:
+                os.environ["KERNEL_AGENT_TEST_PASSWORD_EXISTS"] = old_password
+            if old_key is None:
+                os.environ.pop("KERNEL_AGENT_TEST_API_KEY_EXISTS", None)
+            else:
+                os.environ["KERNEL_AGENT_TEST_API_KEY_EXISTS"] = old_key
 
     def test_inline_local_task_runs_to_results(self) -> None:
         request = {
@@ -85,6 +111,7 @@ class FastApiServerTests(unittest.TestCase):
         self.assertEqual(results.status_code, 200)
         payload = results.json()["results"]
         task = results.json()["task"]
+        self.assertEqual(task["project_name"], "api-inline-demo")
         for field in {
             "current_iteration",
             "total_trials",
@@ -131,6 +158,16 @@ class FastApiServerTests(unittest.TestCase):
             self.assertIn(required, event_types)
         self.assertEqual(self.client.get(f"/api/tasks/{task_id}/download/best_kernel").status_code, 200)
         self.assertEqual(self.client.get(f"/api/tasks/{task_id}/download/report").status_code, 200)
+        task_list = self.client.get("/api/tasks")
+        self.assertEqual(task_list.status_code, 200)
+        tasks = task_list.json()["tasks"]
+        listed = next(item for item in tasks if item["task_id"] == task_id)
+        self.assertEqual(listed["project_name"], "api-inline-demo")
+        self.assertEqual(listed["status"], "completed")
+        self.assertIn("latest_message", listed)
+        self.assertIn("improvement_percent", listed)
+        self.assertNotIn("password", str(listed).lower())
+        self.assertNotIn("api_key", str(listed).lower())
 
     def test_cancel_marks_task_cancelled_and_partial_results_remain_readable(self) -> None:
         request = {

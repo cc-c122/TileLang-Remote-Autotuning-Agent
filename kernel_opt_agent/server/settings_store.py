@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,11 @@ def _redact(settings: dict[str, Any]) -> dict[str, Any]:
     ssh = dict(redacted.get("ssh") or {})
     if ssh.get("key_path"):
         ssh["key_path"] = "<redacted:key_path>"
+    ssh["password_env_exists"] = bool(ssh.get("password_env") and os.environ.get(str(ssh.get("password_env"))))
     redacted["ssh"] = ssh
+    llm = dict(redacted.get("llm") or {})
+    llm["api_key_env_exists"] = bool(llm.get("api_key_env") and os.environ.get(str(llm.get("api_key_env"))))
+    redacted["llm"] = llm
     return redacted
 
 

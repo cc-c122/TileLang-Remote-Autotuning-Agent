@@ -126,6 +126,7 @@ class TaskRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     task_id: str
+    project_name: str = "web-task"
     status: TaskStatus = "pending"
     created_at: str = Field(default_factory=utc_now)
     started_at: str | None = None
