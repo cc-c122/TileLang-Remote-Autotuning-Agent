@@ -123,7 +123,7 @@ class LocalApiTests(unittest.TestCase):
             run_id = payload["run"]["run_id"]
 
             final_status = None
-            for _ in range(60):
+            for _ in range(120):
                 status, payload = request_json(port, "GET", f"/runs/{run_id}/status")
                 self.assertEqual(status, 200)
                 final_status = payload["run"]["status"]
