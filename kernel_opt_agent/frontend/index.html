@@ -2189,18 +2189,20 @@
       }
       if (!rows.length) {
         el.patchTrialsStatus.textContent = "0 条 patch";
-        el.patchTrialsPanel.innerHTML = `<div class="empty">patch_trials.jsonl 已读取，但暂无 patch 尝试记录。</div>`;
+        el.patchTrialsPanel.innerHTML = `<div class="empty">暂无 patch 尝试记录</div>`;
         return;
       }
       el.patchTrialsStatus.textContent = `${rows.length} 条 patch 尝试`;
       el.patchTrialsPanel.innerHTML = `<table>
-        <thead><tr><th>patch 名称</th><th>状态</th><th>收益</th><th>失败原因</th></tr></thead>
+        <thead><tr><th>patch id</th><th>optimization name</th><th>status</th><th>improvement</th><th>error</th><th>rollback 可用</th></tr></thead>
         <tbody>
           ${rows.map((row) => `<tr>
-            <td>${escapeHtml(display(patchName(row)))}</td>
+            <td>${escapeHtml(display(patchId(row)))}</td>
+            <td>${escapeHtml(display(patchOptimizationName(row)))}</td>
             <td>${patchStatusBadge(row)}</td>
-            <td>${escapeHtml(display(patchBenefit(row)))}</td>
-            <td class="reason-cell">${escapeHtml(display(patchFailureReason(row)))}</td>
+            <td>${escapeHtml(display(patchImprovement(row)))}</td>
+            <td class="reason-cell">${escapeHtml(display(patchError(row)))}</td>
+            <td>${escapeHtml(display(patchRollbackAvailable(row)))}</td>
           </tr>`).join("")}
         </tbody>
       </table>`;
@@ -2254,16 +2256,24 @@
       return "";
     }
 
-    function patchName(row) {
-      return patchField(row, ["patch_name", "name", "optimization_name", "selected_optimization", "template", "patch_id", "id"]);
+    function patchId(row) {
+      return patchField(row, ["patch_id", "id", "trial_id"]);
     }
 
-    function patchBenefit(row) {
-      return patchField(row, ["benefit", "improvement", "speedup", "latency_improvement", "latency_delta", "objective_delta", "expected_improvement", "expected_delta"]);
+    function patchOptimizationName(row) {
+      return patchField(row, ["optimization_name", "patch_name", "name", "selected_optimization", "template"]);
     }
 
-    function patchFailureReason(row) {
+    function patchImprovement(row) {
+      return patchField(row, ["improvement", "benefit", "speedup", "latency_improvement", "latency_delta", "objective_delta", "expected_improvement", "expected_delta"]);
+    }
+
+    function patchError(row) {
       return patchField(row, ["failure_reason", "failed_reason", "reason", "error", "error_message", "rollback_reason", "validation_error", "parse_error", "status_reason"]);
+    }
+
+    function patchRollbackAvailable(row) {
+      return patchField(row, ["rollback_available", "rollback_enabled", "can_rollback", "rollback_path", "rollback_patch_path", "revert_patch_path"]);
     }
 
     function patchMetric(row, key) {
