@@ -19,6 +19,8 @@ BOTTLENECK_TYPES = [
     "hardware_intrinsic_missing",
 ]
 
+CONFIDENCE_LEVELS = {"low", "medium", "high"}
+
 
 @dataclass
 class BottleneckDiagnosis:
@@ -27,6 +29,12 @@ class BottleneckDiagnosis:
     evidence: list[str] = field(default_factory=list)
     uncertainty: list[str] = field(default_factory=list)
     recommended_actions: list[str] = field(default_factory=list)
+    source_trial_id: str | None = None
+    source_metrics: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.confidence not in CONFIDENCE_LEVELS:
+            raise ValueError(f"unsupported diagnosis confidence: {self.confidence}")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +43,8 @@ class BottleneckDiagnosis:
             "evidence": self.evidence,
             "uncertainty": self.uncertainty,
             "recommended_actions": self.recommended_actions,
+            "source_trial_id": self.source_trial_id,
+            "source_metrics": self.source_metrics,
         }
 
 
@@ -52,11 +62,26 @@ def _hardware_number(bundle: EvidenceBundle, name: str) -> float | None:
         return None
 
 
-def _record(kind: str, confidence: str, evidence: list[str], uncertainty: list[str], actions: list[str]) -> BottleneckDiagnosis:
+def _record(
+    bundle: EvidenceBundle,
+    kind: str,
+    confidence: str,
+    evidence: list[str],
+    uncertainty: list[str],
+    actions: list[str],
+) -> BottleneckDiagnosis:
     if not evidence:
         confidence = "low"
         uncertainty = uncertainty or ["insufficient profiler evidence"]
-    return BottleneckDiagnosis(kind, confidence, evidence, uncertainty, actions)
+    return BottleneckDiagnosis(
+        kind,
+        confidence,
+        evidence,
+        uncertainty,
+        actions,
+        source_trial_id=bundle.source_trial_id,
+        source_metrics=bundle.metrics_snapshot(),
+    )
 
 
 def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
@@ -72,6 +97,7 @@ def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
         compute_evidence.append(f"warp_active_ratio={warp_active_ratio} below 0.6")
     diagnoses.append(
         _record(
+            bundle,
             "compute_underutilization",
             "medium" if len(compute_evidence) > 1 else "low",
             compute_evidence,
@@ -92,6 +118,7 @@ def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
             memory_evidence.append(f"observed bandwidth is >=70% of hardware bandwidth {peak_bw}")
     diagnoses.append(
         _record(
+            bundle,
             "memory_bound",
             "medium" if peak_bw is not None and len(memory_evidence) > 1 else "low",
             memory_evidence,
@@ -108,6 +135,7 @@ def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
             write_evidence.append(f"hbm_write_bandwidth exceeds hbm_read_bandwidth={read_bw}")
     diagnoses.append(
         _record(
+            bundle,
             "excessive_hbm_write",
             "medium" if len(write_evidence) > 1 else "low",
             write_evidence,
@@ -120,6 +148,7 @@ def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
     private_evidence = [f"private_memory_bytes={private_bytes}"] if private_bytes and private_bytes > 0 else []
     diagnoses.append(
         _record(
+            bundle,
             "private_memory_spill",
             "medium",
             private_evidence,
@@ -137,6 +166,7 @@ def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
             shared_evidence.append(f"shared memory uses >=75% of per-block limit {shared_limit}")
     diagnoses.append(
         _record(
+            bundle,
             "shared_memory_pressure",
             "medium" if len(shared_evidence) > 1 else "low",
             shared_evidence,
@@ -149,6 +179,7 @@ def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
     bank_evidence = [f"shared_bank_conflict={bank_conflict}"] if bank_conflict and bank_conflict > 0 else []
     diagnoses.append(
         _record(
+            bundle,
             "shared_bank_conflict",
             "medium",
             bank_evidence,
@@ -161,6 +192,7 @@ def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
     coalescing_evidence = [f"memory_coalescing_efficiency={coalescing} below 0.8"] if coalescing is not None and coalescing < 0.8 else []
     diagnoses.append(
         _record(
+            bundle,
             "poor_memory_coalescing",
             "medium",
             coalescing_evidence,
@@ -172,6 +204,7 @@ def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
     low_occ_evidence = [f"occupancy={occupancy} below 0.5"] if occupancy is not None and occupancy < 0.5 else []
     diagnoses.append(
         _record(
+            bundle,
             "low_occupancy",
             "medium",
             low_occ_evidence,
@@ -187,6 +220,7 @@ def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
         pipeline_evidence.append("memory bandwidth is low despite non-low occupancy")
     diagnoses.append(
         _record(
+            bundle,
             "pipeline_ineffective",
             "low",
             pipeline_evidence,
@@ -201,6 +235,7 @@ def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
         intrinsic_evidence.append("logs mention missing tensor/mma intrinsic")
     diagnoses.append(
         _record(
+            bundle,
             "hardware_intrinsic_missing",
             "low",
             intrinsic_evidence,

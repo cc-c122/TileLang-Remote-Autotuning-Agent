@@ -31,12 +31,13 @@ def diagnosis_records(diagnoses: list[dict[str, Any]] | None) -> list[str]:
         "",
         "## Bottleneck Diagnosis",
         "",
-        "| Bottleneck | Confidence | Evidence | Uncertainty | Recommended Actions |",
-        "| --- | --- | --- | --- | --- |",
+        "| Source Trial | Bottleneck | Confidence | Evidence | Uncertainty | Recommended Actions |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for item in diagnoses or []:
         lines.append(
-            "| {kind} | {confidence} | {evidence} | {uncertainty} | {actions} |".format(
+            "| {source} | {kind} | {confidence} | {evidence} | {uncertainty} | {actions} |".format(
+                source=item.get("source_trial_id") or "unknown",
                 kind=item.get("bottleneck_type"),
                 confidence=item.get("confidence"),
                 evidence="<br>".join(item.get("evidence") or ["none"]),
@@ -45,5 +46,5 @@ def diagnosis_records(diagnoses: list[dict[str, Any]] | None) -> list[str]:
             )
         )
     if not diagnoses:
-        lines.append("| none | low | none | no diagnosis records available | none |")
+        lines.append("| unknown | none | low | none | no diagnosis records available | none |")
     return lines

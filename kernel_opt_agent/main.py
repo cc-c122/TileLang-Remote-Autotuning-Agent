@@ -224,15 +224,24 @@ def run_trial(
                 pass
 
     profiler_record, profiler_result = collect_profiler_result(config, paths, benchmark_stdout, benchmark_stderr, compile_log)
+    source_trial_id = f"{run_id}:{label}"
     diagnosis = [
         item.to_dict()
-        for item in diagnose_bottlenecks(EvidenceBundle(profiler=profiler_result, hardware_fields=hardware_fields(hardware_info)))
+        for item in diagnose_bottlenecks(
+            EvidenceBundle(
+                profiler=profiler_result,
+                hardware_fields=hardware_fields(hardware_info),
+                source_trial_id=source_trial_id,
+                source_metrics=metrics_data,
+            )
+        )
     ]
     stdout_path, stderr_path = db.write_logs(label, "\n".join(stdout_all), "\n".join(stderr_all))
     record = {
         "run_id": run_id,
         "iteration": iteration,
         "candidate_id": candidate_id,
+        "trial_id": source_trial_id,
         "config": candidate_config,
         "config_hash": config_hash(candidate_config),
         "status": status,

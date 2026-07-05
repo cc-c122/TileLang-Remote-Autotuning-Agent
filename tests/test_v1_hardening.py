@@ -200,12 +200,18 @@ class V1HardeningTests(unittest.TestCase):
             self.assertEqual(len((results / "experiments.jsonl").read_text(encoding="utf-8").splitlines()), 1)
             self.assertEqual(len((results / "profiler_results.jsonl").read_text(encoding="utf-8").splitlines()), 1)
             self.assertEqual(len((results / "diagnosis.jsonl").read_text(encoding="utf-8").splitlines()), 1)
+            self.assertEqual((results / "patch_trials.jsonl").read_text(encoding="utf-8"), "")
+            with (results / "ablation_summary.csv").open(newline="", encoding="utf-8") as f:
+                self.assertEqual(list(csv.DictReader(f)), [])
             ExperimentDB(results)
             self.assertEqual((results / "experiments.jsonl").read_text(encoding="utf-8"), "")
             self.assertEqual((results / "failed_cases.jsonl").read_text(encoding="utf-8"), "")
             self.assertEqual((results / "profiler_results.jsonl").read_text(encoding="utf-8"), "")
             self.assertEqual((results / "diagnosis.jsonl").read_text(encoding="utf-8"), "")
+            self.assertEqual((results / "patch_trials.jsonl").read_text(encoding="utf-8"), "")
             with (results / "summary.csv").open(newline="", encoding="utf-8") as f:
+                self.assertEqual(list(csv.DictReader(f)), [])
+            with (results / "ablation_summary.csv").open(newline="", encoding="utf-8") as f:
                 self.assertEqual(list(csv.DictReader(f)), [])
 
     def test_password_auth_runner_reads_env_password(self) -> None:

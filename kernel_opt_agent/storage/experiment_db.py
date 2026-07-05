@@ -20,6 +20,17 @@ SUMMARY_FIELDS = [
     "patch_path",
 ]
 
+ABLATION_SUMMARY_FIELDS = [
+    "trial_id",
+    "patch_ids",
+    "status",
+    "objective",
+    "baseline_value",
+    "patched_value",
+    "improvement",
+    "reason",
+]
+
 
 class ExperimentDB:
     def __init__(self, results_dir: Path):
@@ -31,6 +42,8 @@ class ExperimentDB:
         self.failed_path = results_dir / "failed_cases.jsonl"
         self.profiler_path = results_dir / "profiler_results.jsonl"
         self.diagnosis_path = results_dir / "diagnosis.jsonl"
+        self.patch_trials_path = results_dir / "patch_trials.jsonl"
+        self.ablation_summary_path = results_dir / "ablation_summary.csv"
         self.summary_path = results_dir / "summary.csv"
         self.records: list[dict[str, Any]] = []
         self._init_run_files()
@@ -40,10 +53,13 @@ class ExperimentDB:
         self.failed_path.write_text("", encoding="utf-8")
         self.profiler_path.write_text("", encoding="utf-8")
         self.diagnosis_path.write_text("", encoding="utf-8")
+        self.patch_trials_path.write_text("", encoding="utf-8")
         for log_path in self.logs_dir.glob("*.log"):
             log_path.unlink()
         with self.summary_path.open("w", newline="", encoding="utf-8") as f:
             csv.DictWriter(f, fieldnames=SUMMARY_FIELDS).writeheader()
+        with self.ablation_summary_path.open("w", newline="", encoding="utf-8") as f:
+            csv.DictWriter(f, fieldnames=ABLATION_SUMMARY_FIELDS).writeheader()
 
     def write_logs(self, label: str, stdout: str, stderr: str) -> tuple[Path, Path]:
         stdout_path = self.logs_dir / f"{label}.stdout.log"
@@ -63,6 +79,7 @@ class ExperimentDB:
             "run_id": record.get("run_id"),
             "iteration": record.get("iteration"),
             "candidate_id": record.get("candidate_id"),
+            "trial_id": record.get("trial_id"),
             "config_hash": record.get("config_hash"),
             "status": record.get("status"),
             "profiler": record.get("profiler"),
@@ -73,6 +90,7 @@ class ExperimentDB:
             "run_id": record.get("run_id"),
             "iteration": record.get("iteration"),
             "candidate_id": record.get("candidate_id"),
+            "trial_id": record.get("trial_id"),
             "config_hash": record.get("config_hash"),
             "status": record.get("status"),
             "bottleneck_diagnosis": record.get("bottleneck_diagnosis") or [],

@@ -3,13 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from kernel_opt_agent.profiler.base import ProfilerResult
+from kernel_opt_agent.profiler.base import METRIC_FIELDS, ProfilerResult
 
 
 @dataclass
 class EvidenceBundle:
     profiler: ProfilerResult
     hardware_fields: dict[str, Any] = field(default_factory=dict)
+    source_trial_id: str | None = None
+    source_metrics: dict[str, Any] = field(default_factory=dict)
 
     def metric(self, name: str) -> Any:
         return getattr(self.profiler, name, None)
@@ -25,3 +27,8 @@ class EvidenceBundle:
 
     def raw_text(self) -> str:
         return "\n".join(str(value) for value in self.profiler.raw_logs.values() if value)
+
+    def metrics_snapshot(self) -> dict[str, Any]:
+        snapshot = {name: getattr(self.profiler, name, None) for name in METRIC_FIELDS}
+        snapshot.update(self.source_metrics)
+        return snapshot
