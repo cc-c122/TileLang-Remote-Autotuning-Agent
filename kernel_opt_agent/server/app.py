@@ -173,6 +173,11 @@ settings_store = SettingsStore(SETTINGS_PATH)
 app = FastAPI(title="TileLang Remote Autotuning Agent API")
 
 
+@app.get("/api/health")
+def health() -> dict[str, Any]:
+    return {"ok": True, "service": "tilelang-agent", "mode": "local-runner"}
+
+
 @app.post("/api/settings")
 def save_settings(payload: SettingsPayload) -> dict[str, Any]:
     return {"ok": True, "settings": settings_store.save(payload)}
@@ -193,6 +198,26 @@ def create_task(payload: TaskCreateRequest) -> dict[str, Any]:
     task = manager.create(payload)
     worker.submit(task.task_id, payload)
     return {"ok": True, "task_id": task.task_id, "task": _task_payload(task)}
+
+
+@app.get("/api/tasks")
+def list_tasks() -> dict[str, Any]:
+    tasks = []
+    for task in manager.list_recent():
+        payload = _task_payload(task)
+        tasks.append(
+            {
+                "task_id": payload["task_id"],
+                "project_name": payload["project_name"],
+                "status": payload["status"],
+                "created_at": payload["created_at"],
+                "started_at": payload["started_at"],
+                "finished_at": payload["finished_at"],
+                "improvement_percent": payload["improvement_percent"],
+                "latest_message": payload["latest_message"],
+            }
+        )
+    return {"ok": True, "tasks": tasks}
 
 
 @app.get("/api/tasks/{task_id}")

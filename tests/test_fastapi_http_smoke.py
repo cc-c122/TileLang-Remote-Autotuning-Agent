@@ -65,6 +65,9 @@ class FastApiHttpSmokeTests(unittest.TestCase):
             else:
                 self.fail("FastAPI server did not become ready")
 
+            health = _request_json("GET", f"{base}/api/health")
+            self.assertEqual(health, {"ok": True, "service": "tilelang-agent", "mode": "local-runner"})
+
             saved = _request_json(
                 "POST",
                 f"{base}/api/settings",
@@ -168,6 +171,7 @@ class FastApiHttpSmokeTests(unittest.TestCase):
             results = _request_json("GET", f"{base}/api/tasks/{task_id}/results")
             self.assertTrue(results["ok"])
             result_payload = results["results"]
+            self.assertEqual(results["task"]["project_name"], "http-smoke-demo")
             self.assertIn("def kernel_score", result_payload["best_kernel"])
             self.assertIsNotNone(result_payload["best_config"])
             self.assertIn("TileLang Autotuning Report", result_payload["report_markdown"])
@@ -180,6 +184,14 @@ class FastApiHttpSmokeTests(unittest.TestCase):
             report = _request_text(f"{base}/api/tasks/{task_id}/download/report")
             self.assertIn("def kernel_score", best_kernel)
             self.assertIn("TileLang Autotuning Report", report)
+            task_list = _request_json("GET", f"{base}/api/tasks")
+            listed = next(item for item in task_list["tasks"] if item["task_id"] == task_id)
+            self.assertEqual(listed["project_name"], "http-smoke-demo")
+            self.assertEqual(listed["status"], "completed")
+            self.assertIn("latest_message", listed)
+            self.assertIn("improvement_percent", listed)
+            self.assertNotIn("real-password", json.dumps(listed).lower())
+            self.assertNotIn("sk-", json.dumps(listed).lower())
         finally:
             proc.terminate()
             try:
