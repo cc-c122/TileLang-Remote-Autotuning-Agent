@@ -13,7 +13,7 @@ class TileLangLogProfiler(BaseProfiler):
         benchmark_metrics = parse_benchmark_output(benchmark_stdout)
         log_metrics = parse_log_metrics("\n".join([compile_log, benchmark_stderr, generated_code]))
         return ProfilerResult(
-            latency=benchmark_metrics.get("latency"),
+            latency_ms=benchmark_metrics.get("latency"),
             tflops=benchmark_metrics.get("tflops"),
             estimated_hbm_bandwidth=benchmark_metrics.get("estimated_hbm_bandwidth"),
             register_count=log_metrics.get("register_count"),

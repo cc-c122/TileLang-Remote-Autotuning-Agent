@@ -5,7 +5,7 @@ from typing import Any
 
 
 METRIC_FIELDS = [
-    "latency",
+    "latency_ms",
     "tflops",
     "estimated_hbm_bandwidth",
     "register_count",
@@ -22,7 +22,7 @@ METRIC_FIELDS = [
 
 @dataclass
 class ProfilerResult:
-    latency: float | None = None
+    latency_ms: float | None = None
     tflops: float | None = None
     estimated_hbm_bandwidth: float | None = None
     register_count: int | None = None
@@ -48,12 +48,12 @@ class ProfilerResult:
         return cls(raw_logs=raw_logs or {})
 
     @property
-    def latency_ms(self) -> float | None:
-        return self.latency
+    def latency(self) -> float | None:
+        return self.latency_ms
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "latency": self.latency,
+            "latency_ms": self.latency_ms,
             "tflops": self.tflops,
             "estimated_hbm_bandwidth": self.estimated_hbm_bandwidth,
             "register_count": self.register_count,

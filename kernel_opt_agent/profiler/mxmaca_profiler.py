@@ -13,7 +13,7 @@ class MxmacaProfiler(BaseProfiler):
         benchmark_metrics = parse_benchmark_output(benchmark_stdout)
         parsed = parse_log_metrics("\n".join([profiler_stdout, profiler_stderr, compile_log]))
         return ProfilerResult(
-            latency=benchmark_metrics.get("latency"),
+            latency_ms=benchmark_metrics.get("latency"),
             tflops=benchmark_metrics.get("tflops"),
             estimated_hbm_bandwidth=benchmark_metrics.get("estimated_hbm_bandwidth"),
             register_count=parsed.get("register_count"),

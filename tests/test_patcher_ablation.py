@@ -27,8 +27,11 @@ SOURCE = """def kernel():
 
 class PatcherAblationTests(unittest.TestCase):
     def test_profiler_latency_ms_alias_keeps_unified_name(self) -> None:
-        result = ProfilerResult(latency=1.5)
+        result = ProfilerResult(latency_ms=1.5)
         self.assertEqual(result.latency_ms, 1.5)
+        self.assertEqual(result.latency, 1.5)
+        self.assertIn("latency_ms", result.to_dict())
+        self.assertNotIn("latency", result.to_dict())
 
     def test_find_patch_regions(self) -> None:
         regions = find_patch_regions(SOURCE)
@@ -52,10 +55,31 @@ class PatcherAblationTests(unittest.TestCase):
             target = root / "kernel.py"
             target.write_text(SOURCE, encoding="utf-8")
             proposal = PatchProposal("improve_thread_mapping", "compute", "h", "e", "r", "    x = 2\n")
-            applied = apply_validated_patch(target, proposal, root / "backups", {"compute"})
+            applied = apply_validated_patch(target, proposal, root / "backups", root, {"compute"}, allowed_target=target)
             self.assertIn("x = 2", target.read_text(encoding="utf-8"))
             rollback_file(applied.rollback)
             self.assertEqual(target.read_text(encoding="utf-8"), SOURCE)
+
+    def test_apply_patch_rejects_target_outside_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace_tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            workspace = Path(workspace_tmp)
+            outside = Path(outside_tmp)
+            target = outside / "kernel.py"
+            target.write_text(SOURCE, encoding="utf-8")
+            proposal = PatchProposal("improve_thread_mapping", "compute", "h", "e", "r", "    x = 2\n")
+            with self.assertRaisesRegex(ValueError, "target_path must be inside workspace_root"):
+                apply_validated_patch(target, proposal, workspace / "backups", workspace, {"compute"})
+
+    def test_apply_patch_rejects_non_allowed_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "kernel.py"
+            other = root / "other.py"
+            target.write_text(SOURCE, encoding="utf-8")
+            other.write_text(SOURCE, encoding="utf-8")
+            proposal = PatchProposal("improve_thread_mapping", "compute", "h", "e", "r", "    x = 2\n")
+            with self.assertRaisesRegex(ValueError, "target_path is not the allowed target"):
+                apply_validated_patch(target, proposal, root / "backups", root, {"compute"}, allowed_target=other)
 
     def test_ablation_results_write_jsonl_and_csv(self) -> None:
         result = AblationResult(
