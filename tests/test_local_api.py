@@ -73,6 +73,24 @@ class LocalApiTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         return server.server_address[1]
 
+    def test_create_server_allows_loopback_hosts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.yaml"
+            server = create_server("127.0.0.1", 0, settings_path)
+            server.server_close()
+            server = create_server("localhost", 0, settings_path)
+            server.server_close()
+            server = create_server("LOCALHOST", 0, settings_path)
+            server.server_close()
+
+    def test_create_server_rejects_non_loopback_hosts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.yaml"
+            for host in ("0.0.0.0", "::", "192.168.1.10", "10.0.0.5", "172.16.0.2", "8.8.8.8", ""):
+                with self.subTest(host=host):
+                    with self.assertRaisesRegex(ValueError, "loopback"):
+                        create_server(host, 0, settings_path)
+
     def test_local_api_smoke_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             port = self.start_server(Path(tmp) / "settings.yaml")

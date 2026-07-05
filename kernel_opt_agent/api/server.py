@@ -25,6 +25,7 @@ from kernel_opt_agent.run_request import (
 
 
 MAX_BODY_BYTES = 2 * 1024 * 1024
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 @dataclass
@@ -55,6 +56,13 @@ class ApiState:
 
 def utc_now() -> str:
     return datetime.utcnow().isoformat() + "Z"
+
+
+def validate_loopback_host(host: str) -> str:
+    normalized = (host or "").strip().lower()
+    if normalized not in LOOPBACK_HOSTS:
+        raise ValueError("local API bridge must bind to loopback host only")
+    return normalized
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: HTTPStatus, payload: dict[str, Any]) -> None:
@@ -221,7 +229,8 @@ class LocalApiHandler(BaseHTTPRequestHandler):
 
 
 def create_server(host: str = "127.0.0.1", port: int = 8765, settings_path: str | Path = USER_SETTINGS_PATH) -> LocalApiServer:
-    return LocalApiServer((host, port), Path(settings_path))
+    safe_host = validate_loopback_host(host)
+    return LocalApiServer((safe_host, port), Path(settings_path))
 
 
 def main() -> None:
