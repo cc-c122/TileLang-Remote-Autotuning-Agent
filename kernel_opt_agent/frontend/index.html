@@ -1018,6 +1018,7 @@
         <span class="version-pill">V2 / MVP</span>
       </div>
       <div class="user-menu">
+        <span class="chip warn" id="apiHealthStatus">API：checking</span>
         <button id="chooseDirBtn" class="secondary" type="button">选择结果目录</button>
         <button id="reloadBtn" class="secondary" type="button">刷新</button>
         <span class="icon-chip">?</span>
@@ -1170,6 +1171,14 @@
                   <span class="muted" id="taskStatus">waiting</span>
                 </div>
                 <div id="taskDetailPanel"></div>
+              </section>
+
+              <section class="section">
+                <div class="section-head">
+                  <h2>最近任务</h2>
+                  <button id="refreshTaskListBtn" class="secondary" type="button">刷新任务列表</button>
+                </div>
+                <div id="taskListPanel" class="table-wrap"></div>
               </section>
             </div>
 
@@ -1431,9 +1440,10 @@
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
-    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskPollTimer: null, eventPollTimer: null };
+    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, apiHealthy: false, apiError: "", hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, settingsEnv: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskList: [], taskPollTimer: null, eventPollTimer: null };
     const el = {
       alerts: document.getElementById("alerts"),
+      apiHealthStatus: document.getElementById("apiHealthStatus"),
       compareGrid: document.getElementById("compareGrid"),
       sourceNote: document.getElementById("sourceNote"),
       trendChart: document.getElementById("trendChart"),
@@ -1477,6 +1487,8 @@
       cancelTaskBtn: document.getElementById("cancelTaskBtn"),
       taskStatus: document.getElementById("taskStatus"),
       taskDetailPanel: document.getElementById("taskDetailPanel"),
+      refreshTaskListBtn: document.getElementById("refreshTaskListBtn"),
+      taskListPanel: document.getElementById("taskListPanel"),
       apiResultsStatus: document.getElementById("apiResultsStatus"),
       apiResultsPanel: document.getElementById("apiResultsPanel"),
       refreshTaskResultsBtn: document.getElementById("refreshTaskResultsBtn"),
@@ -1516,6 +1528,7 @@
     el.resolveHardwareBtn.addEventListener("click", resolveHardwareProfile);
     el.startOptimizationBtn.addEventListener("click", startOptimization);
     el.cancelTaskBtn.addEventListener("click", cancelActiveTask);
+    el.refreshTaskListBtn.addEventListener("click", loadTaskList);
     el.refreshTaskResultsBtn.addEventListener("click", refreshTaskResults);
     el.downloadBestKernelBtn.addEventListener("click", () => downloadTaskArtifact("best_kernel"));
     el.downloadReportBtn.addEventListener("click", () => downloadTaskArtifact("report"));
@@ -1531,6 +1544,9 @@
     });
     loadSettings();
     renderHardwareEditor();
+    renderTaskWaiting("等待任务启动。");
+    renderTaskList();
+    checkApiHealth();
     loadAndRender();
 
     function activateView(targetId) {
@@ -1578,13 +1594,13 @@
       renderSettingsOutput();
     }
 
-    async function loadSettingsFromApi() {
+    async function loadSettingsFromApi(options = {}) {
       try {
         const payload = await apiFetch("/api/settings");
         applySettingsPayload(payload.settings || {});
-        addOneShotWarning("已从后端读取设置。页面不会显示明文 password 或 API key。");
+        if (!options.silent) addOneShotWarning("已从后端读取设置。页面不会显示明文 password 或 API key。");
       } catch (error) {
-        addOneShotWarning(`读取后端设置失败：${error.message}`);
+        if (!options.silent) addOneShotWarning(`读取后端设置失败：${error.message}`);
       }
       updateSettingStatus();
       renderSettingsOutput();
@@ -1651,6 +1667,10 @@
     function applySettingsPayload(payload) {
       const ssh = payload.ssh || payload.remote || {};
       const llm = payload.llm || {};
+      state.settingsEnv = {
+        passwordEnvExists: typeof ssh.password_env_exists === "boolean" ? ssh.password_env_exists : null,
+        apiKeyEnvExists: typeof llm.api_key_env_exists === "boolean" ? llm.api_key_env_exists : null,
+      };
       state.settings = {
         ssh_host: cleanRedacted(ssh.host),
         ssh_port: ssh.port || 22,
@@ -1674,8 +1694,8 @@
 
     function updateSettingStatus() {
       const settings = readSettings();
-      setStatusChip(el.passwordEnvStatus, "password env", !!settings.password_env);
-      setStatusChip(el.apiKeyEnvStatus, "API key env", !!settings.api_key_env);
+      setEnvStatusChip(el.passwordEnvStatus, "SSH password env", state.settingsEnv.passwordEnvExists);
+      setEnvStatusChip(el.apiKeyEnvStatus, "LLM API key env", state.settingsEnv.apiKeyEnvExists);
       setStatusChip(el.sshStatus, "SSH", !!(settings.ssh_host && settings.ssh_username && settings.remote_workspace));
       setStatusChip(el.llmStatus, "LLM", !!(settings.llm_base_url && settings.llm_model && settings.api_key_env));
     }
@@ -1715,6 +1735,12 @@
     function setStatusChip(node, label, configured) {
       node.className = `chip ${configured ? "ok" : "warn"}`;
       node.textContent = `${label}：${configured ? "已填写" : "未填写"}`;
+    }
+
+    function setEnvStatusChip(node, label, exists) {
+      const known = typeof exists === "boolean";
+      node.className = `chip ${exists ? "ok" : "warn"}`;
+      node.textContent = `${label}：${known ? (exists ? "已设置" : "未设置") : "未检查"}`;
     }
 
     function setSettingValue(id, value) {
@@ -2131,19 +2157,49 @@
     }
 
     async function apiFetch(path, options = {}) {
-      const response = await fetch(path, {
-        method: options.method || "GET",
-        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-        body: options.body ? JSON.stringify(options.body) : undefined,
-        cache: "no-store",
-      });
+      let response;
+      try {
+        response = await fetch(path, {
+          method: options.method || "GET",
+          headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+          body: options.body ? JSON.stringify(options.body) : undefined,
+          cache: "no-store",
+        });
+      } catch (error) {
+        throw new Error("后端服务未启动，请运行 python -m kernel_opt_agent.server.app");
+      }
       const contentType = response.headers.get("content-type") || "";
       const payload = contentType.includes("application/json") ? await response.json() : await response.text();
       if (!response.ok) {
         const detail = typeof payload === "object" ? (payload.detail || payload.error || JSON.stringify(payload)) : payload;
+        if (response.status === 404 && path.startsWith("/api/")) throw new Error("后端服务未启动，请运行 python -m kernel_opt_agent.server.app");
+        if (response.status === 502 && String(detail).includes("backend API unavailable")) throw new Error("后端服务未启动，请运行 python -m kernel_opt_agent.server.app");
         throw new Error(detail || `${response.status} ${response.statusText}`);
       }
       return payload;
+    }
+
+    async function checkApiHealth() {
+      try {
+        const payload = await apiFetch("/api/health");
+        state.apiHealthy = !!payload.ok;
+        state.apiError = "";
+        el.apiHealthStatus.className = "chip ok";
+        el.apiHealthStatus.textContent = "API：已连接";
+        await loadSettingsFromApi({ silent: true });
+        await loadTaskList();
+        renderAlerts();
+      } catch (error) {
+        state.apiHealthy = false;
+        state.apiError = error.message || "后端服务未启动，请运行 python -m kernel_opt_agent.server.app";
+        el.apiHealthStatus.className = "chip bad";
+        el.apiHealthStatus.textContent = "API：未启动";
+        renderTaskWaiting(state.apiError);
+        el.apiResultsStatus.textContent = "waiting";
+        el.apiResultsPanel.innerHTML = `<div class="empty">${escapeHtml(state.apiError)}</div>`;
+        renderTaskList(state.apiError);
+        renderAlerts();
+      }
     }
 
     async function resolveHardwareProfile() {
@@ -2221,6 +2277,10 @@
     }
 
     async function startOptimization() {
+      if (!state.apiHealthy) {
+        await checkApiHealth();
+        if (!state.apiHealthy) return;
+      }
       const request = buildApiTaskRequest();
       if (request.sample.source_type === "inline" && !request.sample.inline_text) {
         addOneShotWarning("请先输入或上传 sample；不会提交空任务。");
@@ -2239,6 +2299,7 @@
         el.cancelTaskBtn.disabled = false;
         renderTaskDetail();
         activateView("startView");
+        loadTaskList();
         startTaskPolling();
       } catch (error) {
         el.taskStatus.textContent = "failed";
@@ -2274,6 +2335,7 @@
           stopTaskPolling();
           el.cancelTaskBtn.disabled = true;
           await refreshTaskResults();
+          await loadTaskList();
         }
       } catch (error) {
         el.taskStatus.textContent = "failed";
@@ -2323,6 +2385,67 @@
       } catch (error) {
         el.apiResultsStatus.textContent = "failed";
         el.apiResultsPanel.innerHTML = `<div class="empty">读取任务结果失败：${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function loadTaskList() {
+      if (!state.apiHealthy) {
+        state.taskList = [];
+        renderTaskList(state.apiError || "后端服务未启动，请运行 python -m kernel_opt_agent.server.app");
+        return;
+      }
+      el.taskListPanel.innerHTML = `<div class="empty">正在读取最近任务。</div>`;
+      try {
+        const payload = await apiFetch("/api/tasks");
+        state.taskList = Array.isArray(payload.tasks) ? payload.tasks : [];
+        renderTaskList();
+      } catch (error) {
+        renderTaskList(`读取任务列表失败：${error.message}`);
+      }
+    }
+
+    function renderTaskList(errorMessage = "") {
+      if (errorMessage) {
+        el.taskListPanel.innerHTML = `<div class="empty">${escapeHtml(errorMessage)}</div>`;
+        return;
+      }
+      if (!state.taskList.length) {
+        el.taskListPanel.innerHTML = `<div class="empty">暂无任务。点击“开始优化”后会出现在这里。</div>`;
+        return;
+      }
+      el.taskListPanel.innerHTML = `<table>
+        <thead><tr><th>task_id</th><th>项目</th><th>状态</th><th>提升比例</th><th>最新消息</th></tr></thead>
+        <tbody>
+          ${state.taskList.map((task) => `<tr class="click-row" data-task-id="${escapeHtml(task.task_id)}"><td>${escapeHtml(shortId(task.task_id))}</td><td>${escapeHtml(display(task.project_name))}</td><td>${taskStatusBadge(task.status)}</td><td>${task.improvement_percent === null || task.improvement_percent === undefined ? "waiting" : `${formatNumber(task.improvement_percent)}%`}</td><td>${escapeHtml(display(task.latest_message))}</td></tr>`).join("")}
+        </tbody>
+      </table>`;
+      el.taskListPanel.querySelectorAll("[data-task-id]").forEach((row) => {
+        row.addEventListener("click", () => openTask(row.dataset.taskId));
+      });
+    }
+
+    async function openTask(taskId) {
+      if (!taskId) return;
+      state.activeTaskId = taskId;
+      renderTaskWaiting("正在读取任务详情。");
+      try {
+        const [taskPayload, eventPayload] = await Promise.all([
+          apiFetch(`/api/tasks/${encodeURIComponent(taskId)}`),
+          apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/events`),
+        ]);
+        state.task = taskPayload.task;
+        state.taskEvents = eventPayload.events || [];
+        renderTaskDetail();
+        await refreshTaskResults();
+        if (state.task && !["completed", "failed", "cancelled"].includes(state.task.status)) {
+          el.cancelTaskBtn.disabled = false;
+          startTaskPolling();
+        } else {
+          el.cancelTaskBtn.disabled = true;
+        }
+      } catch (error) {
+        el.taskStatus.textContent = "failed";
+        el.taskDetailPanel.innerHTML = `<div class="empty">读取任务失败：${escapeHtml(error.message)}</div>`;
       }
     }
 
@@ -2385,6 +2508,11 @@
     function downloadTaskArtifact(kind) {
       if (!state.activeTaskId) return;
       window.location.href = `/api/tasks/${encodeURIComponent(state.activeTaskId)}/download/${kind}`;
+    }
+
+    function shortId(value) {
+      const text = display(value);
+      return text.length > 12 ? text.slice(0, 12) : text;
     }
 
     function downloadTextFile(filename, body, type) {
@@ -2748,6 +2876,7 @@
     }
     function renderAlerts() {
       el.alerts.innerHTML = "";
+      if (state.apiError) addAlert("warn", escapeHtml(state.apiError));
       if (state.missing.length) {
         const list = state.missing.map((name) => `<li>${escapeHtml(name)}</li>`).join("");
         addAlert("warn", `以下结果文件仍在 waiting：<ul class="waiting-list">${list}</ul>通常表示后端尚未跑完，或选择的不是 workspace/results/。`);
