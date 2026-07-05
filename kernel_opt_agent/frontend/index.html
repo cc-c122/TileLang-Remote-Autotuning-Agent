@@ -1101,12 +1101,10 @@
                     <label for="v2ProfilerType">profiler</label>
                     <select id="v2ProfilerType">
                       <option value="dummy">dummy：只解析 benchmark</option>
-                      <option value="tilelang_log">tilelang_log：编译日志 + 生成代码</option>
-                      <option value="mxmaca">mxmaca：命令接口占位</option>
                     </select>
                   </div>
                 </div>
-                <div class="hint-line"><span class="info-dot">i</span><span>无需手写 config.yaml，前端只生成脱敏 run_request 文件。</span></div>
+                <div class="hint-line"><span class="info-dot">i</span><span>主流程会提交到后端任务 API；高级文件模式仍可预览脱敏 run_request。</span></div>
               </section>
 
               <section class="section">
@@ -1120,7 +1118,7 @@
                     <label for="v2GpuModel">GPU 型号</label>
                     <input id="v2GpuModel" value="Metax C500" placeholder="例如 Metax C500 / 沐曦 C500 / NVIDIA H100" autocomplete="off">
                   </div>
-                  <span class="static-action">后端结果读取后展示硬件参数</span>
+                  <button id="resolveHardwareBtn" class="secondary" type="button">自动搜索硬件参数</button>
                 </div>
                 <div class="form-grid three" style="margin-top:12px">
                   <div class="field">
@@ -1132,7 +1130,7 @@
                     </select>
                   </div>
                 </div>
-                <p class="section-kicker">前端不调用 LLM 或后端 API；硬件字段来自用户输入、已保存设置或后端写入的结果文件，用户可手动覆盖。</p>
+                <p class="section-kicker">点击“自动搜索硬件参数”会调用 <code>POST /api/hardware/resolve</code>；后端未返回时保持等待，不伪造硬件能力。</p>
               </section>
 
               <section class="section hardware-card">
@@ -1146,16 +1144,32 @@
 
               <section class="section">
                 <div class="action-bar">
-                  <button id="generateRunRequestBtn" class="primary-action" type="button">生成任务文件</button>
-                  <button id="downloadRunRequestYamlBtn" class="secondary" type="button">下载 run_request.yaml</button>
-                  <button id="copyRunCommandBtn" class="secondary" type="button">复制运行命令</button>
+                  <button id="startOptimizationBtn" class="primary-action" type="button">开始优化</button>
+                  <button id="cancelTaskBtn" class="secondary" type="button" disabled>取消任务</button>
                 </div>
-                <div class="field" style="margin-top:12px">
-                  <label for="runCommandOutput">下一步真实命令</label>
-                  <input id="runCommandOutput" readonly value="python main.py --run-request run_request.yaml --settings settings.yaml">
+                <div class="settings-note" style="margin-top:12px">主流程调用 <code>POST /api/tasks</code> 启动真实后端任务；后端未返回时显示等待，失败时显示真实失败原因。</div>
+                <details style="margin-top:12px">
+                  <summary>高级文件模式：生成 run_request.yaml</summary>
+                  <div class="action-bar" style="margin-top:12px">
+                    <button id="generateRunRequestBtn" class="secondary" type="button">预览任务文件</button>
+                    <button id="downloadRunRequestYamlBtn" class="secondary" type="button">下载 run_request.yaml</button>
+                    <button id="copyRunCommandBtn" class="secondary" type="button">复制 CLI 命令</button>
+                  </div>
+                  <div class="field" style="margin-top:12px">
+                    <label for="runCommandOutput">CLI 命令</label>
+                    <input id="runCommandOutput" readonly value="python main.py --run-request run_request.yaml --settings settings.yaml">
+                  </div>
+                  <div class="settings-note" style="margin-top:12px">run_request.yaml 是任务文件，settings.yaml 是长期设置文件；两个文件都要交给后端 CLI。密码和 API key 仍然只通过环境变量读取。</div>
+                  <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“预览任务文件”后显示脱敏 run_request YAML。"></textarea>
+                </details>
+              </section>
+
+              <section class="section">
+                <div class="section-head">
+                  <h2>任务详情</h2>
+                  <span class="muted" id="taskStatus">waiting</span>
                 </div>
-                <div class="settings-note" style="margin-top:12px">run_request.yaml 是任务文件，settings.yaml 是长期设置文件；两个文件都要交给后端 CLI。密码和 API key 仍然只通过环境变量读取。</div>
-                <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“生成任务文件”后显示脱敏 run_request YAML。"></textarea>
+                <div id="taskDetailPanel"></div>
               </section>
             </div>
 
@@ -1169,7 +1183,8 @@
                     <div class="field"><label for="settingSshPort">Port</label><input id="settingSshPort" type="number" value="22"></div>
                     <div class="field"><label for="settingSshUsername">Username</label><input id="settingSshUsername" placeholder="ubuntu" autocomplete="off"></div>
                     <div class="field"><label for="settingAuthType">Auth</label><select id="settingAuthType"><option value="password">password</option><option value="key">key</option></select></div>
-                    <div class="field"><label for="settingPasswordEnv">Password</label><input id="settingPasswordEnv" value="KERNEL_AGENT_SSH_PASSWORD" autocomplete="off"></div>
+                    <div class="field"><label for="settingPasswordEnv">Password Env</label><input id="settingPasswordEnv" value="KERNEL_AGENT_SSH_PASSWORD" autocomplete="off"></div>
+                    <div class="field"><label for="settingKeyPath">Key Path</label><input id="settingKeyPath" placeholder="~/.ssh/id_rsa" autocomplete="off"></div>
                     <div class="field"><label for="settingRemoteWorkspace">Workspace</label><input id="settingRemoteWorkspace" placeholder="/tmp/kernel_opt_workspace" autocomplete="off"></div>
                   </div>
                 </div>
@@ -1177,7 +1192,7 @@
                   <div class="settings-group-head"><span>LLM API 设置</span><span class="chip ok" id="llmStatus">LLM：未填写</span></div>
                   <div class="settings-grid">
                     <div class="field"><label for="settingLlmBaseUrl">Base URL</label><input id="settingLlmBaseUrl" value="https://api.openai.com/v1" autocomplete="off"></div>
-                    <div class="field"><label for="settingApiKeyEnv">API Key</label><input id="settingApiKeyEnv" value="OPENAI_API_KEY" autocomplete="off"></div>
+                    <div class="field"><label for="settingApiKeyEnv">API Key Env</label><input id="settingApiKeyEnv" value="OPENAI_API_KEY" autocomplete="off"></div>
                     <div class="field"><label for="settingLlmModel">Model</label><input id="settingLlmModel" value="gpt-4o-mini" autocomplete="off"></div>
                   </div>
                 </div>
@@ -1186,11 +1201,12 @@
                   <span class="chip" id="apiKeyEnvStatus">API key env：未填写</span>
                 </div>
                 <div class="save-row">
-                  <button id="saveSettingsBtn" type="button">保存到浏览器（后端不可读取）</button>
+                  <button id="loadSettingsBtn" class="secondary" type="button">读取后端设置</button>
+                  <button id="saveSettingsBtn" type="button">保存设置</button>
                   <button id="downloadSettingsBtn" class="secondary" type="button">下载 settings.yaml</button>
                   <button id="clearSettingsBtn" class="secondary" type="button">清空浏览器设置</button>
                 </div>
-                <div class="settings-note" style="margin-top:12px">settings.yaml 是长期设置文件，需与 run_request.yaml 一起交给后端 CLI。仅浏览器保存，后端暂不可读取；页面只保存环境变量名，密码和 API key 仍然只通过环境变量读取。</div>
+                <div class="settings-note" style="margin-top:12px">设置通过 <code>GET/POST /api/settings</code> 与后端同步；页面不保存明文 password 或 API key，只传环境变量名或 key path。</div>
                 <textarea id="settingsOutput" readonly style="margin-top:12px" placeholder="settings.yaml 预览；只包含环境变量名，不包含密钥值。"></textarea>
               </section>
 
@@ -1199,9 +1215,9 @@
                 <div class="flow-steps">
                   <div class="flow-step"><span class="flow-index">1</span><span class="flow-icon">⌘</span><div><strong>输入 sample</strong><span>上传或粘贴算子 sample</span></div></div>
                   <div class="flow-step"><span class="flow-index">2</span><span class="flow-icon">▣</span><div><strong>选择 GPU</strong><span>选择目标 GPU 型号</span></div></div>
-                  <div class="flow-step"><span class="flow-index">3</span><span class="flow-icon">⚙</span><div><strong>确认硬件参数</strong><span>只生成 run_request，不直接补全或执行</span></div></div>
-                  <div class="flow-step"><span class="flow-index">4</span><span class="flow-icon">☁</span><div><strong>交给后端 CLI</strong><span>使用 run_request.yaml 和 settings.yaml</span></div></div>
-                  <div class="flow-step"><span class="flow-index">5</span><span class="flow-icon">▤</span><div><strong>读取真实结果</strong><span>结果页只读 best kernel / report</span></div></div>
+                  <div class="flow-step"><span class="flow-index">3</span><span class="flow-icon">⚙</span><div><strong>确认硬件参数</strong><span>自动解析后可手动编辑</span></div></div>
+                  <div class="flow-step"><span class="flow-index">4</span><span class="flow-icon">☁</span><div><strong>开始优化</strong><span>调用后端任务 API</span></div></div>
+                  <div class="flow-step"><span class="flow-index">5</span><span class="flow-icon">▤</span><div><strong>读取真实结果</strong><span>展示 best kernel / report</span></div></div>
                 </div>
               </section>
             </aside>
@@ -1210,12 +1226,26 @@
 
         <section id="resultsView" class="view-panel">
 
+    <section class="section">
+      <div class="section-head">
+        <h2>API 任务结果</h2>
+        <span class="muted" id="apiResultsStatus">waiting</span>
+      </div>
+      <p class="section-kicker">调用 <code>GET /api/tasks/{task_id}/results</code> 读取真实任务结果；后端未返回时显示等待。</p>
+      <div class="action-bar">
+        <button id="refreshTaskResultsBtn" class="secondary" type="button">刷新任务结果</button>
+        <button id="downloadBestKernelBtn" class="secondary" type="button" disabled>下载 best_kernel.py</button>
+        <button id="downloadReportBtn" class="secondary" type="button" disabled>下载 report.md</button>
+      </div>
+      <div id="apiResultsPanel" style="margin-top:12px"></div>
+    </section>
+
     <section class="howto" aria-label="本地查看说明">
       <div>
         <h3>本地查看说明</h3>
         <p>推荐点击“选择结果目录”，直接选择后端生成的 <code>kernel_opt_agent/workspace/results/</code>。</p>
         <div class="read-only-list">
-          <span class="chip ok">前端只读结果文件，不执行命令</span>
+          <span class="chip ok">高级文件模式只读结果文件</span>
           <span class="chip">不读取密钥</span>
           <span class="chip">不修改结果</span>
           <span class="chip warn">safe_probe 不是官方硬件上限</span>
@@ -1401,7 +1431,7 @@
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
-    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, hardware: null, settings: {}, runRequest: null };
+    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, hardware: null, resolvedHardware: null, hardwareOverrides: {}, settings: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskPollTimer: null, eventPollTimer: null };
     const el = {
       alerts: document.getElementById("alerts"),
       compareGrid: document.getElementById("compareGrid"),
@@ -1442,12 +1472,23 @@
       v2SampleFile: document.getElementById("v2SampleFile"),
       v2SampleText: document.getElementById("v2SampleText"),
       v2HardwareEditor: document.getElementById("v2HardwareEditor"),
+      resolveHardwareBtn: document.getElementById("resolveHardwareBtn"),
+      startOptimizationBtn: document.getElementById("startOptimizationBtn"),
+      cancelTaskBtn: document.getElementById("cancelTaskBtn"),
+      taskStatus: document.getElementById("taskStatus"),
+      taskDetailPanel: document.getElementById("taskDetailPanel"),
+      apiResultsStatus: document.getElementById("apiResultsStatus"),
+      apiResultsPanel: document.getElementById("apiResultsPanel"),
+      refreshTaskResultsBtn: document.getElementById("refreshTaskResultsBtn"),
+      downloadBestKernelBtn: document.getElementById("downloadBestKernelBtn"),
+      downloadReportBtn: document.getElementById("downloadReportBtn"),
       generateRunRequestBtn: document.getElementById("generateRunRequestBtn"),
       downloadRunRequestYamlBtn: document.getElementById("downloadRunRequestYamlBtn"),
       copyRunCommandBtn: document.getElementById("copyRunCommandBtn"),
       runCommandOutput: document.getElementById("runCommandOutput"),
       runRequestOutput: document.getElementById("runRequestOutput"),
       saveSettingsBtn: document.getElementById("saveSettingsBtn"),
+      loadSettingsBtn: document.getElementById("loadSettingsBtn"),
       downloadSettingsBtn: document.getElementById("downloadSettingsBtn"),
       clearSettingsBtn: document.getElementById("clearSettingsBtn"),
       settingsOutput: document.getElementById("settingsOutput"),
@@ -1472,13 +1513,20 @@
     el.reloadBtn.addEventListener("click", loadAndRender);
     el.v2SampleFile.addEventListener("change", readSampleFile);
     el.v2GpuModel.addEventListener("input", renderHardwareEditor);
+    el.resolveHardwareBtn.addEventListener("click", resolveHardwareProfile);
+    el.startOptimizationBtn.addEventListener("click", startOptimization);
+    el.cancelTaskBtn.addEventListener("click", cancelActiveTask);
+    el.refreshTaskResultsBtn.addEventListener("click", refreshTaskResults);
+    el.downloadBestKernelBtn.addEventListener("click", () => downloadTaskArtifact("best_kernel"));
+    el.downloadReportBtn.addEventListener("click", () => downloadTaskArtifact("report"));
     el.generateRunRequestBtn.addEventListener("click", generateRunRequest);
     el.downloadRunRequestYamlBtn.addEventListener("click", downloadRunRequest);
     el.copyRunCommandBtn.addEventListener("click", copyRunCommand);
     el.saveSettingsBtn.addEventListener("click", saveSettings);
+    el.loadSettingsBtn.addEventListener("click", loadSettingsFromApi);
     el.downloadSettingsBtn.addEventListener("click", downloadSettings);
     el.clearSettingsBtn.addEventListener("click", clearSettings);
-    ["settingSshHost", "settingSshPort", "settingSshUsername", "settingAuthType", "settingPasswordEnv", "settingRemoteWorkspace", "settingLlmBaseUrl", "settingLlmModel", "settingApiKeyEnv"].forEach((id) => {
+    ["settingSshHost", "settingSshPort", "settingSshUsername", "settingAuthType", "settingPasswordEnv", "settingKeyPath", "settingRemoteWorkspace", "settingLlmBaseUrl", "settingLlmModel", "settingApiKeyEnv"].forEach((id) => {
       document.getElementById(id).addEventListener("input", () => { updateSettingStatus(); renderSettingsOutput(); });
     });
     loadSettings();
@@ -1521,6 +1569,7 @@
       setSettingValue("settingSshUsername", state.settings.ssh_username || "");
       setSettingValue("settingAuthType", state.settings.auth_type || "password");
       setSettingValue("settingPasswordEnv", state.settings.password_env || "KERNEL_AGENT_SSH_PASSWORD");
+      setSettingValue("settingKeyPath", state.settings.key_path || "");
       setSettingValue("settingRemoteWorkspace", state.settings.remote_workspace || "");
       setSettingValue("settingLlmBaseUrl", state.settings.llm_base_url || "https://api.openai.com/v1");
       setSettingValue("settingLlmModel", state.settings.llm_model || "gpt-4o-mini");
@@ -1529,12 +1578,31 @@
       renderSettingsOutput();
     }
 
-    function saveSettings() {
-      state.settings = readSettings();
-      localStorage.setItem(V2_SETTINGS_KEY, JSON.stringify(state.settings));
+    async function loadSettingsFromApi() {
+      try {
+        const payload = await apiFetch("/api/settings");
+        applySettingsPayload(payload.settings || {});
+        addOneShotWarning("已从后端读取设置。页面不会显示明文 password 或 API key。");
+      } catch (error) {
+        addOneShotWarning(`读取后端设置失败：${error.message}`);
+      }
       updateSettingStatus();
       renderSettingsOutput();
-      addOneShotWarning("设置仅浏览器保存，后端暂不可读取。请下载 settings.yaml，并和 run_request.yaml 一起交给后端 CLI；密码和 API key 仍然只通过环境变量读取。");
+      renderAlerts();
+    }
+
+    async function saveSettings() {
+      state.settings = readSettings();
+      localStorage.setItem(V2_SETTINGS_KEY, JSON.stringify(state.settings));
+      try {
+        const payload = await apiFetch("/api/settings", { method: "POST", body: settingsApiPayload() });
+        applySettingsPayload(payload.settings || settingsApiPayload());
+        addOneShotWarning("设置已保存到后端。仅保存环境变量名或 key path，不保存明文密钥。");
+      } catch (error) {
+        addOneShotWarning(`保存后端设置失败：${error.message}`);
+      }
+      updateSettingStatus();
+      renderSettingsOutput();
       renderAlerts();
     }
 
@@ -1551,11 +1619,57 @@
         ssh_username: inputValue("settingSshUsername"),
         auth_type: inputValue("settingAuthType") || "password",
         password_env: inputValue("settingPasswordEnv"),
+        key_path: inputValue("settingKeyPath"),
         remote_workspace: inputValue("settingRemoteWorkspace"),
         llm_base_url: inputValue("settingLlmBaseUrl"),
         llm_model: inputValue("settingLlmModel"),
         api_key_env: inputValue("settingApiKeyEnv"),
       };
+    }
+
+    function settingsApiPayload() {
+      const settings = readSettings();
+      return {
+        ssh: {
+          host: settings.ssh_host || "127.0.0.1",
+          port: settings.ssh_port || 22,
+          username: settings.ssh_username,
+          auth_type: settings.auth_type || "password",
+          password_env: settings.auth_type === "password" ? (settings.password_env || "KERNEL_AGENT_SSH_PASSWORD") : null,
+          key_path: settings.auth_type === "key" ? (settings.key_path || null) : null,
+          remote_workspace: settings.remote_workspace || "/tmp/kernel_opt_workspace",
+        },
+        llm: {
+          provider: "openai_compatible",
+          base_url: settings.llm_base_url || "https://api.openai.com/v1",
+          model: settings.llm_model || "gpt-4o-mini",
+          api_key_env: settings.api_key_env || "OPENAI_API_KEY",
+        },
+      };
+    }
+
+    function applySettingsPayload(payload) {
+      const ssh = payload.ssh || payload.remote || {};
+      const llm = payload.llm || {};
+      state.settings = {
+        ssh_host: cleanRedacted(ssh.host),
+        ssh_port: ssh.port || 22,
+        ssh_username: cleanRedacted(ssh.username),
+        auth_type: ssh.auth_type || "password",
+        password_env: cleanRedacted(ssh.password_env) || "KERNEL_AGENT_SSH_PASSWORD",
+        key_path: cleanRedacted(ssh.key_path),
+        remote_workspace: cleanRedacted(ssh.remote_workspace),
+        llm_base_url: cleanRedacted(llm.base_url) || "https://api.openai.com/v1",
+        llm_model: cleanRedacted(llm.model) || "gpt-4o-mini",
+        api_key_env: cleanRedacted(llm.api_key_env) || "OPENAI_API_KEY",
+      };
+      localStorage.setItem(V2_SETTINGS_KEY, JSON.stringify(state.settings));
+      loadSettings();
+    }
+
+    function cleanRedacted(value) {
+      const text = sanitizeText(value ?? "");
+      return text.startsWith("<redacted:") ? "" : text;
     }
 
     function updateSettingStatus() {
@@ -1578,6 +1692,7 @@
           username: settings.ssh_username,
           auth_type: settings.auth_type || "password",
           password_env: settings.password_env || "KERNEL_AGENT_SSH_PASSWORD",
+          key_path: settings.auth_type === "key" ? settings.key_path : null,
           remote_workspace: settings.remote_workspace,
         },
         llm: {
@@ -1872,36 +1987,46 @@
     }
 
     function renderHardwareEditor() {
-      const hardware = state.hardware || { fields: {} };
+      const hardware = state.resolvedHardware || state.hardware || { fields: {} };
       const detectedFields = hardware.fields || {};
       const gpuModel = el.v2GpuModel.value.trim();
       const rows = HARDWARE_FIELD_NAMES.map((field) => {
         const detected = detectedFields[field] || {};
         const userTarget = field === "target_name" && gpuModel;
-        const value = userTarget ? gpuModel : pick(detected.value, field === "target_name" ? gpuModel : "", "");
-        const source = userTarget ? "user_input" : pick(detected.source, value ? "user_input" : "unknown");
-        const confidence = userTarget ? "medium" : pick(detected.confidence, value ? "medium" : "unknown");
+        const override = state.hardwareOverrides[field];
+        const value = override !== undefined ? override : (userTarget ? gpuModel : pick(detected.value, field === "target_name" ? gpuModel : "", ""));
+        const source = override !== undefined ? "用户修改" : (userTarget ? "user_input" : pick(detected.source, value ? "user_input" : "unknown"));
+        const confidence = override !== undefined ? "high" : (userTarget ? "medium" : pick(detected.confidence, value ? "medium" : "unknown"));
         const notes = userTarget ? "from V2 GPU model input" : pick(detected.notes, value ? "from V2 form input" : "not available yet");
-        return { field, value, source, confidence, notes };
+        return { field, value, unit: unitForHardwareField(field), source, confidence, modified: override !== undefined, notes };
       });
       el.v2HardwareEditor.innerHTML = `<table>
-        <thead><tr><th>字段</th><th>自动补全值</th><th>source</th><th>confidence</th><th>用户覆盖</th><th>说明</th></tr></thead>
+        <thead><tr><th>字段</th><th>value</th><th>unit</th><th>source</th><th>confidence</th><th>状态</th></tr></thead>
         <tbody>
           ${rows.map((row) => `<tr>
             <td>${escapeHtml(row.field)}</td>
-            <td>${escapeHtml(display(row.value))}</td>
+            <td><input data-hardware-override="${escapeHtml(row.field)}" value="${escapeHtml(display(row.value) === "waiting" ? "" : display(row.value))}" placeholder="unavailable"></td>
+            <td>${escapeHtml(row.unit)}</td>
             <td>${escapeHtml(display(row.source))}</td>
             <td>${escapeHtml(display(row.confidence))}</td>
-            <td><input data-hardware-override="${escapeHtml(row.field)}" value="${escapeHtml(readHardwareOverride(row.field))}" placeholder="可选"></td>
-            <td>${escapeHtml(display(row.notes))}</td>
+            <td>${row.modified ? `<span class="badge best">用户修改</span>` : `<span class="badge warn">自动补全</span>`}</td>
           </tr>`).join("")}
         </tbody>
       </table>`;
+      el.v2HardwareEditor.querySelectorAll("[data-hardware-override]").forEach((input) => {
+        input.addEventListener("change", () => {
+          const field = input.dataset.hardwareOverride;
+          if (!field) return;
+          const value = sanitizeText(input.value.trim());
+          if (value) state.hardwareOverrides[field] = parseRequestValue(value);
+          else delete state.hardwareOverrides[field];
+          renderHardwareEditor();
+        });
+      });
     }
 
     function readHardwareOverride(field) {
-      const existing = document.querySelector(`[data-hardware-override="${CSS.escape(field)}"]`);
-      return existing ? sanitizeText(existing.value) : "";
+      return state.hardwareOverrides[field] === undefined ? "" : String(state.hardwareOverrides[field]);
     }
 
     function readHardwareFields() {
@@ -1926,18 +2051,15 @@
     }
 
     function readHardwareOverrideFields() {
-      const fields = {};
-      for (const field of HARDWARE_FIELD_NAMES) {
-        const override = readHardwareOverride(field);
-        if (!override) continue;
-        fields[field] = {
-          value: parseRequestValue(override),
-          source: "user_override",
-          confidence: "high",
-          notes: "overridden in V2 frontend request",
-        };
-      }
-      return fields;
+      return { ...state.hardwareOverrides };
+    }
+
+    function unitForHardwareField(field) {
+      if (/bytes/i.test(field)) return "bytes";
+      if (/GBps|bandwidth/i.test(field)) return "GB/s";
+      if (/memory_GB/i.test(field)) return "GB";
+      if (/count|threads|registers|warp|wave/i.test(field)) return "count";
+      return "-";
     }
 
     function generateRunRequest() {
@@ -2002,6 +2124,257 @@
       const command = runRequestCommand();
       el.runCommandOutput.value = command;
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(command);
+    }
+
+    async function apiFetch(path, options = {}) {
+      const response = await fetch(path, {
+        method: options.method || "GET",
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        cache: "no-store",
+      });
+      const contentType = response.headers.get("content-type") || "";
+      const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+      if (!response.ok) {
+        const detail = typeof payload === "object" ? (payload.detail || payload.error || JSON.stringify(payload)) : payload;
+        throw new Error(detail || `${response.status} ${response.statusText}`);
+      }
+      return payload;
+    }
+
+    async function resolveHardwareProfile() {
+      el.resolveHardwareBtn.disabled = true;
+      el.resolveHardwareBtn.textContent = "搜索中";
+      try {
+        const payload = await apiFetch("/api/hardware/resolve", {
+          method: "POST",
+          body: {
+            gpu_model: sanitizeText(el.v2GpuModel.value.trim() || "unknown"),
+            backend: "unknown",
+            user_overrides: readHardwareOverrideFields(),
+            allow_llm_lookup: false,
+            allow_web_lookup: false,
+          },
+        });
+        state.resolvedHardware = payload.hardware || null;
+        renderHardwareEditor();
+        addOneShotWarning("硬件参数已由后端解析；低置信度或 unknown 字段请手动确认。");
+      } catch (error) {
+        addOneShotWarning(`硬件参数解析失败：${error.message}`);
+      } finally {
+        el.resolveHardwareBtn.disabled = false;
+        el.resolveHardwareBtn.textContent = "自动搜索硬件参数";
+        renderAlerts();
+      }
+    }
+
+    function buildApiTaskRequest() {
+      const budget = BUDGET_PRESETS[el.v2BudgetMode.value] || BUDGET_PRESETS.standard;
+      const sampleText = sanitizeText(el.v2SampleText.value);
+      const sourceType = el.v2SampleSourceType.value || "inline";
+      const usePath = sourceType === "path" || (sourceType === "upload" && inputValue("v2SamplePath"));
+      const sample = {
+        source_type: usePath ? sourceType : "inline",
+        inline_text: usePath ? null : sampleText,
+        path: usePath ? inputValue("v2SamplePath") : null,
+        entry_file: inputValue("v2EntryFile") || "kernel.py",
+      };
+      return {
+        project_name: inputValue("v2ProjectName") || "web-task",
+        sample,
+        target: {
+          gpu_model: inputValue("v2GpuModel") || "unknown",
+          backend: String(pick(state.hardwareOverrides.backend, state.resolvedHardware?.fields?.backend?.value, "unknown")),
+          user_overrides: readHardwareOverrideFields(),
+          allow_llm_lookup: false,
+          allow_web_lookup: false,
+        },
+        commands: {
+          build_command: inputValue("v2BuildCommand") || "python -m py_compile kernel.py",
+          correctness_command: inputValue("v2CorrectnessCommand") || "python correctness.py",
+          benchmark_command: inputValue("v2BenchmarkCommand") || "python benchmark.py",
+        },
+        budget: {
+          strategy: "rule_based",
+          max_iterations: budget.max_iterations,
+          candidates_per_iteration: budget.candidates_per_iteration,
+          timeout_seconds: 60,
+          objective: "latency",
+        },
+        profiler: {
+          enabled: true,
+          type: "dummy",
+        },
+        patching: {
+          enabled: false,
+          run_controlled_trial: false,
+        },
+      };
+    }
+
+    async function startOptimization() {
+      const request = buildApiTaskRequest();
+      if (request.sample.source_type === "inline" && !request.sample.inline_text) {
+        addOneShotWarning("请先输入或上传 sample；不会提交空任务。");
+        renderAlerts();
+        return;
+      }
+      el.startOptimizationBtn.disabled = true;
+      el.startOptimizationBtn.textContent = "提交中";
+      renderTaskWaiting("正在调用 POST /api/tasks，等待后端返回 task_id。");
+      try {
+        const payload = await apiFetch("/api/tasks", { method: "POST", body: request });
+        state.activeTaskId = payload.task_id;
+        state.task = payload.task || null;
+        state.taskEvents = state.task?.events || [];
+        state.taskResults = null;
+        el.cancelTaskBtn.disabled = false;
+        renderTaskDetail();
+        activateView("startView");
+        startTaskPolling();
+      } catch (error) {
+        el.taskStatus.textContent = "failed";
+        el.taskDetailPanel.innerHTML = `<div class="empty">任务启动失败：${escapeHtml(error.message)}</div>`;
+      } finally {
+        el.startOptimizationBtn.disabled = false;
+        el.startOptimizationBtn.textContent = "开始优化";
+      }
+    }
+
+    function startTaskPolling() {
+      stopTaskPolling();
+      pollTask();
+      pollTaskEvents();
+      state.taskPollTimer = window.setInterval(pollTask, 2500);
+      state.eventPollTimer = window.setInterval(pollTaskEvents, 2000);
+    }
+
+    function stopTaskPolling() {
+      if (state.taskPollTimer) window.clearInterval(state.taskPollTimer);
+      if (state.eventPollTimer) window.clearInterval(state.eventPollTimer);
+      state.taskPollTimer = null;
+      state.eventPollTimer = null;
+    }
+
+    async function pollTask() {
+      if (!state.activeTaskId) return;
+      try {
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}`);
+        state.task = payload.task;
+        renderTaskDetail();
+        if (["completed", "failed", "cancelled"].includes(state.task.status)) {
+          stopTaskPolling();
+          el.cancelTaskBtn.disabled = true;
+          await refreshTaskResults();
+        }
+      } catch (error) {
+        el.taskStatus.textContent = "failed";
+        el.taskDetailPanel.innerHTML = `<div class="empty">读取任务状态失败：${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function pollTaskEvents() {
+      if (!state.activeTaskId) return;
+      try {
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/events`);
+        state.taskEvents = payload.events || [];
+        renderTaskDetail();
+      } catch (error) {
+        addOneShotWarning(`读取任务事件失败：${error.message}`);
+        renderAlerts();
+      }
+    }
+
+    async function cancelActiveTask() {
+      if (!state.activeTaskId) return;
+      el.cancelTaskBtn.disabled = true;
+      try {
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/cancel`, { method: "POST" });
+        state.task = payload.task;
+        renderTaskDetail();
+      } catch (error) {
+        addOneShotWarning(`取消任务失败：${error.message}`);
+        el.cancelTaskBtn.disabled = false;
+        renderAlerts();
+      }
+    }
+
+    async function refreshTaskResults() {
+      if (!state.activeTaskId) {
+        el.apiResultsStatus.textContent = "waiting";
+        el.apiResultsPanel.innerHTML = `<div class="empty">等待任务结果：请先开始优化。</div>`;
+        return;
+      }
+      el.apiResultsStatus.textContent = "读取中";
+      try {
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/results`);
+        state.task = payload.task || state.task;
+        state.taskResults = payload.results || null;
+        renderApiResults();
+        activateView("resultsView");
+      } catch (error) {
+        el.apiResultsStatus.textContent = "failed";
+        el.apiResultsPanel.innerHTML = `<div class="empty">读取任务结果失败：${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    function renderTaskWaiting(message) {
+      el.taskStatus.textContent = "waiting";
+      el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+    }
+
+    function renderTaskDetail() {
+      const task = state.task;
+      if (!task) {
+        renderTaskWaiting("等待任务启动。");
+        return;
+      }
+      const latestEvent = state.taskEvents[state.taskEvents.length - 1] || task.events?.[task.events.length - 1] || null;
+      const summary = state.taskResults?.summary || [];
+      const best = state.taskResults?.best_row || null;
+      const baseline = summary[0] || null;
+      const improvement = state.taskResults?.improvement_percent;
+      el.taskStatus.textContent = task.status || "waiting";
+      el.taskDetailPanel.innerHTML = `
+        <div class="compare-grid">
+          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(latestEvent?.message || task.status))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
+          <article class="result-card"><div class="metric-label">trial 数量</div><div class="metric-main">${summary.length ? summary.length : "waiting"}</div><div class="kv"><div>workspace</div><div>${escapeHtml(display(task.workspace))}</div><div>results</div><div>${escapeHtml(display(task.results_dir))}</div></div></article>
+          <article class="result-card"><div class="metric-label">提升比例</div><div class="metric-main ${numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${improvement === null || improvement === undefined ? "waiting" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>baseline</div><div>${escapeHtml(display(baseline?.objective_value ?? baseline?.latency))}</div><div>best</div><div>${escapeHtml(display(best?.objective_value ?? best?.latency))}</div></div></article>
+        </div>
+        ${task.error ? `<div class="empty">失败原因：${escapeHtml(task.error)}</div>` : ""}
+        <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${(state.taskEvents || task.events || []).slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(event.type))}</td><td>${escapeHtml(display(event.message))}</td></tr>`).join("") || `<tr><td colspan="3">等待日志事件</td></tr>`}</tbody></table></div>
+      `;
+    }
+
+    function renderApiResults() {
+      const results = state.taskResults;
+      if (!results) {
+        el.apiResultsStatus.textContent = "waiting";
+        el.apiResultsPanel.innerHTML = `<div class="empty">等待结果文件。</div>`;
+        return;
+      }
+      el.apiResultsStatus.textContent = state.task?.status || "已读取";
+      el.downloadBestKernelBtn.disabled = !results.best_kernel;
+      el.downloadReportBtn.disabled = !results.report;
+      const summary = Array.isArray(results.summary) ? results.summary : [];
+      el.apiResultsPanel.innerHTML = `
+        <div class="compare-grid">
+          <article class="result-card"><div class="metric-label">best kernel</div><pre>${escapeHtml(results.best_kernel || "等待结果文件：best_kernel.py")}</pre></article>
+          <article class="result-card"><div class="metric-label">best config</div><pre>${escapeHtml(results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "等待结果文件：best_config.yaml")}</pre></article>
+          <article class="result-card"><div class="metric-label">提升比例</div><div class="metric-main">${results.improvement_percent === null || results.improvement_percent === undefined ? "waiting" : `${formatNumber(results.improvement_percent)}%`}</div></article>
+        </div>
+        <h3>summary</h3>
+        <div class="table-wrap">${summary.length ? `<table><thead><tr>${Object.keys(summary[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${summary.map((row) => `<tr>${Object.keys(summary[0]).map((key) => `<td>${escapeHtml(display(row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录：summary.csv 尚未返回。</div>`}</div>
+        <h3>failed cases</h3>
+        <div class="empty">等待结果文件或暂无记录：当前结果 API 未返回 failed cases 明细。</div>
+        <h3>report</h3>
+        <pre>${escapeHtml(results.report || "等待结果文件：report.md")}</pre>
+      `;
+    }
+
+    function downloadTaskArtifact(kind) {
+      if (!state.activeTaskId) return;
+      window.location.href = `/api/tasks/${encodeURIComponent(state.activeTaskId)}/download/${kind}`;
     }
 
     function downloadTextFile(filename, body, type) {
@@ -2370,7 +2743,7 @@
         addAlert("warn", `以下结果文件仍在 waiting：<ul class="waiting-list">${list}</ul>通常表示后端尚未跑完，或选择的不是 workspace/results/。`);
       }
       for (const warning of state.warnings) addAlert("warn", escapeHtml(warning));
-      if (!state.missing.length && !state.warnings.length) addAlert("ok", "已读取本地结果文件。前端只读结果文件，不执行命令。");
+      if (!state.missing.length && !state.warnings.length) addAlert("ok", "已读取本地结果文件。高级文件模式只读结果文件。");
     }
 
     function renderCompare(data) {
@@ -2496,6 +2869,14 @@
       const text = displayStatus(row?.status);
       const kind = isSuccess(row) ? "ok" : (text === "waiting" ? "warn" : "bad");
       return `<span class="badge ${kind}">${escapeHtml(text)}</span>`;
+    }
+
+    function taskStatusBadge(status) {
+      const text = display(status);
+      const normalized = text.toLowerCase();
+      const ok = ["completed", "success", "done"].includes(normalized);
+      const warn = ["pending", "running", "waiting", "cancelled"].includes(normalized);
+      return `<span class="badge ${ok ? "ok" : warn ? "warn" : "bad"}">${escapeHtml(text)}</span>`;
     }
 
     function displayStatus(status) {
