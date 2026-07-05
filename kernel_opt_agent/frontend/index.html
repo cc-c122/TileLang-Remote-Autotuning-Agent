@@ -1431,7 +1431,7 @@
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
-    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, hardware: null, resolvedHardware: null, hardwareOverrides: {}, settings: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskPollTimer: null, eventPollTimer: null };
+    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskPollTimer: null, eventPollTimer: null };
     const el = {
       alerts: document.getElementById("alerts"),
       compareGrid: document.getElementById("compareGrid"),
@@ -1987,6 +1987,10 @@
     }
 
     function renderHardwareEditor() {
+      if (state.hardwareResolveError) {
+        el.v2HardwareEditor.innerHTML = `<div class="empty">硬件参数解析失败：${escapeHtml(state.hardwareResolveError)}</div>`;
+        return;
+      }
       const hardware = state.resolvedHardware || state.hardware || { fields: {} };
       const detectedFields = hardware.fields || {};
       const gpuModel = el.v2GpuModel.value.trim();
@@ -2157,9 +2161,13 @@
           },
         });
         state.resolvedHardware = payload.hardware || null;
+        state.hardwareResolveError = "";
         renderHardwareEditor();
         addOneShotWarning("硬件参数已由后端解析；低置信度或 unknown 字段请手动确认。");
       } catch (error) {
+        state.resolvedHardware = null;
+        state.hardwareResolveError = error.message;
+        renderHardwareEditor();
         addOneShotWarning(`硬件参数解析失败：${error.message}`);
       } finally {
         el.resolveHardwareBtn.disabled = false;
@@ -2330,16 +2338,16 @@
         return;
       }
       const latestEvent = state.taskEvents[state.taskEvents.length - 1] || task.events?.[task.events.length - 1] || null;
-      const summary = state.taskResults?.summary || [];
-      const best = state.taskResults?.best_row || null;
+      const summary = state.taskResults?.summary_table || state.taskResults?.summary || [];
+      const best = state.taskResults?.best_row || state.task?.best_row || null;
       const baseline = summary[0] || null;
-      const improvement = state.taskResults?.improvement_percent;
+      const improvement = pick(state.task?.improvement_percent, state.taskResults?.improvement_percent);
       el.taskStatus.textContent = task.status || "waiting";
       el.taskDetailPanel.innerHTML = `
         <div class="compare-grid">
-          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(latestEvent?.message || task.status))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
-          <article class="result-card"><div class="metric-label">trial 数量</div><div class="metric-main">${summary.length ? summary.length : "waiting"}</div><div class="kv"><div>workspace</div><div>${escapeHtml(display(task.workspace))}</div><div>results</div><div>${escapeHtml(display(task.results_dir))}</div></div></article>
-          <article class="result-card"><div class="metric-label">提升比例</div><div class="metric-main ${numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${improvement === null || improvement === undefined ? "waiting" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>baseline</div><div>${escapeHtml(display(baseline?.objective_value ?? baseline?.latency))}</div><div>best</div><div>${escapeHtml(display(best?.objective_value ?? best?.latency))}</div></div></article>
+          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(task.current_stage || latestEvent?.type || task.status))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div><div>message</div><div>${escapeHtml(display(task.latest_message || latestEvent?.message))}</div></div></article>
+          <article class="result-card"><div class="metric-label">trial 数量</div><div class="metric-main">${display(pick(task.total_trials, summary.length || null))}</div><div class="kv"><div>iteration</div><div>${escapeHtml(display(task.current_iteration))}</div><div>results</div><div>${escapeHtml(display(task.results_dir))}</div></div></article>
+          <article class="result-card"><div class="metric-label">提升比例</div><div class="metric-main ${numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${improvement === null || improvement === undefined ? "waiting" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>baseline</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.objective_value, baseline?.latency)))}</div><div>best</div><div>${escapeHtml(display(pick(task.best_latency, best?.objective_value, best?.latency)))}</div></div></article>
         </div>
         ${task.error ? `<div class="empty">失败原因：${escapeHtml(task.error)}</div>` : ""}
         <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${(state.taskEvents || task.events || []).slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(event.type))}</td><td>${escapeHtml(display(event.message))}</td></tr>`).join("") || `<tr><td colspan="3">等待日志事件</td></tr>`}</tbody></table></div>
@@ -2354,9 +2362,11 @@
         return;
       }
       el.apiResultsStatus.textContent = state.task?.status || "已读取";
+      const reportMarkdown = pick(results.report_markdown, results.report);
       el.downloadBestKernelBtn.disabled = !results.best_kernel;
-      el.downloadReportBtn.disabled = !results.report;
-      const summary = Array.isArray(results.summary) ? results.summary : [];
+      el.downloadReportBtn.disabled = !reportMarkdown;
+      const summary = Array.isArray(results.summary_table) ? results.summary_table : (Array.isArray(results.summary) ? results.summary : []);
+      const failedCases = Array.isArray(results.failed_cases) ? results.failed_cases : [];
       el.apiResultsPanel.innerHTML = `
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">best kernel</div><pre>${escapeHtml(results.best_kernel || "等待结果文件：best_kernel.py")}</pre></article>
@@ -2366,9 +2376,9 @@
         <h3>summary</h3>
         <div class="table-wrap">${summary.length ? `<table><thead><tr>${Object.keys(summary[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${summary.map((row) => `<tr>${Object.keys(summary[0]).map((key) => `<td>${escapeHtml(display(row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录：summary.csv 尚未返回。</div>`}</div>
         <h3>failed cases</h3>
-        <div class="empty">等待结果文件或暂无记录：当前结果 API 未返回 failed cases 明细。</div>
+        <div class="table-wrap">${failedCases.length ? `<table><thead><tr>${Object.keys(failedCases[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${failedCases.map((row) => `<tr>${Object.keys(failedCases[0]).map((key) => `<td>${escapeHtml(display(typeof row[key] === "object" ? JSON.stringify(redactObject(row[key])) : row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录：failed_cases.jsonl 为空或尚未返回。</div>`}</div>
         <h3>report</h3>
-        <pre>${escapeHtml(results.report || "等待结果文件：report.md")}</pre>
+        <pre>${escapeHtml(reportMarkdown || "等待结果文件：report.md")}</pre>
       `;
     }
 
