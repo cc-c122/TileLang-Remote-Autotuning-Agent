@@ -2280,8 +2280,8 @@
 
     function patchStatusBadge(row) {
       const status = patchStatus(row) || "waiting";
-      const ok = ["pass", "passed", "success", "accepted", "best", "improved"].includes(status);
-      const warn = ["neutral", "regressed", "rollback", "rolled_back", "not_applicable", "skipped"].includes(status);
+      const ok = ["pass", "passed", "success", "accepted", "best", "improved", "benchmark_ok"].includes(status);
+      const warn = ["neutral", "regressed", "benchmark_regressed", "rollback", "rolled_back", "not_applicable", "skipped"].includes(status);
       return `<span class="badge ${ok ? "ok" : warn ? "warn" : "bad"}">${escapeHtml(status)}</span>`;
     }
 
