@@ -105,6 +105,7 @@ class ProfilerConfig(BaseModel):
 
 class PatchingConfig(BaseModel):
     enabled: bool = False
+    run_controlled_trial: bool = False
 
 
 class AppConfig(BaseModel):

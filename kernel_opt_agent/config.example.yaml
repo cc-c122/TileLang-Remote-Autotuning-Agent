@@ -51,6 +51,10 @@ metrics:
   tflops_regex: "tflops\\s*[:=]\\s*([0-9.]+)"
   bandwidth_regex: "bandwidth\\s*[:=]\\s*([0-9.]+)"
 
+patching:
+  enabled: false
+  run_controlled_trial: false
+
 constraints:
   max_shared_memory: 98304
   max_registers: 255
@@ -64,4 +68,3 @@ constraints:
     - "apt remove"
     - "mkfs"
     - "dd if="
-

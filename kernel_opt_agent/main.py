@@ -19,6 +19,7 @@ from kernel_opt_agent.diagnosis import EvidenceBundle, diagnose_bottlenecks
 from kernel_opt_agent.hardware.detector import detect_hardware
 from kernel_opt_agent.hardware.hardware_info import HardwareInfo
 from kernel_opt_agent.kernel.variant_generator import VariantGenerator
+from kernel_opt_agent.patcher import PatchProposal, PatchTrial, find_patch_regions, run_patch_trial
 from kernel_opt_agent.profiler.base import BaseProfiler, ProfilerResult
 from kernel_opt_agent.profiler.dummy_profiler import DummyProfiler
 from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
@@ -130,6 +131,113 @@ def hardware_fields(hardware_info: HardwareInfo | None) -> dict[str, Any]:
     return hardware_info.to_dict().get("fields", {})
 
 
+def _metrics_for_patch_trial(metrics: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "latency_ms": metrics.get("latency"),
+        "tflops": metrics.get("tflops"),
+        "bandwidth": metrics.get("bandwidth"),
+    }
+
+
+def _controlled_patch_proposal(target_path: Path) -> tuple[PatchProposal | None, str | None]:
+    source_text = target_path.read_text(encoding="utf-8")
+    if "BEGIN_AGENT_PATCH" not in source_text:
+        return None, "no patch marker"
+    try:
+        regions = find_patch_regions(source_text)
+    except Exception as exc:
+        return None, str(exc)
+    by_name = {region.name: region for region in regions}
+    if "compute" not in by_name:
+        return PatchProposal("improve_thread_mapping", "compute", "rule-based fixture", "no expected change", "low", "pass\n"), None
+    region = by_name["compute"]
+    lines = source_text.splitlines(keepends=True)
+    replacement = "".join(lines[region.body_start_line - 1 : region.body_end_line])
+    body_lines = replacement.splitlines()
+    indent = "    "
+    for line in body_lines:
+        stripped = line.lstrip()
+        if stripped:
+            indent = line[: len(line) - len(stripped)]
+            break
+    replacement = replacement + f"{indent}# controlled_patch_trial: improve_thread_mapping\n"
+    return PatchProposal("improve_thread_mapping", "compute", "rule-based fixture", "no expected change", "low", replacement), None
+
+
+def maybe_run_controlled_patch_trial(
+    config: AppConfig,
+    db: ExperimentDB,
+    record: dict[str, Any],
+    paths: dict[str, Path],
+    runner: Any,
+    metrics_data: dict[str, Any],
+) -> None:
+    if not (config.patching.enabled and config.patching.run_controlled_trial):
+        return
+    if db.patch_trials_path.exists() and db.patch_trials_path.read_text(encoding="utf-8").strip():
+        return
+    target_path = paths.get("kernel")
+    trial_dir = paths.get("trial_dir")
+    if not target_path or not trial_dir or not target_path.exists():
+        return
+    proposal, setup_error = _controlled_patch_proposal(target_path)
+    if proposal is None:
+        if setup_error == "no patch marker":
+            return
+        trial = PatchTrial(
+            trial_id=f"{record['trial_id']}:patch",
+            patch_id=f"{record['config_hash']}:patch",
+            optimization_name="improve_thread_mapping",
+            target_region="compute",
+            hypothesis="rule-based fixture",
+            expected_improvement="no expected change",
+            risk="low",
+            status="validation_failed",
+            metrics_before=_metrics_for_patch_trial(metrics_data),
+            rollback_available=False,
+            error=setup_error,
+        )
+        db.append_patch_trial(trial)
+        return
+    trial = PatchTrial(
+        trial_id=f"{record['trial_id']}:patch",
+        patch_id=f"{record['config_hash']}:patch",
+        optimization_name=proposal.optimization_name,
+        target_region=proposal.target_region,
+        hypothesis=proposal.hypothesis,
+        expected_improvement=proposal.expected_improvement,
+        risk=proposal.risk,
+        metrics_before=_metrics_for_patch_trial(metrics_data),
+    )
+    try:
+        result = run_patch_trial(
+            trial,
+            target_path,
+            trial_dir,
+            proposal,
+            config.kernel.build_command,
+            config.kernel.correctness_command,
+            config.kernel.run_command,
+            runner,
+            config.search.timeout_seconds,
+        )
+    except Exception as exc:
+        result = PatchTrial(
+            trial_id=trial.trial_id,
+            patch_id=trial.patch_id,
+            optimization_name=trial.optimization_name,
+            target_region=trial.target_region,
+            hypothesis=trial.hypothesis,
+            expected_improvement=trial.expected_improvement,
+            risk=trial.risk,
+            status="validation_failed",
+            metrics_before=trial.metrics_before,
+            rollback_available=False,
+            error=str(exc),
+        )
+    db.append_patch_trial(result)
+
+
 def run_trial(
     config: AppConfig,
     db: ExperimentDB,
@@ -211,17 +319,6 @@ def run_trial(
         status = runner_exception_category(config, str(exc))
         error = {"category": status, "message": str(exc)}
         stderr_all.append(str(exc))
-    finally:
-        if isinstance(runner, SSHRunner):
-            try:
-                runner.download_artifacts(RESULTS_DIR / "remote_artifacts")
-            except Exception as exc:
-                stderr_all.append(f"artifact download failed: {exc}")
-        if hasattr(runner, "close"):
-            try:
-                runner.close()
-            except Exception:
-                pass
 
     profiler_record, profiler_result = collect_profiler_result(config, paths, benchmark_stdout, benchmark_stderr, compile_log)
     source_trial_id = f"{run_id}:{label}"
@@ -261,6 +358,18 @@ def run_trial(
         "error": error,
         "timestamps": {"started": started, "finished": datetime.utcnow().isoformat() + "Z"},
     }
+    if runner is not None:
+        maybe_run_controlled_patch_trial(config, db, record, paths, runner, metrics_data)
+    if isinstance(runner, SSHRunner):
+        try:
+            runner.download_artifacts(RESULTS_DIR / "remote_artifacts")
+        except Exception as exc:
+            stderr_all.append(f"artifact download failed: {exc}")
+    if hasattr(runner, "close"):
+        try:
+            runner.close()
+        except Exception:
+            pass
     db.append(record)
     return record
 
