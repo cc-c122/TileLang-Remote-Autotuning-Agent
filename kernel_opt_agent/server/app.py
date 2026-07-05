@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -167,8 +168,21 @@ def resolve_hardware(request: HardwareResolveRequest) -> dict[str, Any]:
     return info.to_dict()
 
 
+def _redact_connection_error(message: str, settings: SettingsPayload) -> str:
+    redacted = message
+    for env_name in (settings.ssh.password_env, settings.llm.api_key_env):
+        if env_name:
+            value = os.environ.get(env_name)
+            if value:
+                redacted = redacted.replace(value, "<redacted:secret>")
+    if settings.ssh.key_path:
+        redacted = redacted.replace(settings.ssh.key_path, "<redacted:key_path>")
+        redacted = redacted.replace(os.path.expanduser(settings.ssh.key_path), "<redacted:key_path>")
+    return redacted
+
+
 manager = TaskManager(TASKS_ROOT)
-worker = JobWorker(manager)
+worker = JobWorker(manager, SETTINGS_PATH)
 settings_store = SettingsStore(SETTINGS_PATH)
 app = FastAPI(title="TileLang Remote Autotuning Agent API")
 
@@ -186,6 +200,54 @@ def save_settings(payload: SettingsPayload) -> dict[str, Any]:
 @app.get("/api/settings")
 def get_settings() -> dict[str, Any]:
     return {"ok": True, "settings": settings_store.load()}
+
+
+@app.post("/api/settings/test-connection")
+def test_connection() -> dict[str, Any]:
+    settings = settings_store.load_raw()
+    ssh = settings.ssh
+    try:
+        if not ssh.host.strip() or not ssh.username.strip():
+            raise ValueError("SSH host and username are required")
+        if ssh.auth_type == "password":
+            if not ssh.password_env:
+                raise ValueError("password_env is required for SSH password auth")
+            if not os.environ.get(ssh.password_env):
+                raise ValueError(f"SSH password env var is not set: {ssh.password_env}")
+        if ssh.auth_type == "key" and not ssh.key_path:
+            raise ValueError("key_path is required for SSH key auth")
+        try:
+            import paramiko
+        except ImportError as exc:
+            raise RuntimeError("SSH test requires optional dependency 'paramiko'") from exc
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            if ssh.auth_type == "password":
+                client.connect(
+                    hostname=ssh.host,
+                    port=ssh.port,
+                    username=ssh.username,
+                    password=os.environ[ssh.password_env or ""],
+                    timeout=10,
+                    look_for_keys=False,
+                    allow_agent=False,
+                )
+            else:
+                client.connect(
+                    hostname=ssh.host,
+                    port=ssh.port,
+                    username=ssh.username,
+                    key_filename=os.path.expanduser(ssh.key_path or ""),
+                    timeout=10,
+                    look_for_keys=True,
+                    allow_agent=True,
+                )
+        finally:
+            client.close()
+        return {"ok": True, "success": True, "failure": False, "error_message": None, "settings": settings_store.load()}
+    except Exception as exc:
+        return {"ok": True, "success": False, "failure": True, "error_message": _redact_connection_error(str(exc), settings), "settings": settings_store.load()}
 
 
 @app.post("/api/hardware/resolve")

@@ -90,6 +90,12 @@ class PatchingPayload(BaseModel):
     run_controlled_trial: bool = False
 
 
+class RunnerPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["local", "ssh"] = "local"
+
+
 class HardwareTargetPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -110,6 +116,7 @@ class TaskCreateRequest(BaseModel):
     budget: BudgetPayload = Field(default_factory=BudgetPayload)
     profiler: ProfilerPayload = Field(default_factory=ProfilerPayload)
     patching: PatchingPayload = Field(default_factory=PatchingPayload)
+    runner: RunnerPayload = Field(default_factory=RunnerPayload)
 
 
 class HardwareResolveRequest(BaseModel):

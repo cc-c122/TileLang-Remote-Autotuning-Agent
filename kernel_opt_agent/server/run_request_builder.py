@@ -9,7 +9,7 @@ import yaml
 from kernel_opt_agent.config_model import AppConfig, safe_config_dict
 from kernel_opt_agent.run_request import RunRequest, app_config_from_run_request
 
-from .models import TaskCreateRequest
+from .models import SettingsPayload, TaskCreateRequest
 
 
 def _assert_within(child: Path, parent: Path) -> None:
@@ -69,7 +69,7 @@ def build_internal_run_request(request: TaskCreateRequest, task_workspace: Path)
             "gpu_model": request.target.gpu_model,
             "backend": request.target.backend,
         },
-        "settings_ref": {"use_saved_settings": False},
+        "settings_ref": {"use_saved_settings": request.runner.type == "ssh"},
         "hardware_overrides": {"fields": request.target.user_overrides},
         "search": {
             "strategy": request.budget.strategy,
@@ -86,11 +86,38 @@ def build_internal_run_request(request: TaskCreateRequest, task_workspace: Path)
     return run_request
 
 
-def build_effective_config(request: TaskCreateRequest, task_workspace: Path) -> AppConfig:
+def _load_server_settings(settings_path: Path | None) -> SettingsPayload:
+    if settings_path is None or not settings_path.exists():
+        return SettingsPayload()
+    raw = yaml.safe_load(settings_path.read_text(encoding="utf-8")) or {}
+    return SettingsPayload.model_validate(raw)
+
+
+def _apply_server_settings(config: AppConfig, settings: SettingsPayload) -> None:
+    config.remote.host = settings.ssh.host
+    config.remote.port = settings.ssh.port
+    config.remote.username = settings.ssh.username
+    config.remote.auth_type = settings.ssh.auth_type
+    config.remote.password_env = settings.ssh.password_env
+    config.remote.key_path = settings.ssh.key_path
+    config.remote.remote_workspace = settings.ssh.remote_workspace
+    config.llm.provider = "openai_compatible"
+    config.llm.base_url = settings.llm.base_url
+    config.llm.model = settings.llm.model
+    config.llm.api_key_env = settings.llm.api_key_env
+
+
+def build_effective_config(request: TaskCreateRequest, task_workspace: Path, settings_path: Path | None = None) -> AppConfig:
     run_request = build_internal_run_request(request, task_workspace)
+    run_request.settings_ref.use_saved_settings = False
     config = app_config_from_run_request(run_request)
-    config.runner.type = "local"
-    config.hardware_detection.remote_detection = False
-    config.hardware_detection.safe_probe = False
+    config.runner.type = request.runner.type
+    if request.runner.type == "ssh":
+        _apply_server_settings(config, _load_server_settings(settings_path))
+        config.hardware_detection.remote_detection = True
+        config.hardware_detection.safe_probe = True
+    else:
+        config.hardware_detection.remote_detection = False
+        config.hardware_detection.safe_probe = False
     (task_workspace / "effective_config.yaml").write_text(yaml.safe_dump(safe_config_dict(config), sort_keys=True), encoding="utf-8")
     return config

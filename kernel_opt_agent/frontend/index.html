@@ -1123,6 +1123,13 @@
                 </div>
                 <div class="form-grid three" style="margin-top:12px">
                   <div class="field">
+                    <label for="v2RunnerType">运行方式</label>
+                    <select id="v2RunnerType">
+                      <option value="local" selected>local demo</option>
+                      <option value="ssh">remote SSH</option>
+                    </select>
+                  </div>
+                  <div class="field">
                     <label for="v2BudgetMode">优化预算</label>
                     <select id="v2BudgetMode">
                       <option value="quick">快速验证：1 round / 3 candidates / 1 patch</option>
@@ -1208,10 +1215,12 @@
                 <div class="status-grid">
                   <span class="chip" id="passwordEnvStatus">password env：未填写</span>
                   <span class="chip" id="apiKeyEnvStatus">API key env：未填写</span>
+                  <span class="chip" id="connectionStatus">SSH 连接：未测试</span>
                 </div>
                 <div class="save-row">
                   <button id="loadSettingsBtn" class="secondary" type="button">读取后端设置</button>
                   <button id="saveSettingsBtn" type="button">保存设置</button>
+                  <button id="testConnectionBtn" class="secondary" type="button">测试远程连接</button>
                   <button id="downloadSettingsBtn" class="secondary" type="button">下载 settings.yaml</button>
                   <button id="clearSettingsBtn" class="secondary" type="button">清空浏览器设置</button>
                 </div>
@@ -1477,6 +1486,7 @@
       v2EntryFile: document.getElementById("v2EntryFile"),
       v2SampleSourceType: document.getElementById("v2SampleSourceType"),
       v2SamplePath: document.getElementById("v2SamplePath"),
+      v2RunnerType: document.getElementById("v2RunnerType"),
       v2BudgetMode: document.getElementById("v2BudgetMode"),
       v2ProfilerType: document.getElementById("v2ProfilerType"),
       v2SampleFile: document.getElementById("v2SampleFile"),
@@ -1501,11 +1511,13 @@
       runRequestOutput: document.getElementById("runRequestOutput"),
       saveSettingsBtn: document.getElementById("saveSettingsBtn"),
       loadSettingsBtn: document.getElementById("loadSettingsBtn"),
+      testConnectionBtn: document.getElementById("testConnectionBtn"),
       downloadSettingsBtn: document.getElementById("downloadSettingsBtn"),
       clearSettingsBtn: document.getElementById("clearSettingsBtn"),
       settingsOutput: document.getElementById("settingsOutput"),
       passwordEnvStatus: document.getElementById("passwordEnvStatus"),
       apiKeyEnvStatus: document.getElementById("apiKeyEnvStatus"),
+      connectionStatus: document.getElementById("connectionStatus"),
       sshStatus: document.getElementById("sshStatus"),
       llmStatus: document.getElementById("llmStatus"),
     };
@@ -1537,6 +1549,7 @@
     el.copyRunCommandBtn.addEventListener("click", copyRunCommand);
     el.saveSettingsBtn.addEventListener("click", saveSettings);
     el.loadSettingsBtn.addEventListener("click", loadSettingsFromApi);
+    el.testConnectionBtn.addEventListener("click", testRemoteConnection);
     el.downloadSettingsBtn.addEventListener("click", downloadSettings);
     el.clearSettingsBtn.addEventListener("click", clearSettings);
     ["settingSshHost", "settingSshPort", "settingSshUsername", "settingAuthType", "settingPasswordEnv", "settingKeyPath", "settingRemoteWorkspace", "settingLlmBaseUrl", "settingLlmModel", "settingApiKeyEnv"].forEach((id) => {
@@ -1620,6 +1633,34 @@
       updateSettingStatus();
       renderSettingsOutput();
       renderAlerts();
+    }
+
+    async function testRemoteConnection() {
+      if (!state.apiHealthy) {
+        await checkApiHealth();
+        if (!state.apiHealthy) return;
+      }
+      el.testConnectionBtn.disabled = true;
+      el.testConnectionBtn.textContent = "测试中";
+      try {
+        await saveSettings();
+        const payload = await apiFetch("/api/settings/test-connection", { method: "POST" });
+        if (payload.settings) applySettingsPayload(payload.settings);
+        const success = payload.success === true || (payload.ok === true && payload.failure !== true);
+        const message = payload.reason || payload.error_message || "后端未返回原因";
+        el.connectionStatus.className = `chip ${success ? "ok" : "bad"}`;
+        el.connectionStatus.textContent = `SSH 连接：${success ? "成功" : "失败"}`;
+        addOneShotWarning(`${success ? "远程连接测试成功" : "远程连接测试失败"}：${message}`);
+      } catch (error) {
+        el.connectionStatus.className = "chip bad";
+        el.connectionStatus.textContent = "SSH 连接：失败";
+        addOneShotWarning(`远程连接测试失败：${error.message}`);
+      } finally {
+        el.testConnectionBtn.disabled = false;
+        el.testConnectionBtn.textContent = "测试远程连接";
+        updateSettingStatus();
+        renderAlerts();
+      }
     }
 
     function clearSettings() {
@@ -2273,6 +2314,9 @@
           enabled: false,
           run_controlled_trial: false,
         },
+        runner: {
+          type: el.v2RunnerType.value === "ssh" ? "ssh" : "local",
+        },
       };
     }
 
@@ -2282,6 +2326,14 @@
         if (!state.apiHealthy) return;
       }
       const request = buildApiTaskRequest();
+      const remoteBlocker = remoteRunnerBlocker(request.runner.type);
+      if (remoteBlocker) {
+        el.taskStatus.textContent = "waiting";
+        el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(remoteBlocker)}</div>`;
+        addOneShotWarning(remoteBlocker);
+        renderAlerts();
+        return;
+      }
       if (request.sample.source_type === "inline" && !request.sample.inline_text) {
         addOneShotWarning("请先输入或上传 sample；不会提交空任务。");
         renderAlerts();
@@ -2386,6 +2438,21 @@
         el.apiResultsStatus.textContent = "failed";
         el.apiResultsPanel.innerHTML = `<div class="empty">读取任务结果失败：${escapeHtml(error.message)}</div>`;
       }
+    }
+
+    function remoteRunnerBlocker(runnerType) {
+      if (runnerType !== "ssh") return "";
+      const settings = readSettings();
+      if (!settings.ssh_host || !settings.ssh_username || !settings.remote_workspace) {
+        return "remote SSH 需要先填写并保存 SSH host、username 和 remote workspace。";
+      }
+      if (settings.auth_type === "password" && state.settingsEnv.passwordEnvExists !== true) {
+        return "remote SSH 需要后端环境变量中的 SSH password env 已设置；请保存设置后确认 SSH password env 显示“已设置”。";
+      }
+      if (settings.auth_type === "key" && !settings.key_path) {
+        return "remote SSH key 认证需要填写 key path；页面不会读取或显示私钥内容。";
+      }
+      return "";
     }
 
     async function loadTaskList() {

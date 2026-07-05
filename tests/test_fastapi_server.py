@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import time
 import unittest
 from pathlib import Path
 
+import yaml
 from fastapi.testclient import TestClient
 
 from kernel_opt_agent.server.app import app
+from kernel_opt_agent.server.models import TaskCreateRequest
+from kernel_opt_agent.server.run_request_builder import build_effective_config
 
 
 INLINE_KERNEL = """BM = {{BM}}
@@ -128,6 +132,7 @@ class FastApiServerTests(unittest.TestCase):
         self.assertTrue((Path(task["workspace"]) / "run_request.yaml").exists())
         effective = Path(task["workspace"]) / "effective_config.yaml"
         self.assertTrue(effective.exists())
+        self.assertEqual(yaml.safe_load(effective.read_text(encoding="utf-8"))["runner"]["type"], "local")
         self.assertNotIn("password:", effective.read_text(encoding="utf-8").lower())
         self.assertNotIn("api_key:", effective.read_text(encoding="utf-8").lower())
         self.assertTrue(payload["generated_files"]["experiments.jsonl"]["exists"])
@@ -168,6 +173,121 @@ class FastApiServerTests(unittest.TestCase):
         self.assertIn("improvement_percent", listed)
         self.assertNotIn("password", str(listed).lower())
         self.assertNotIn("api_key", str(listed).lower())
+
+    def test_ssh_runner_uses_saved_settings_without_leaking_secrets(self) -> None:
+        request = TaskCreateRequest.model_validate(
+            {
+                "project_name": "api-ssh-demo",
+                "runner": {"type": "ssh"},
+                "sample": {"source_type": "inline", "inline_text": INLINE_KERNEL, "entry_file": "kernel.py"},
+                "commands": {
+                    "build_command": "python -m py_compile kernel.py",
+                    "correctness_command": "python -c \"print('CORRECTNESS_RESULT status=PASS max_error=0 reason=ok')\"",
+                    "benchmark_command": "python -c \"print('BENCHMARK_RESULT latency_ms=1.0 tflops=1.0 bandwidth_gbps=1.0')\"",
+                },
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings_path = root / "server_settings.yaml"
+            settings_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "ssh": {
+                            "host": "ssh.example.invalid",
+                            "port": 32222,
+                            "username": "root",
+                            "auth_type": "password",
+                            "password_env": "KERNEL_AGENT_TEST_SSH_PASSWORD",
+                            "key_path": None,
+                            "remote_workspace": "/tmp/kernel-agent-web",
+                        },
+                        "llm": {
+                            "provider": "openai_compatible",
+                            "base_url": "https://llm.example.invalid/v1",
+                            "model": "demo-model",
+                            "api_key_env": "KERNEL_AGENT_TEST_OPENAI_KEY",
+                        },
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            config = build_effective_config(request, root / "task", settings_path)
+            self.assertEqual(config.runner.type, "ssh")
+            self.assertEqual(config.remote.host, "ssh.example.invalid")
+            self.assertEqual(config.remote.password_env, "KERNEL_AGENT_TEST_SSH_PASSWORD")
+            self.assertEqual(config.llm.api_key_env, "KERNEL_AGENT_TEST_OPENAI_KEY")
+            effective = yaml.safe_load((root / "task" / "effective_config.yaml").read_text(encoding="utf-8"))
+            self.assertEqual(effective["runner"]["type"], "ssh")
+            self.assertEqual(effective["remote"]["password_env"], "KERNEL_AGENT_TEST_SSH_PASSWORD")
+            self.assertNotIn("KERNEL_AGENT_TEST_OPENAI_KEY_VALUE", str(effective))
+            self.assertNotIn("password:", (root / "task" / "effective_config.yaml").read_text(encoding="utf-8").lower())
+            self.assertNotIn("api_key:", (root / "task" / "effective_config.yaml").read_text(encoding="utf-8").lower())
+
+    def test_ssh_key_path_is_redacted_in_effective_config(self) -> None:
+        request = TaskCreateRequest.model_validate(
+            {
+                "project_name": "api-ssh-key-demo",
+                "runner": {"type": "ssh"},
+                "sample": {"source_type": "inline", "inline_text": INLINE_KERNEL, "entry_file": "kernel.py"},
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings_path = root / "server_settings.yaml"
+            settings_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "ssh": {
+                            "host": "ssh.example.invalid",
+                            "port": 22,
+                            "username": "root",
+                            "auth_type": "key",
+                            "password_env": None,
+                            "key_path": "C:/Users/example/.ssh/id_ed25519",
+                            "remote_workspace": "/tmp/kernel-agent-web",
+                        }
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            config = build_effective_config(request, root / "task", settings_path)
+            self.assertEqual(config.runner.type, "ssh")
+            effective_text = (root / "task" / "effective_config.yaml").read_text(encoding="utf-8")
+            effective = yaml.safe_load(effective_text)
+            self.assertEqual(effective["remote"]["key_path"], "<redacted:key_path>")
+            self.assertNotIn("id_ed25519", effective_text)
+
+    def test_settings_test_connection_missing_password_env_fails_without_secret(self) -> None:
+        old_password = os.environ.pop("KERNEL_AGENT_TEST_MISSING_PASSWORD", None)
+        try:
+            saved = self.client.post(
+                "/api/settings",
+                json={
+                    "ssh": {
+                        "host": "ssh.example.invalid",
+                        "port": 22,
+                        "username": "root",
+                        "auth_type": "password",
+                        "password_env": "KERNEL_AGENT_TEST_MISSING_PASSWORD",
+                        "remote_workspace": "/tmp/kernel-agent-web",
+                    }
+                },
+            )
+            self.assertEqual(saved.status_code, 200)
+            response = self.client.post("/api/settings/test-connection")
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertTrue(body["ok"])
+            self.assertFalse(body["success"])
+            self.assertTrue(body["failure"])
+            self.assertIn("env var is not set", body["error_message"])
+            self.assertNotIn("real-password", str(body).lower())
+        finally:
+            if old_password is not None:
+                os.environ["KERNEL_AGENT_TEST_MISSING_PASSWORD"] = old_password
 
     def test_cancel_marks_task_cancelled_and_partial_results_remain_readable(self) -> None:
         request = {

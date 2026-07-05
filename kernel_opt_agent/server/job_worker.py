@@ -14,8 +14,9 @@ WORKER_LOCK = threading.Lock()
 
 
 class JobWorker:
-    def __init__(self, manager: TaskManager):
+    def __init__(self, manager: TaskManager, settings_path: Path | None = None):
         self.manager = manager
+        self.settings_path = settings_path
 
     def submit(self, task_id: str, request: TaskCreateRequest) -> None:
         thread = threading.Thread(target=self._run_task, args=(task_id, request), daemon=True)
@@ -27,7 +28,7 @@ class JobWorker:
         results_dir = Path(task.results_dir)
         generated_dir = workspace / "generated"
         patches_dir = workspace / "patches"
-        self.manager.add_event(task_id, "task_queued", "waiting for local runner slot")
+        self.manager.add_event(task_id, "task_queued", "waiting for runner slot")
         with WORKER_LOCK:
             if self.manager.is_cancel_requested(task_id):
                 self.manager.set_status(task_id, "cancelled")
@@ -54,8 +55,8 @@ class JobWorker:
             "PATCHES_DIR": agent_main.PATCHES_DIR,
         }
         try:
-            config = build_effective_config(request, workspace)
-            self.manager.add_event(task_id, "correctness_started", "starting local correctness and benchmark loop")
+            config = build_effective_config(request, workspace, self.settings_path)
+            self.manager.add_event(task_id, "correctness_started", "starting correctness and benchmark loop")
             self.manager.add_event(task_id, "benchmark_started", "benchmark command will run after correctness passes")
             agent_main.WORKSPACE_ROOT = workspace
             agent_main.RESULTS_DIR = results_dir
@@ -65,7 +66,7 @@ class JobWorker:
             if self.manager.is_cancel_requested(task_id):
                 self.manager.set_status(task_id, "cancelled")
             else:
-                self.manager.add_event(task_id, "trial_completed", "local runner completed trial loop")
+                self.manager.add_event(task_id, "trial_completed", "runner completed trial loop")
                 self.manager.add_event(task_id, "best_updated", "best-seen artifacts generated")
                 self.manager.add_event(task_id, "report_generated", "report.md generated")
                 self.manager.set_status(task_id, "completed")

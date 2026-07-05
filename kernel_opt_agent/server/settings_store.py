@@ -62,3 +62,10 @@ class SettingsStore:
         _reject_plaintext_secrets(raw)
         settings = SettingsPayload.model_validate(raw)
         return _redact(settings.model_dump())
+
+    def load_raw(self) -> SettingsPayload:
+        if not self.path.exists():
+            return SettingsPayload()
+        raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+        _reject_plaintext_secrets(raw)
+        return SettingsPayload.model_validate(raw)
