@@ -147,6 +147,11 @@ V2 当前是文件驱动流程：前端只生成 `run_request.yaml` 和 `setting
 python main.py --run-request run_request.yaml --settings settings.yaml
 ```
 
+当前有两种模式：
+
+- 文件驱动模式：稳定、已冻结。前端只生成文件，后端 CLI 读取 `run_request.yaml` 和 `settings.yaml` 后执行。
+- Web 控制台模式：下一阶段开发中。它可以作为更顺滑的操作入口继续演进，但不替代已冻结的文件驱动契约。
+
 `run_request.yaml` 是单次任务文件，使用 `schema_version: v2.run_request.v1`，包含 sample、GPU 型号、运行命令、搜索预算和 profiler/patching 开关。
 
 `settings.yaml` 是长期设置文件，只保存环境变量名和非密钥连接信息，不能保存 SSH 密码、LLM API Key、token 或私钥内容。示例：
