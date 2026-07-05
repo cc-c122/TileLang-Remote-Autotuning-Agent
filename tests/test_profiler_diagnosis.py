@@ -24,8 +24,9 @@ class ProfilerDiagnosisTests(unittest.TestCase):
 
     def test_no_profiler_keeps_metrics_none(self):
         result = ProfilerResult.empty()
+        self.assertIsNone(result.latency_ms)
         self.assertIsNone(result.latency)
-        self.assertFalse(result.available_metrics["latency"])
+        self.assertFalse(result.available_metrics["latency_ms"])
         diagnoses = diagnose_bottlenecks(EvidenceBundle(result))
         self.assert_diagnosis_shape(diagnoses)
         self.assertTrue(any(item.uncertainty for item in diagnoses))
@@ -34,11 +35,12 @@ class ProfilerDiagnosisTests(unittest.TestCase):
         result = DummyProfiler().collect(
             {"benchmark_stdout": 'BENCHMARK_RESULT latency_ms=1.25 tflops=4.5 bandwidth_gbps=678.0 reason="ok"'}
         )
+        self.assertEqual(result.latency_ms, 1.25)
         self.assertEqual(result.latency, 1.25)
         self.assertEqual(result.tflops, 4.5)
         self.assertEqual(result.estimated_hbm_bandwidth, 678.0)
         self.assertIsNone(result.register_count)
-        self.assertTrue(result.available_metrics["latency"])
+        self.assertTrue(result.available_metrics["latency_ms"])
         self.assertFalse(result.available_metrics["register_count"])
 
     def test_tilelang_profiler_parses_benchmark_and_logs(self):
@@ -64,7 +66,7 @@ class ProfilerDiagnosisTests(unittest.TestCase):
 
     def test_mxmaca_profiler_missing_fields_are_not_fabricated(self):
         result = MxmacaProfiler().collect({"benchmark_stdout": "no metrics here", "profiler_stdout": "TODO"})
-        self.assertIsNone(result.latency)
+        self.assertIsNone(result.latency_ms)
         self.assertIsNone(result.hbm_read_bandwidth)
         self.assertFalse(result.available_metrics["hbm_read_bandwidth"])
         diagnoses = diagnose_bottlenecks(EvidenceBundle(result))
@@ -75,7 +77,7 @@ class ProfilerDiagnosisTests(unittest.TestCase):
         record, result = collect_profiler_result(config, {}, "", "", "")
         self.assertTrue(record["enabled"])
         self.assertIn("unsupported profiler.type", record["error"])
-        self.assertIsNone(result.latency)
+        self.assertIsNone(result.latency_ms)
 
 
 if __name__ == "__main__":

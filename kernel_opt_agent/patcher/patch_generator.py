@@ -28,9 +28,23 @@ def apply_validated_patch(
     target_path: Path,
     proposal: PatchProposal,
     backup_dir: Path,
+    workspace_root: Path,
     allowed_regions: set[str] | None = None,
+    allowed_target: Path | None = None,
 ) -> AppliedPatch:
     target = target_path.resolve()
+    workspace = workspace_root.resolve()
+    backup_root = backup_dir.resolve()
+    try:
+        target.relative_to(workspace)
+    except ValueError as exc:
+        raise ValueError(f"target_path must be inside workspace_root: {target}") from exc
+    try:
+        backup_root.relative_to(workspace)
+    except ValueError as exc:
+        raise ValueError(f"backup_dir must be inside workspace_root: {backup_root}") from exc
+    if allowed_target is not None and target != allowed_target.resolve():
+        raise ValueError(f"target_path is not the allowed target: {target}")
     source_text = target.read_text(encoding="utf-8")
     validation = validate_patch_proposal(source_text, proposal, allowed_regions)
     if not validation.ok:
