@@ -1,0 +1,43 @@
+project_name: controlled-patch-demo
+
+runner:
+  type: local
+
+remote:
+  auth_type: key
+  key_path: ~/.ssh/id_rsa
+
+kernel:
+  sample_path: samples/controlled_patch_demo
+  entry_file: kernel.py
+  build_command: python -m py_compile kernel.py
+  correctness_command: python correctness.py
+  run_command: python benchmark.py
+
+search:
+  strategy: rule_based
+  max_iterations: 1
+  candidates_per_iteration: 1
+  timeout_seconds: 30
+  objective: latency
+  random_seed: 20260701
+
+search_space:
+  BM: [1]
+  BN: [1]
+  BK: [1]
+  NUM_THREADS: [1]
+  NUM_STAGES: [1]
+  VECTOR_WIDTH: [1]
+
+hardware_detection:
+  builtin_profile: false
+  safe_probe: false
+
+profiler:
+  enabled: true
+  type: dummy
+
+patching:
+  enabled: true
+  run_controlled_trial: true
