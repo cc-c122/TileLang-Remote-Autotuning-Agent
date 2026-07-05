@@ -344,9 +344,19 @@ def main() -> None:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--config", help="Path to config.yaml")
     source.add_argument("--run-request", help="Path to V2 run_request.yaml")
-    parser.add_argument("--settings", help="Path to V2 user settings.yaml; only valid with --run-request")
+    source.add_argument("--serve-api", action="store_true", help="Start local HTTP API bridge")
+    parser.add_argument("--settings", help="Path to V2 user settings.yaml; valid with --run-request or --serve-api")
+    parser.add_argument("--api-host", default="127.0.0.1", help="Local API bind host")
+    parser.add_argument("--api-port", type=int, default=8765, help="Local API bind port")
     args = parser.parse_args()
     try:
+        if args.serve_api:
+            from kernel_opt_agent.api.server import create_server
+
+            server = create_server(args.api_host, args.api_port, args.settings) if args.settings else create_server(args.api_host, args.api_port)
+            print(f"local API listening on http://{args.api_host}:{args.api_port}")
+            server.serve_forever()
+            return
         if args.settings and not args.run_request:
             raise ValueError("--settings can only be used together with --run-request")
         if args.run_request:
