@@ -4,6 +4,11 @@ V2 第一批 run request 契约固定为 `schema_version: v2.run_request.v1`。�
 
 V2 的用户体验目标是减少手写配置：用户在前端输入 sample 和 GPU 型号，补齐必要命令后创建任务；后端根据已保存设置和自动补全信息生成 effective config。
 
+当前有两种模式：
+
+- 文件驱动模式：稳定、已冻结。前端只生成 `run_request.yaml` 和 `settings.yaml`，用户再用后端 CLI 执行。
+- Web 控制台模式：下一阶段开发中。它用于探索更完整的交互入口，但不能改变或绕过已冻结的文件驱动契约。
+
 ## 第一次设置 SSH / LLM
 
 用户先在设置页保存远程 SSH 和 LLM 配置。前端可以把设置下载为 `settings.yaml`；run request 里只引用设置，不写明文密码、API key、token 或私钥内容。
