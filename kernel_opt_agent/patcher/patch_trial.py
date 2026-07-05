@@ -9,9 +9,13 @@ from typing import Any
 PATCH_TRIAL_STATUSES = {
     "proposed",
     "applied",
+    "validation_failed",
+    "syntax_failed",
     "build_failed",
     "correctness_failed",
+    "benchmark_failed",
     "benchmark_ok",
+    "benchmark_regressed",
     "rolled_back",
 }
 
