@@ -374,7 +374,10 @@ def run_trial(
     return record
 
 
-def run(config: AppConfig) -> None:
+def run(config: AppConfig, should_cancel=None) -> None:
+    def cancelled() -> bool:
+        return bool(should_cancel and should_cancel())
+
     setup_logging()
     db = ExperimentDB(RESULTS_DIR)
     run_id = time.strftime("%Y%m%d-%H%M%S")
@@ -415,17 +418,24 @@ def run(config: AppConfig) -> None:
     tried.add(config_hash(baseline))
     paths = generator.create_trial(0, 0, baseline)
     logging.info("running baseline")
-    record = run_trial(config, db, run_id, 0, 0, baseline, paths, hardware_info)
-    history.append(record)
-    if record["status"] == "benchmark_ok":
-        best_value = record["objective"]["value"]
+    if not cancelled():
+        record = run_trial(config, db, run_id, 0, 0, baseline, paths, hardware_info)
+        history.append(record)
+        if record["status"] == "benchmark_ok":
+            best_value = record["objective"]["value"]
 
     for iteration in range(1, config.search.max_iterations + 1):
+        if cancelled():
+            logging.info("cancel requested; stopping before iteration %s", iteration)
+            break
         candidates, source = policy.propose(config.search.strategy, config.search.candidates_per_iteration, tried, history)
         logging.info("iteration %s generated %s candidates via %s", iteration, len(candidates), source)
         if not candidates:
             break
         for candidate_id, cand in enumerate(candidates, start=1):
+            if cancelled():
+                logging.info("cancel requested; stopping before candidate %s/%s", iteration, candidate_id)
+                break
             h = config_hash(cand)
             if h in tried:
                 continue
