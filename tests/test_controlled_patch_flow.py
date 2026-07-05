@@ -164,6 +164,9 @@ class ControlledPatchFlowTests(unittest.TestCase):
             self.assertEqual(trials[0]["metrics_after"]["latency_ms"], 5.0)
             self.assertTrue(trials[0]["artifacts"]["rollback"]["verified"])
             self.assertNotIn("controlled_patch_trial", (RESULTS_DIR / "best_kernel.py").read_text(encoding="utf-8"))
+            report = (RESULTS_DIR / "report.md").read_text(encoding="utf-8")
+            self.assertIn("## Patch Trials", report)
+            self.assertIn("benchmark_ok", report)
 
     def test_patch_correctness_failure_rolls_back_original_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

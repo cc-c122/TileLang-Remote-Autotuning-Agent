@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import shutil
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,41 @@ def _hardware_lines(hardware_info: HardwareInfo | None) -> list[str]:
         lines.append(
             f"- {probe.get('probe_name')} {probe.get('param_name')}={probe.get('candidate_value')}: status={probe.get('status')} "
             f"confidence={probe.get('confidence')} inference={probe.get('inference')}"
+        )
+    return lines
+
+
+def _patch_trial_lines(results_dir: Path) -> list[str]:
+    path = results_dir / "patch_trials.jsonl"
+    trials: list[dict[str, Any]] = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                trials.append(json.loads(line))
+            except json.JSONDecodeError:
+                trials.append({"status": "parse_error", "error": "invalid patch_trials.jsonl line"})
+    lines = [
+        "",
+        "## Patch Trials",
+        "",
+        "| Status | Hypothesis | Improvement | Rollback | Error |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    if not trials:
+        lines.append("| none | none | null | none | none |")
+        return lines
+    for trial in trials:
+        rollback = ((trial.get("artifacts") or {}).get("rollback") or {}).get("verified")
+        lines.append(
+            "| {status} | {hypothesis} | {improvement} | {rollback} | {error} |".format(
+                status=trial.get("status"),
+                hypothesis=trial.get("hypothesis") or "none",
+                improvement="null" if trial.get("improvement") is None else trial.get("improvement"),
+                rollback="none" if rollback is None else str(bool(rollback)).lower(),
+                error=trial.get("error") or "none",
+            )
         )
     return lines
 
@@ -126,6 +162,7 @@ def write_final_report(results_dir: Path, records: list[dict[str, Any]], objecti
     report_record = best or baseline
     lines += profiler_metrics_table((report_record or {}).get("profiler") if report_record else None)
     lines += diagnosis_records((report_record or {}).get("bottleneck_diagnosis") if report_record else None)
+    lines += _patch_trial_lines(results_dir)
     lines += ["", "## Legacy Diagnosis"]
     lines += [f"- {note}" for note in diagnose(best_records + failures)]
     lines += _hardware_lines(hardware_info)
