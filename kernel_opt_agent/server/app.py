@@ -82,6 +82,27 @@ def _best_summary(summary_rows: list[dict[str, Any]]) -> tuple[dict[str, Any] | 
     return best, improvement
 
 
+def _task_payload(task: Any) -> dict[str, Any]:
+    payload = task.model_dump()
+    summary = _read_csv(Path(task.results_dir) / "summary.csv")
+    best_row, improvement = _best_summary(summary)
+    baseline = summary[0] if summary else {}
+    iterations = [_numeric(row.get("iteration")) for row in summary]
+    latest_event = task.events[-1] if task.events else {}
+    payload.update(
+        {
+            "current_iteration": int(max([item for item in iterations if item is not None], default=0)),
+            "total_trials": len(summary),
+            "best_latency": _numeric((best_row or {}).get("latency")),
+            "baseline_latency": _numeric(baseline.get("latency")),
+            "improvement_percent": improvement,
+            "current_stage": latest_event.get("type") or task.status,
+            "latest_message": latest_event.get("message") or task.status,
+        }
+    )
+    return payload
+
+
 def _result_payload(results_dir: Path) -> dict[str, Any]:
     summary = _read_csv(results_dir / "summary.csv")
     best_row, improvement = _best_summary(summary)
@@ -171,13 +192,13 @@ def hardware_resolve(payload: HardwareResolveRequest) -> dict[str, Any]:
 def create_task(payload: TaskCreateRequest) -> dict[str, Any]:
     task = manager.create(payload)
     worker.submit(task.task_id, payload)
-    return {"ok": True, "task_id": task.task_id, "task": task.model_dump()}
+    return {"ok": True, "task_id": task.task_id, "task": _task_payload(task)}
 
 
 @app.get("/api/tasks/{task_id}")
 def get_task(task_id: str) -> dict[str, Any]:
     try:
-        return {"ok": True, "task": manager.get(task_id).model_dump()}
+        return {"ok": True, "task": _task_payload(manager.get(task_id))}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="task not found") from exc
 
@@ -197,7 +218,7 @@ def get_task_results(task_id: str) -> dict[str, Any]:
         task = manager.get(task_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="task not found") from exc
-    return {"ok": True, "task": task.model_dump(), "results": _result_payload(Path(task.results_dir))}
+    return {"ok": True, "task": _task_payload(task), "results": _result_payload(Path(task.results_dir))}
 
 
 def _download(task_id: str, filename: str) -> FileResponse:
@@ -225,7 +246,7 @@ def download_report(task_id: str) -> FileResponse:
 def cancel_task(task_id: str) -> dict[str, Any]:
     try:
         task = manager.request_cancel(task_id)
-        return {"ok": True, "task": task.model_dump()}
+        return {"ok": True, "task": _task_payload(task)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="task not found") from exc
 

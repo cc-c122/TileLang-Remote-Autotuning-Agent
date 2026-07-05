@@ -135,4 +135,3 @@ class TaskRecord(BaseModel):
     error: str | None = None
     events: list[dict[str, Any]] = Field(default_factory=list)
     cancel_requested: bool = False
-

@@ -57,4 +57,3 @@ class SettingsStore:
         _reject_plaintext_secrets(raw)
         settings = SettingsPayload.model_validate(raw)
         return _redact(settings.model_dump())
-

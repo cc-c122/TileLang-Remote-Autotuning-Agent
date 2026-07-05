@@ -85,6 +85,19 @@ class FastApiServerTests(unittest.TestCase):
         self.assertEqual(results.status_code, 200)
         payload = results.json()["results"]
         task = results.json()["task"]
+        for field in {
+            "current_iteration",
+            "total_trials",
+            "best_latency",
+            "baseline_latency",
+            "improvement_percent",
+            "current_stage",
+            "latest_message",
+        }:
+            self.assertIn(field, task)
+        self.assertGreaterEqual(task["total_trials"], 1)
+        self.assertIsNotNone(task["baseline_latency"])
+        self.assertIsNotNone(task["best_latency"])
         self.assertTrue((Path(task["workspace"]) / "run_request.yaml").exists())
         effective = Path(task["workspace"]) / "effective_config.yaml"
         self.assertTrue(effective.exists())
