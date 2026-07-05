@@ -38,4 +38,5 @@ profiler:
   type: dummy
 
 patching:
-  enabled: true
+  enabled: false
+  run_controlled_trial: false
