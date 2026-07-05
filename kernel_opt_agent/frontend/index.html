@@ -1253,7 +1253,7 @@
         <h2>Profiler 指标</h2>
         <span class="muted" id="profilerStatus">waiting</span>
       </div>
-      <p class="section-kicker">只读 <code>profiler_results.jsonl</code>。指标不可用时显示 waiting/null，不伪造 profiler 结果。</p>
+      <p class="section-kicker">只读 <code>profiler_results.jsonl</code>。缺失指标显示 null / unavailable，不伪造 profiler 结果。</p>
       <div id="profilerPanel"></div>
     </section>
 
@@ -1262,7 +1262,7 @@
         <h2>Bottleneck diagnosis</h2>
         <span class="muted" id="diagnosisStatus">waiting</span>
       </div>
-      <p class="section-kicker">只读 <code>diagnosis.jsonl</code>，展示 evidence、uncertainty 和 recommended_actions。</p>
+      <p class="section-kicker">只读 <code>diagnosis.jsonl</code>，展示 bottleneck、confidence、evidence 和 uncertainty。</p>
       <div id="diagnosisPanel"></div>
     </section>
 
@@ -1271,7 +1271,7 @@
         <h2>Patch 尝试记录</h2>
         <span class="muted" id="patchTrialsStatus">waiting</span>
       </div>
-      <p class="section-kicker">只读 <code>patch_trials.jsonl</code>，展示 patch 假设、验证状态、confidence / uncertainty 和日志路径。</p>
+      <p class="section-kicker">只读 <code>patch_trials.jsonl</code>，展示 patch 名称、状态、收益和失败原因。</p>
       <div id="patchTrialsPanel" class="table-wrap"></div>
     </section>
 
@@ -2139,7 +2139,7 @@
     function renderProfiler(rows) {
       if (!state.files.has("profiler_results.jsonl")) {
         el.profilerStatus.textContent = "waiting";
-        el.profilerPanel.innerHTML = `<div class="empty">等待 profiler_results.jsonl：后端产出 profiler 结果后点击刷新即可。指标不可用时应保持 null/waiting。</div>`;
+        el.profilerPanel.innerHTML = `<div class="empty">等待后端结果文件：profiler_results.jsonl。</div>`;
         return;
       }
       if (!rows.length) {
@@ -2162,7 +2162,7 @@
     function renderDiagnosis(rows) {
       if (!state.files.has("diagnosis.jsonl")) {
         el.diagnosisStatus.textContent = "waiting";
-        el.diagnosisPanel.innerHTML = `<div class="empty">等待 diagnosis.jsonl：后端产出瓶颈诊断后点击刷新即可。</div>`;
+        el.diagnosisPanel.innerHTML = `<div class="empty">等待后端结果文件：diagnosis.jsonl。</div>`;
         return;
       }
       if (!rows.length) {
@@ -2173,11 +2173,10 @@
       el.diagnosisStatus.textContent = `${rows.length} 条诊断`;
       el.diagnosisPanel.innerHTML = `<div class="diagnosis-grid">
         ${rows.map((row) => `<article class="diagnosis-card">
-          <h3><span>${escapeHtml(display(row.bottleneck_type || row.type || row.name))}</span>${confidenceBadgeFor(row.confidence)}</h3>
+          <h3><span>${escapeHtml(display(row.bottleneck || row.bottleneck_type || row.type || row.name))}</span>${confidenceBadgeFor(row.confidence)}</h3>
           <div class="muted">${escapeHtml(candidateLabel(row))}</div>
           ${diagnosisList("evidence", row.evidence)}
           ${diagnosisList("uncertainty", row.uncertainty)}
-          ${diagnosisList("recommended_actions", row.recommended_actions)}
         </article>`).join("")}
       </div>`;
     }
@@ -2185,7 +2184,7 @@
     function renderPatchTrials(rows) {
       if (!state.files.has("patch_trials.jsonl")) {
         el.patchTrialsStatus.textContent = "waiting";
-        el.patchTrialsPanel.innerHTML = `<div class="empty">等待 patch_trials.jsonl：后端产出 patch 尝试记录后点击刷新即可。</div>`;
+        el.patchTrialsPanel.innerHTML = `<div class="empty">等待后端结果文件：patch_trials.jsonl。</div>`;
         return;
       }
       if (!rows.length) {
@@ -2195,21 +2194,13 @@
       }
       el.patchTrialsStatus.textContent = `${rows.length} 条 patch 尝试`;
       el.patchTrialsPanel.innerHTML = `<table>
-        <thead><tr><th>候选</th><th>optimization</th><th>region</th><th>状态</th><th>hypothesis</th><th>expected</th><th>latency</th><th>confidence</th><th>uncertainty</th><th>patch 路径</th><th>stdout</th><th>stderr</th></tr></thead>
+        <thead><tr><th>patch 名称</th><th>状态</th><th>收益</th><th>失败原因</th></tr></thead>
         <tbody>
           ${rows.map((row) => `<tr>
-            <td>${escapeHtml(candidateLabel(row))}</td>
-            <td>${escapeHtml(display(patchField(row, ["optimization_name", "selected_optimization", "template", "name"])))}</td>
-            <td>${escapeHtml(display(patchField(row, ["target_region", "region", "patch_region"])))}</td>
+            <td>${escapeHtml(display(patchName(row)))}</td>
             <td>${patchStatusBadge(row)}</td>
-            <td class="reason-cell">${escapeHtml(display(patchField(row, ["hypothesis", "diagnosis_summary", "reason"])))}</td>
-            <td class="reason-cell">${escapeHtml(display(patchField(row, ["expected_improvement", "expected", "expected_delta"])))}</td>
-            <td>${escapeHtml(display(patchMetric(row, "latency")))}</td>
-            <td>${confidenceBadgeFor(patchField(row, ["confidence"]))}</td>
-            <td class="reason-cell">${escapeHtml(displayList(patchField(row, ["uncertainty", "uncertainties"])))}</td>
-            <td><div class="path" title="${escapeHtml(patchPath(row))}">${escapeHtml(patchPath(row))}</div></td>
-            <td><div class="path" title="${escapeHtml(pathValue(row, "stdout"))}">${escapeHtml(pathValue(row, "stdout"))}</div></td>
-            <td><div class="path" title="${escapeHtml(pathValue(row, "stderr"))}">${escapeHtml(pathValue(row, "stderr"))}</div></td>
+            <td>${escapeHtml(display(patchBenefit(row)))}</td>
+            <td class="reason-cell">${escapeHtml(display(patchFailureReason(row)))}</td>
           </tr>`).join("")}
         </tbody>
       </table>`;
@@ -2227,12 +2218,15 @@
 
     function displayProfilerMetric(row, field) {
       const value = field === "latency_ms" ? pick(row.latency_ms, row.latency) : row[field];
-      return value === null || value === undefined || value === "" ? "waiting" : display(value);
+      const metrics = row?.available_metrics;
+      const hasAvailability = metrics && typeof metrics === "object" && Object.prototype.hasOwnProperty.call(metrics, field);
+      if (value === null || value === undefined || value === "") return hasAvailability && metrics[field] ? "null" : "null / unavailable";
+      return display(value);
     }
 
     function availableMetricsSummary(row) {
       const metrics = row?.available_metrics;
-      if (!metrics || typeof metrics !== "object") return "waiting";
+      if (!metrics || typeof metrics !== "object") return "unavailable";
       const available = Object.entries(metrics).filter(([, value]) => Boolean(value)).map(([key]) => key);
       return available.length ? available.join(", ") : "none";
     }
@@ -2254,10 +2248,22 @@
       for (const field of fields) {
         const direct = row?.[field];
         if (direct !== undefined && direct !== null && direct !== "") return direct;
-        const nested = valueAt(row, ["patch", field]) || valueAt(row, ["result", field]) || valueAt(row, ["validation", field]);
+        const nested = valueAt(row, ["patch", field]) || valueAt(row, ["result", field]) || valueAt(row, ["validation", field]) || valueAt(row, ["metrics", field]) || valueAt(row, ["benchmark", field]);
         if (nested !== undefined && nested !== null && nested !== "") return nested;
       }
       return "";
+    }
+
+    function patchName(row) {
+      return patchField(row, ["patch_name", "name", "optimization_name", "selected_optimization", "template", "patch_id", "id"]);
+    }
+
+    function patchBenefit(row) {
+      return patchField(row, ["benefit", "improvement", "speedup", "latency_improvement", "latency_delta", "objective_delta", "expected_improvement", "expected_delta"]);
+    }
+
+    function patchFailureReason(row) {
+      return patchField(row, ["failure_reason", "failed_reason", "reason", "error", "error_message", "rollback_reason", "validation_error", "parse_error", "status_reason"]);
     }
 
     function patchMetric(row, key) {

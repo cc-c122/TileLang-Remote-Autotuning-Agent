@@ -117,6 +117,8 @@ def read_results_snapshot(results_dir: Path = RESULTS_DIR) -> dict[str, Any]:
         "failed_cases.jsonl",
         "profiler_results.jsonl",
         "diagnosis.jsonl",
+        "patch_trials.jsonl",
+        "ablation_summary.csv",
         "report.md",
         "best_kernel.py",
     ]

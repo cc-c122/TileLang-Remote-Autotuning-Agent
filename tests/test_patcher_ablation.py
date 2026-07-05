@@ -9,10 +9,12 @@ from pathlib import Path
 from kernel_opt_agent.optimizer import AblationResult, write_ablation_csv, write_ablation_jsonl
 from kernel_opt_agent.patcher import (
     PatchProposal,
+    PatchTrial,
     apply_validated_patch,
     find_patch_regions,
     rollback_file,
     validate_patch_proposal,
+    write_patch_trials_jsonl,
 )
 from kernel_opt_agent.profiler.base import ProfilerResult
 
@@ -81,8 +83,47 @@ class PatcherAblationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "target_path is not the allowed target"):
                 apply_validated_patch(target, proposal, root / "backups", root, {"compute"}, allowed_target=other)
 
-    def test_ablation_results_write_jsonl_and_csv(self) -> None:
-        result = AblationResult(
+    def test_patch_trial_is_json_serializable(self) -> None:
+        trial = PatchTrial(
+            trial_id="trial-1",
+            patch_id="patch-a",
+            optimization_name="vectorized_load",
+            target_region="compute",
+            hypothesis="improve load efficiency",
+            expected_improvement="lower latency",
+            risk="low",
+            diagnosis_refs=["diag-1"],
+            metrics_before={"latency_ms": 10.0},
+        )
+        data = trial.to_dict()
+        self.assertEqual(data["status"], "proposed")
+        self.assertTrue(data["rollback_available"])
+        json.dumps(data)
+
+    def test_patch_trial_rejects_unknown_status(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported patch trial status"):
+            PatchTrial(
+                trial_id="trial-1",
+                patch_id="patch-a",
+                optimization_name="vectorized_load",
+                target_region="compute",
+                hypothesis="h",
+                expected_improvement="e",
+                risk="r",
+                status="unknown",
+            )
+
+    def test_patch_trials_jsonl_and_ablation_csv_write(self) -> None:
+        trial = PatchTrial(
+            trial_id="trial-1",
+            patch_id="patch-a",
+            optimization_name="vectorized_load",
+            target_region="compute",
+            hypothesis="improve load efficiency",
+            expected_improvement="lower latency",
+            risk="low",
+        )
+        ablation = AblationResult(
             trial_id="trial-1",
             patch_ids=["patch-a"],
             status="benchmark_ok",
@@ -93,10 +134,11 @@ class PatcherAblationTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            jsonl_path = write_ablation_jsonl(root / "patch_trials.jsonl", [result])
-            csv_path = write_ablation_csv(root / "ablation_summary.csv", [result])
+            jsonl_path = write_patch_trials_jsonl(root / "patch_trials.jsonl", [trial])
+            write_ablation_jsonl(root / "ablation.jsonl", [ablation])
+            csv_path = write_ablation_csv(root / "ablation_summary.csv", [ablation])
             record = json.loads(jsonl_path.read_text(encoding="utf-8").splitlines()[0])
-            self.assertEqual(record["patch_ids"], ["patch-a"])
+            self.assertEqual(record["patch_id"], "patch-a")
             with csv_path.open(newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual(rows[0]["patch_ids"], "patch-a")

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import unittest
 from types import SimpleNamespace
 
-from kernel_opt_agent.diagnosis import EvidenceBundle, diagnose_bottlenecks
+from kernel_opt_agent.diagnosis import BottleneckDiagnosis, EvidenceBundle, diagnose_bottlenecks
 from kernel_opt_agent.main import collect_profiler_result
 from kernel_opt_agent.profiler.base import ProfilerResult
 from kernel_opt_agent.profiler.dummy_profiler import DummyProfiler
@@ -21,15 +22,38 @@ class ProfilerDiagnosisTests(unittest.TestCase):
             self.assertIn("evidence", data)
             self.assertIn("uncertainty", data)
             self.assertIn("recommended_actions", data)
+            self.assertIn("source_trial_id", data)
+            self.assertIn("source_metrics", data)
 
     def test_no_profiler_keeps_metrics_none(self):
         result = ProfilerResult.empty()
         self.assertIsNone(result.latency_ms)
         self.assertIsNone(result.latency)
         self.assertFalse(result.available_metrics["latency_ms"])
-        diagnoses = diagnose_bottlenecks(EvidenceBundle(result))
+        diagnoses = diagnose_bottlenecks(EvidenceBundle(result, source_trial_id="trial-empty"))
         self.assert_diagnosis_shape(diagnoses)
         self.assertTrue(any(item.uncertainty for item in diagnoses))
+        self.assertTrue(all(item.confidence != "high" for item in diagnoses))
+        self.assertTrue(all(item.source_trial_id == "trial-empty" for item in diagnoses))
+
+    def test_diagnosis_record_is_json_serializable(self):
+        record = BottleneckDiagnosis(
+            bottleneck_type="memory_bound",
+            confidence="low",
+            evidence=["latency_ms unavailable"],
+            uncertainty=["profiler did not report bandwidth"],
+            recommended_actions=["vectorized_load"],
+            source_trial_id="trial-1",
+            source_metrics={"latency_ms": None},
+        )
+        data = record.to_dict()
+        self.assertEqual(data["source_trial_id"], "trial-1")
+        self.assertIn("source_metrics", data)
+        json.dumps(data)
+
+    def test_diagnosis_rejects_unknown_confidence(self):
+        with self.assertRaisesRegex(ValueError, "unsupported diagnosis confidence"):
+            BottleneckDiagnosis(bottleneck_type="memory_bound", confidence="certain")
 
     def test_dummy_profiler_parses_benchmark_only(self):
         result = DummyProfiler().collect(
