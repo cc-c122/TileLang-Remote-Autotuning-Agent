@@ -460,6 +460,18 @@
 
     .failed-table { min-width: 1180px; }
 
+    .hardware-table {
+      min-width: 1120px;
+      table-layout: fixed;
+    }
+
+    .hardware-table th:nth-child(1), .hardware-table td:nth-child(1) { width: 220px; }
+    .hardware-table th:nth-child(2), .hardware-table td:nth-child(2) { width: 280px; }
+    .hardware-table th:nth-child(3), .hardware-table td:nth-child(3) { width: 120px; }
+    .hardware-table th:nth-child(4), .hardware-table td:nth-child(4) { width: 160px; }
+    .hardware-table th:nth-child(5), .hardware-table td:nth-child(5) { width: 140px; }
+    .hardware-table th:nth-child(6), .hardware-table td:nth-child(6) { width: 160px; }
+
     th, td {
       border-bottom: 1px solid var(--line);
       padding: 9px 10px;
@@ -723,6 +735,10 @@
       padding: 20px 20px 30px;
     }
 
+    #startView .section {
+      margin-bottom: 18px;
+    }
+
     .breadcrumb {
       margin: 0 0 12px;
       color: #475467;
@@ -762,18 +778,6 @@
       font-weight: 850;
     }
 
-    .info-dot {
-      display: inline-grid;
-      place-items: center;
-      width: 16px;
-      height: 16px;
-      border: 1px solid #91b7ff;
-      border-radius: 999px;
-      color: #2563eb;
-      font-size: 11px;
-      font-weight: 800;
-    }
-
     .sample-tabs {
       display: flex;
       justify-content: space-between;
@@ -800,6 +804,16 @@
       border-style: dashed;
       background: #fff;
       color: #0f55d8;
+    }
+
+    .developer-note {
+      border: 1px dashed #d0d5dd;
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--muted);
+      background: #fbfdff;
+      font-size: 13px;
+      font-weight: 650;
     }
 
     .button-like {
@@ -862,9 +876,7 @@
       align-items: end;
     }
 
-    .hardware-card .table-wrap {
-      max-width: 620px;
-    }
+    .hardware-card .table-wrap { width: 100%; }
 
     .action-bar {
       display: grid;
@@ -1050,7 +1062,6 @@
             <div class="step-title">
               <span class="step-num">1.</span>
               <h2>输入 sample</h2>
-              <span class="info-dot">i</span>
             </div>
             <div class="form-grid three">
               <div class="field">
@@ -1065,13 +1076,12 @@
                 <label for="v2SampleSourceType">sample 来源</label>
                 <select id="v2SampleSourceType">
                   <option value="inline" selected>粘贴代码</option>
-                  <option value="path">上传 sample 目录</option>
                   <option value="upload">上传单文件</option>
                 </select>
               </div>
             </div>
             <div class="sample-tabs" style="margin-top:12px">
-              <div class="sample-tab-left"><span>粘贴代码</span><span>上传 sample 目录</span></div>
+              <div class="sample-tab-left"><span>粘贴代码</span><span>上传单文件</span></div>
               <label class="upload-soft button-like">
                 <input id="v2SampleFile" type="file" accept=".py,.txt,.yaml,.json" hidden>
                 上传 sample 文件
@@ -1080,17 +1090,13 @@
             <div class="code-shell">
               <textarea id="v2SampleText" placeholder="# TileLang sample&#10;@T.kernel&#10;def kernel(...):&#10;    # paste TileLang kernel here"></textarea>
             </div>
-            <div class="field" style="margin-top:12px">
-              <label for="v2SamplePath">上传 sample 目录</label>
-              <input id="v2SamplePath" placeholder="./samples/my_kernel" autocomplete="off">
-            </div>
+            <input id="v2SamplePath" type="hidden" autocomplete="off">
           </section>
 
           <section class="section">
             <div class="step-title">
               <span class="step-num">2.</span>
               <h2>选择 GPU</h2>
-              <span class="info-dot">i</span>
             </div>
             <div class="gpu-row">
               <div class="field">
@@ -1110,7 +1116,6 @@
             <div class="step-title">
               <span class="step-num">3.</span>
               <h2>硬件参数表</h2>
-              <span class="info-dot">i</span>
             </div>
             <div id="v2HardwareEditor" class="table-wrap"></div>
           </section>
@@ -1119,7 +1124,6 @@
             <div class="step-title">
               <span class="step-num">4.</span>
               <h2>运行设置</h2>
-              <span class="info-dot">i</span>
             </div>
             <div class="form-grid three">
               <div class="field">
@@ -1339,6 +1343,7 @@
               <button id="chooseDirBtn" class="secondary" type="button">选择结果目录</button>
               <button id="reloadBtn" class="secondary" type="button">刷新本地结果</button>
             </div>
+            <div class="developer-note" style="margin-top:12px">上传 sample 目录：未接入。当前普通主流程只支持粘贴代码或上传单文件。</div>
             <div class="field" style="margin-top:12px">
               <label for="runCommandOutput">CLI 命令</label>
               <input id="runCommandOutput" readonly value="python main.py --run-request run_request.yaml --settings settings.yaml">
@@ -1607,12 +1612,18 @@
     }
 
     async function readSampleFile() {
-      const file = el.v2SampleFile.files?.[0];
-      if (!file) return;
-      el.v2SampleText.value = sanitizeText(await file.text());
-      el.v2SampleSourceType.value = "upload";
-      if (!el.v2ProjectName.value || el.v2ProjectName.value === "tilelang-v2-run") {
-        el.v2ProjectName.value = file.name.replace(/\.[^.]+$/, "") || "tilelang-v2-run";
+      try {
+        const file = el.v2SampleFile.files?.[0];
+        if (!file) return;
+        el.v2SampleText.value = sanitizeText(await file.text());
+        el.v2SampleSourceType.value = "upload";
+        el.v2EntryFile.value = sanitizeText(file.name || "kernel.py");
+        if (!el.v2ProjectName.value || el.v2ProjectName.value === "tilelang-v2-run") {
+          el.v2ProjectName.value = file.name.replace(/\.[^.]+$/, "") || "tilelang-v2-run";
+        }
+      } catch (error) {
+        addOneShotWarning(`读取 sample 文件失败：${error.message || "无法读取文件内容"}`);
+        renderAlerts();
       }
     }
 
@@ -2110,7 +2121,7 @@
         const notes = formValue ? "from V2 user input" : pick(detected.notes, value ? "from V2 form input" : "not available yet");
         return { field, value, unit: unitForHardwareField(field), source, confidence, modified: override !== undefined, notes };
       });
-      el.v2HardwareEditor.innerHTML = `<table>
+      el.v2HardwareEditor.innerHTML = `<table class="hardware-table">
         <thead><tr><th>字段</th><th>值</th><th>单位</th><th>来源</th><th>置信度</th><th>是否可编辑</th></tr></thead>
         <tbody>
           ${rows.map((row) => `<tr>
