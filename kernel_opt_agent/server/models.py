@@ -70,10 +70,26 @@ class BudgetPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     strategy: Literal["rule_based"] = "rule_based"
-    max_iterations: int = Field(default=1, ge=0)
+    max_iterations: int = Field(default=1, ge=1)
     candidates_per_iteration: int = Field(default=1, gt=0)
     timeout_seconds: int = Field(default=60, gt=0)
     objective: Literal["latency"] = "latency"
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_positive_budget(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        checks = {
+            "max_iterations": "max_iterations must be >= 1",
+            "candidates_per_iteration": "candidates_per_iteration must be >= 1",
+            "timeout_seconds": "timeout_seconds must be >= 1",
+        }
+        for field_name, message in checks.items():
+            value = data.get(field_name)
+            if value is not None and value < 1:
+                raise ValueError(message)
+        return data
 
 
 class ProfilerPayload(BaseModel):

@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 from fastapi.testclient import TestClient
 
-from kernel_opt_agent.server.app import app
+from kernel_opt_agent.server.app import TASKS_ROOT, app
 from kernel_opt_agent.server.models import TaskCreateRequest
 from kernel_opt_agent.server.run_request_builder import build_effective_config
 
@@ -174,6 +174,21 @@ class FastApiServerTests(unittest.TestCase):
         self.assertNotIn("password", str(listed).lower())
         self.assertNotIn("api_key", str(listed).lower())
 
+    def test_invalid_budget_rejected_before_workspace_creation(self) -> None:
+        before = {path.name for path in TASKS_ROOT.iterdir()} if TASKS_ROOT.exists() else set()
+        response = self.client.post(
+            "/api/tasks",
+            json={
+                "project_name": "api-invalid-budget-demo",
+                "sample": {"source_type": "inline", "inline_text": INLINE_KERNEL, "entry_file": "kernel.py"},
+                "budget": {"strategy": "rule_based", "max_iterations": 0, "candidates_per_iteration": 1, "timeout_seconds": 30, "objective": "latency"},
+            },
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("max_iterations must be >= 1", response.text)
+        after = {path.name for path in TASKS_ROOT.iterdir()} if TASKS_ROOT.exists() else set()
+        self.assertEqual(after, before)
+
     def test_ssh_runner_uses_saved_settings_without_leaking_secrets(self) -> None:
         request = TaskCreateRequest.model_validate(
             {
@@ -336,7 +351,7 @@ class FastApiServerTests(unittest.TestCase):
                 "correctness_command": "python -c \"print('CORRECTNESS_RESULT status=PASS max_error=0 reason=ok')\"",
                 "benchmark_command": "python -c \"import time; time.sleep(1); print('BENCHMARK_RESULT latency_ms=1.0 tflops=1.0 bandwidth_gbps=1.0')\"",
             },
-            "budget": {"strategy": "rule_based", "max_iterations": 0, "candidates_per_iteration": 1, "timeout_seconds": 10, "objective": "latency"},
+            "budget": {"strategy": "rule_based", "max_iterations": 1, "candidates_per_iteration": 1, "timeout_seconds": 10, "objective": "latency"},
         }
         first = self.client.post("/api/tasks", json=request).json()["task_id"]
         second = self.client.post("/api/tasks", json=request).json()["task_id"]
