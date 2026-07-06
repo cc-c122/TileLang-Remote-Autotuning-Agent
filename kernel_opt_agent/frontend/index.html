@@ -141,6 +141,11 @@
       color: #1d4ed8;
     }
 
+    .developer-tab {
+      margin-top: 28px;
+      color: var(--muted);
+    }
+
     .view-panel { display: none; }
     .view-panel.active { display: block; }
 
@@ -1019,8 +1024,6 @@
       </div>
       <div class="user-menu">
         <span class="chip warn" id="apiHealthStatus">API：checking</span>
-        <button id="chooseDirBtn" class="secondary" type="button">选择结果目录</button>
-        <button id="reloadBtn" class="secondary" type="button">刷新</button>
         <span class="icon-chip">?</span>
         <span class="icon-chip avatar">U</span>
         <span>user</span>
@@ -1031,11 +1034,11 @@
       <aside class="sidebar">
         <nav class="view-tabs" aria-label="页面入口">
           <button class="tab-button active" type="button" data-view-target="startView"><span class="nav-ico">＋</span><span>新建任务</span></button>
+          <button class="tab-button" type="button" data-view-target="taskView"><span class="nav-ico">▤</span><span>任务详情</span></button>
           <button class="tab-button" type="button" data-view-target="resultsView"><span class="nav-ico">▣</span><span>实验结果</span></button>
-          <button class="tab-button" type="button" data-view-target="resultsView" data-focus-section="hardwareSection"><span class="nav-ico">◎</span><span>硬件画像</span></button>
-          <button class="tab-button is-disabled" type="button" disabled title="模板库尚未接入真实数据"><span class="nav-ico">□</span><span>模板库</span></button>
-          <button class="tab-button" type="button" data-view-target="resultsView" data-focus-section="pathsSection"><span class="nav-ico">☰</span><span>运行日志</span></button>
-          <button class="tab-button" type="button" data-view-target="startView" data-focus-settings="true"><span class="nav-ico">⚙</span><span>设置</span></button>
+          <button class="tab-button" type="button" data-view-target="hardwareView"><span class="nav-ico">◎</span><span>硬件画像</span></button>
+          <button class="tab-button" type="button" data-view-target="settingsView"><span class="nav-ico">⚙</span><span>设置</span></button>
+          <button class="tab-button developer-tab" type="button" data-view-target="developerView"><span class="nav-ico">⌘</span><span>开发者模式</span></button>
         </nav>
         <div class="collapse-hint">‹</div>
       </aside>
@@ -1043,364 +1046,364 @@
       <div class="workspace">
         <section id="startView" class="view-panel active">
           <div class="breadcrumb">首页 / 新建任务</div>
-          <div class="task-layout">
-            <div class="task-main">
-              <section class="section">
-                <div class="step-title">
-                  <span class="step-num">1.</span>
-                  <h2>输入算子 Sample</h2>
-                  <span class="info-dot">i</span>
-                </div>
-                <div class="sample-tabs">
-                  <div class="sample-tab-left"><span>粘贴代码</span><span>上传目录</span></div>
-                  <label class="upload-soft button-like">
-                    <input id="v2SampleFile" type="file" accept=".py,.txt,.yaml,.json" hidden>
-                    上传 sample 目录或粘贴代码
-                  </label>
-                </div>
-                <div class="code-shell">
-                  <textarea id="v2SampleText" placeholder="# TileLang sample: fused_mha_fwd&#10;@T.kernel&#10;def fused_mha_fwd(...):&#10;    # paste TileLang kernel here"></textarea>
-                </div>
-                <div class="form-grid three" style="margin-top:12px">
-                  <div class="field">
-                    <label for="v2ProjectName">项目名称</label>
-                    <input id="v2ProjectName" value="tilelang-v2-run" autocomplete="off">
-                  </div>
-                  <div class="field">
-                    <label for="v2SampleSourceType">source_type</label>
-                    <select id="v2SampleSourceType">
-                      <option value="inline" selected>inline</option>
-                      <option value="path">path</option>
-                      <option value="upload">upload</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="v2EntryFile">entry_file</label>
-                    <input id="v2EntryFile" value="kernel.py" autocomplete="off">
-                  </div>
-                </div>
-                <div class="form-grid three" style="margin-top:12px">
-                  <div class="field">
-                    <label for="v2SamplePath">sample path</label>
-                    <input id="v2SamplePath" placeholder="./samples/my_kernel" autocomplete="off">
-                  </div>
-                  <div class="field">
-                    <label for="v2BuildCommand">build 命令</label>
-                    <input id="v2BuildCommand" value="python -m py_compile kernel.py" autocomplete="off">
-                  </div>
-                  <div class="field">
-                    <label for="v2CorrectnessCommand">correctness 命令</label>
-                    <input id="v2CorrectnessCommand" value="python correctness.py" autocomplete="off">
-                  </div>
-                </div>
-                <div class="form-grid" style="margin-top:12px">
-                  <div class="field">
-                    <label for="v2BenchmarkCommand">benchmark 命令</label>
-                    <input id="v2BenchmarkCommand" value="python benchmark.py" autocomplete="off">
-                  </div>
-                  <div class="field">
-                    <label for="v2ProfilerType">profiler</label>
-                    <select id="v2ProfilerType">
-                      <option value="dummy">dummy：只解析 benchmark</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="hint-line"><span class="info-dot">i</span><span>主流程会提交到后端任务 API；高级文件模式仍可预览脱敏 run_request。</span></div>
-              </section>
-
-              <section class="section">
-                <div class="step-title">
-                  <span class="step-num">2.</span>
-                  <h2>选择 GPU 型号</h2>
-                  <span class="info-dot">i</span>
-                </div>
-                <div class="gpu-row">
-                  <div class="field">
-                    <label for="v2GpuModel">GPU 型号</label>
-                    <input id="v2GpuModel" value="Metax C500" placeholder="例如 Metax C500 / 沐曦 C500 / NVIDIA H100" autocomplete="off">
-                  </div>
-                  <button id="resolveHardwareBtn" class="secondary" type="button">自动搜索硬件参数</button>
-                </div>
-                <div class="form-grid three" style="margin-top:12px">
-                  <div class="field">
-                    <label for="v2RunnerType">运行方式</label>
-                    <select id="v2RunnerType">
-                      <option value="local" selected>local demo</option>
-                      <option value="ssh">remote SSH</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="v2BudgetMode">优化预算</label>
-                    <select id="v2BudgetMode">
-                      <option value="quick">快速验证：1 round / 3 candidates / 1 patch</option>
-                      <option value="standard" selected>标准：3 rounds / 4 candidates / 3 patches</option>
-                      <option value="deep">深入：5 rounds / 6 candidates / 5 patches</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="v2MaxIterations">最大迭代次数</label>
-                    <input id="v2MaxIterations" type="number" min="1" step="1" value="3">
-                  </div>
-                  <div class="field">
-                    <label for="v2CandidatesPerIteration">每轮候选数</label>
-                    <input id="v2CandidatesPerIteration" type="number" min="1" step="1" value="4">
-                  </div>
-                  <div class="field">
-                    <label for="v2TimeoutSeconds">timeout 秒数</label>
-                    <input id="v2TimeoutSeconds" type="number" min="1" step="1" value="60">
-                  </div>
-                </div>
-                <p class="section-kicker">点击“自动搜索硬件参数”会调用 <code>POST /api/hardware/resolve</code>；后端未返回时保持等待，不伪造硬件能力。</p>
-              </section>
-
-              <section class="section hardware-card">
-                <div class="step-title">
-                  <span class="step-num">3.</span>
-                  <h2>自动补全的硬件参数（可编辑）</h2>
-                  <span class="info-dot">i</span>
-                </div>
-                <div id="v2HardwareEditor" class="table-wrap"></div>
-              </section>
-
-              <section class="section">
-                <div class="action-bar">
-                  <button id="startOptimizationBtn" class="primary-action" type="button">开始优化</button>
-                  <button id="cancelTaskBtn" class="secondary" type="button" disabled>取消任务</button>
-                </div>
-                <div class="settings-note" style="margin-top:12px">主流程调用 <code>POST /api/tasks</code> 启动真实后端任务；后端未返回时显示等待，失败时显示真实失败原因。</div>
-                <details style="margin-top:12px">
-                  <summary>高级文件模式：生成 run_request.yaml</summary>
-                  <div class="action-bar" style="margin-top:12px">
-                    <button id="generateRunRequestBtn" class="secondary" type="button">预览任务文件</button>
-                    <button id="downloadRunRequestYamlBtn" class="secondary" type="button">下载 run_request.yaml</button>
-                    <button id="copyRunCommandBtn" class="secondary" type="button">复制 CLI 命令</button>
-                  </div>
-                  <div class="field" style="margin-top:12px">
-                    <label for="runCommandOutput">CLI 命令</label>
-                    <input id="runCommandOutput" readonly value="python main.py --run-request run_request.yaml --settings settings.yaml">
-                  </div>
-                  <div class="settings-note" style="margin-top:12px">run_request.yaml 是任务文件，settings.yaml 是长期设置文件；两个文件都要交给后端 CLI。密码和 API key 仍然只通过环境变量读取。</div>
-                  <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“预览任务文件”后显示脱敏 run_request YAML。"></textarea>
-                </details>
-              </section>
-
-              <section class="section">
-                <div class="section-head">
-                  <h2>任务详情</h2>
-                  <span class="muted" id="taskStatus">waiting</span>
-                </div>
-                <div id="taskDetailPanel"></div>
-              </section>
-
-              <section class="section">
-                <div class="section-head">
-                  <h2>最近任务</h2>
-                  <button id="refreshTaskListBtn" class="secondary" type="button">刷新任务列表</button>
-                </div>
-                <div id="taskListPanel" class="table-wrap"></div>
-              </section>
+          <section class="section">
+            <div class="step-title">
+              <span class="step-num">1.</span>
+              <h2>输入 sample</h2>
+              <span class="info-dot">i</span>
             </div>
+            <div class="form-grid three">
+              <div class="field">
+                <label for="v2ProjectName">项目名称</label>
+                <input id="v2ProjectName" value="tilelang-v2-run" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="v2EntryFile">entry_file</label>
+                <input id="v2EntryFile" value="kernel.py" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="v2SampleSourceType">sample 来源</label>
+                <select id="v2SampleSourceType">
+                  <option value="inline" selected>粘贴代码</option>
+                  <option value="path">上传 sample 目录</option>
+                  <option value="upload">上传单文件</option>
+                </select>
+              </div>
+            </div>
+            <div class="sample-tabs" style="margin-top:12px">
+              <div class="sample-tab-left"><span>粘贴代码</span><span>上传 sample 目录</span></div>
+              <label class="upload-soft button-like">
+                <input id="v2SampleFile" type="file" accept=".py,.txt,.yaml,.json" hidden>
+                上传 sample 文件
+              </label>
+            </div>
+            <div class="code-shell">
+              <textarea id="v2SampleText" placeholder="# TileLang sample&#10;@T.kernel&#10;def kernel(...):&#10;    # paste TileLang kernel here"></textarea>
+            </div>
+            <div class="field" style="margin-top:12px">
+              <label for="v2SamplePath">上传 sample 目录</label>
+              <input id="v2SamplePath" placeholder="./samples/my_kernel" autocomplete="off">
+            </div>
+          </section>
 
-            <aside class="right-rail">
-              <section class="rail-card">
-                <h2 id="settingsCard">▣ 系统设置（长期保存）</h2>
-                <div class="settings-group">
-                  <div class="settings-group-head"><span>模型方案 / 远程容器 SSH</span><span class="chip ok" id="sshStatus">SSH：未填写</span></div>
-                  <div class="settings-grid">
-                    <div class="field"><label for="settingSshHost">Host</label><input id="settingSshHost" placeholder="ssh.modelforge.com" autocomplete="off"></div>
-                    <div class="field"><label for="settingSshPort">Port</label><input id="settingSshPort" type="number" value="22"></div>
-                    <div class="field"><label for="settingSshUsername">Username</label><input id="settingSshUsername" placeholder="ubuntu" autocomplete="off"></div>
-                    <div class="field"><label for="settingAuthType">Auth</label><select id="settingAuthType"><option value="password">password</option><option value="key">key</option></select></div>
-                    <div class="field"><label for="settingPasswordEnv">Password Env</label><input id="settingPasswordEnv" value="KERNEL_AGENT_SSH_PASSWORD" autocomplete="off"></div>
-                    <div class="field"><label for="settingKeyPath">Key Path</label><input id="settingKeyPath" placeholder="~/.ssh/id_rsa" autocomplete="off"></div>
-                    <div class="field"><label for="settingRemoteWorkspace">Workspace</label><input id="settingRemoteWorkspace" placeholder="/tmp/kernel_opt_workspace" autocomplete="off"></div>
-                  </div>
-                </div>
-                <div class="settings-group">
-                  <div class="settings-group-head"><span>LLM API 设置</span><span class="chip ok" id="llmStatus">LLM：未填写</span></div>
-                  <div class="settings-grid">
-                    <div class="field"><label for="settingLlmBaseUrl">Base URL</label><input id="settingLlmBaseUrl" value="https://api.openai.com/v1" autocomplete="off"></div>
-                    <div class="field"><label for="settingApiKeyEnv">API Key Env</label><input id="settingApiKeyEnv" value="OPENAI_API_KEY" autocomplete="off"></div>
-                    <div class="field"><label for="settingLlmModel">Model</label><input id="settingLlmModel" value="gpt-4o-mini" autocomplete="off"></div>
-                  </div>
-                </div>
-                <div class="status-grid">
-                  <span class="chip" id="passwordEnvStatus">password env：未填写</span>
-                  <span class="chip" id="apiKeyEnvStatus">API key env：未填写</span>
-                  <span class="chip" id="connectionStatus">SSH 连接：未测试</span>
-                </div>
-                <div class="save-row">
-                  <button id="loadSettingsBtn" class="secondary" type="button">读取后端设置</button>
-                  <button id="saveSettingsBtn" type="button">保存设置</button>
-                  <button id="testConnectionBtn" class="secondary" type="button">测试远程连接</button>
-                  <button id="downloadSettingsBtn" class="secondary" type="button">下载 settings.yaml</button>
-                  <button id="clearSettingsBtn" class="secondary" type="button">清空浏览器设置</button>
-                </div>
-                <div class="settings-note" style="margin-top:12px">设置通过 <code>GET/POST /api/settings</code> 与后端同步；页面不保存明文 password 或 API key，只传环境变量名或 key path。</div>
-                <textarea id="settingsOutput" readonly style="margin-top:12px" placeholder="settings.yaml 预览；只包含环境变量名，不包含密钥值。"></textarea>
-              </section>
+          <section class="section">
+            <div class="step-title">
+              <span class="step-num">2.</span>
+              <h2>选择 GPU</h2>
+              <span class="info-dot">i</span>
+            </div>
+            <div class="gpu-row">
+              <div class="field">
+                <label for="v2GpuModel">GPU 型号</label>
+                <input id="v2GpuModel" value="Metax C500" placeholder="例如 Metax C500 / 沐曦 C500 / NVIDIA H100" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="v2Backend">backend</label>
+                <input id="v2Backend" value="unknown" placeholder="unknown / cuda / tilelang" autocomplete="off">
+              </div>
+              <button id="resolveHardwareBtn" class="secondary" type="button">解析硬件参数</button>
+            </div>
+            <p class="section-kicker">系统会优先使用用户输入、内置 profile 和后端可用探测结果；未知字段会保持为空，用户可手动修改。</p>
+          </section>
 
-              <section class="rail-card">
-                <h2>预期流程</h2>
-                <div class="flow-steps">
-                  <div class="flow-step"><span class="flow-index">1</span><span class="flow-icon">⌘</span><div><strong>输入 sample</strong><span>上传或粘贴算子 sample</span></div></div>
-                  <div class="flow-step"><span class="flow-index">2</span><span class="flow-icon">▣</span><div><strong>选择 GPU</strong><span>选择目标 GPU 型号</span></div></div>
-                  <div class="flow-step"><span class="flow-index">3</span><span class="flow-icon">⚙</span><div><strong>确认硬件参数</strong><span>自动解析后可手动编辑</span></div></div>
-                  <div class="flow-step"><span class="flow-index">4</span><span class="flow-icon">☁</span><div><strong>开始优化</strong><span>调用后端任务 API</span></div></div>
-                  <div class="flow-step"><span class="flow-index">5</span><span class="flow-icon">▤</span><div><strong>读取真实结果</strong><span>展示 best kernel / report</span></div></div>
+          <section class="section hardware-card">
+            <div class="step-title">
+              <span class="step-num">3.</span>
+              <h2>硬件参数表</h2>
+              <span class="info-dot">i</span>
+            </div>
+            <div id="v2HardwareEditor" class="table-wrap"></div>
+          </section>
+
+          <section class="section">
+            <div class="step-title">
+              <span class="step-num">4.</span>
+              <h2>运行设置</h2>
+              <span class="info-dot">i</span>
+            </div>
+            <div class="form-grid three">
+              <div class="field">
+                <label for="v2RunnerType">runner</label>
+                <select id="v2RunnerType">
+                  <option value="local" selected>local demo</option>
+                  <option value="ssh">remote SSH</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="v2BudgetMode">优化预算</label>
+                <select id="v2BudgetMode">
+                  <option value="quick">快速</option>
+                  <option value="standard" selected>标准</option>
+                  <option value="deep">深入</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="v2ProfilerEnabled">profiler enabled</label>
+                <select id="v2ProfilerEnabled">
+                  <option value="true" selected>开启</option>
+                  <option value="false">关闭</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="v2PatchingEnabled">patching enabled</label>
+                <select id="v2PatchingEnabled">
+                  <option value="false" selected>关闭</option>
+                  <option value="true">开启</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="v2MaxIterations">最大迭代次数</label>
+                <input id="v2MaxIterations" type="number" min="1" step="1" value="3">
+              </div>
+              <div class="field">
+                <label for="v2CandidatesPerIteration">每轮候选数</label>
+                <input id="v2CandidatesPerIteration" type="number" min="1" step="1" value="4">
+              </div>
+              <div class="field">
+                <label for="v2TimeoutSeconds">timeout 秒数</label>
+                <input id="v2TimeoutSeconds" type="number" min="1" step="1" value="60">
+              </div>
+            </div>
+            <div class="status-grid" style="margin-top:12px">
+              <span class="chip" id="startSshStatus">SSH：未配置</span>
+              <span class="chip" id="startLlmStatus">LLM：未配置</span>
+              <button class="secondary" type="button" data-view-target="settingsView">去设置</button>
+            </div>
+            <details style="margin-top:12px">
+              <summary>高级命令设置</summary>
+              <div class="form-grid three" style="margin-top:12px">
+                <div class="field">
+                  <label for="v2BuildCommand">build command</label>
+                  <input id="v2BuildCommand" value="python -m py_compile kernel.py" autocomplete="off">
                 </div>
-              </section>
-            </aside>
-          </div>
+                <div class="field">
+                  <label for="v2CorrectnessCommand">correctness command</label>
+                  <input id="v2CorrectnessCommand" value="python correctness.py" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label for="v2BenchmarkCommand">benchmark command</label>
+                  <input id="v2BenchmarkCommand" value="python benchmark.py" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label for="v2ProfilerType">profiler type</label>
+                  <select id="v2ProfilerType">
+                    <option value="dummy">dummy</option>
+                  </select>
+                </div>
+              </div>
+            </details>
+          </section>
+
+          <section class="section">
+            <div class="action-bar">
+              <button id="startOptimizationBtn" class="primary-action" type="button">开始优化</button>
+              <button id="generateRunRequestBtn" class="secondary" type="button">预览内部配置</button>
+            </div>
+            <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“预览内部配置”后显示脱敏内部配置。"></textarea>
+          </section>
+        </section>
+
+        <div id="alerts" class="alerts"></div>
+
+        <section id="taskView" class="view-panel">
+          <div class="breadcrumb">首页 / 任务详情</div>
+          <section class="section">
+            <div class="section-head">
+              <h2>任务详情</h2>
+              <span class="muted" id="taskStatus">waiting</span>
+            </div>
+            <div class="action-bar">
+              <button id="cancelTaskBtn" class="secondary" type="button" disabled>取消任务</button>
+            </div>
+            <div id="taskDetailPanel" style="margin-top:12px"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>最近任务</h2>
+              <button id="refreshTaskListBtn" class="secondary" type="button">刷新任务列表</button>
+            </div>
+            <div id="taskListPanel" class="table-wrap"></div>
+          </section>
         </section>
 
         <section id="resultsView" class="view-panel">
+          <div class="breadcrumb">首页 / 实验结果</div>
+          <section class="section">
+            <div class="section-head">
+              <h2>查看结果</h2>
+              <span class="muted" id="apiResultsStatus">waiting</span>
+            </div>
+            <div class="action-bar">
+              <button id="refreshTaskResultsBtn" class="secondary" type="button">刷新结果</button>
+              <button id="downloadBestKernelBtn" class="secondary" type="button" disabled>下载 best_kernel.py</button>
+              <button id="downloadReportBtn" class="secondary" type="button" disabled>下载 report.md</button>
+            </div>
+            <div id="apiResultsPanel" style="margin-top:12px"></div>
+          </section>
+        </section>
 
-    <section class="section">
-      <div class="section-head">
-        <h2>API 任务结果</h2>
-        <span class="muted" id="apiResultsStatus">waiting</span>
-      </div>
-      <p class="section-kicker">调用 <code>GET /api/tasks/{task_id}/results</code> 读取真实任务结果；后端未返回时显示等待。</p>
-      <div class="action-bar">
-        <button id="refreshTaskResultsBtn" class="secondary" type="button">刷新任务结果</button>
-        <button id="downloadBestKernelBtn" class="secondary" type="button" disabled>下载 best_kernel.py</button>
-        <button id="downloadReportBtn" class="secondary" type="button" disabled>下载 report.md</button>
-      </div>
-      <div id="apiResultsPanel" style="margin-top:12px"></div>
-    </section>
+        <section id="hardwareView" class="view-panel">
+          <div class="breadcrumb">首页 / 硬件画像</div>
+          <section class="section" id="hardwareSection">
+            <div class="section-head">
+              <h2>硬件画像</h2>
+              <span class="muted" id="hardwareStatus">waiting</span>
+            </div>
+            <p class="section-kicker">展示硬件名称、backend、source、confidence 和 unknown 字段。</p>
+            <div id="hardwarePanel"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>硬件 Probe</h2>
+              <span class="muted" id="probeStatus">waiting</span>
+            </div>
+            <p class="section-kicker">safe_probe 不是官方硬件上限；local_mock 不代表真实硬件验证。</p>
+            <div id="probePanel"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>Profiler 指标</h2>
+              <span class="muted" id="profilerStatus">waiting</span>
+            </div>
+            <div id="profilerPanel"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>Bottleneck diagnosis</h2>
+              <span class="muted" id="diagnosisStatus">waiting</span>
+            </div>
+            <div id="diagnosisPanel"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>Patch 尝试记录</h2>
+              <span class="muted" id="patchTrialsStatus">waiting</span>
+            </div>
+            <div id="patchTrialsPanel" class="table-wrap"></div>
+          </section>
+        </section>
 
-    <section class="howto" aria-label="本地查看说明">
-      <div>
-        <h3>本地查看说明</h3>
-        <p>推荐点击“选择结果目录”，直接选择后端生成的 <code>kernel_opt_agent/workspace/results/</code>。</p>
-        <div class="read-only-list">
-          <span class="chip ok">高级文件模式只读结果文件</span>
-          <span class="chip">不读取密钥</span>
-          <span class="chip">不修改结果</span>
-          <span class="chip warn">safe_probe 不是官方硬件上限</span>
-          <span class="chip warn">local_mock 不代表真实硬件验证</span>
-        </div>
-      </div>
-      <div>
-        <h3>静态服务器方式</h3>
-        <p>也可以在 <code>kernel_opt_agent</code> 目录启动静态服务器，然后打开 <code>/frontend/index.html</code>；页面会读取 <code>../workspace/results/</code>。</p>
-      </div>
-    </section>
+        <section id="settingsView" class="view-panel">
+          <div class="breadcrumb">首页 / 设置</div>
+          <section class="section">
+            <div class="section-head">
+              <h2 id="settingsCard">设置</h2>
+              <span class="muted">SSH / LLM 长期设置</span>
+            </div>
+            <div class="settings-group">
+              <div class="settings-group-head"><span>远程 SSH</span><span class="chip ok" id="sshStatus">SSH：未填写</span></div>
+              <div class="settings-grid">
+                <div class="field"><label for="settingSshHost">Host</label><input id="settingSshHost" placeholder="ssh.modelforge.com" autocomplete="off"></div>
+                <div class="field"><label for="settingSshPort">Port</label><input id="settingSshPort" type="number" value="22"></div>
+                <div class="field"><label for="settingSshUsername">Username</label><input id="settingSshUsername" placeholder="ubuntu" autocomplete="off"></div>
+                <div class="field"><label for="settingAuthType">Auth</label><select id="settingAuthType"><option value="password">password</option><option value="key">key</option></select></div>
+                <div class="field"><label for="settingPasswordEnv">Password Env</label><input id="settingPasswordEnv" value="KERNEL_AGENT_SSH_PASSWORD" autocomplete="off"></div>
+                <div class="field"><label for="settingKeyPath">Key Path</label><input id="settingKeyPath" placeholder="~/.ssh/id_rsa" autocomplete="off"></div>
+                <div class="field"><label for="settingRemoteWorkspace">Workspace</label><input id="settingRemoteWorkspace" placeholder="/tmp/kernel_opt_workspace" autocomplete="off"></div>
+              </div>
+            </div>
+            <div class="settings-group">
+              <div class="settings-group-head"><span>LLM API</span><span class="chip ok" id="llmStatus">LLM：未填写</span></div>
+              <div class="settings-grid">
+                <div class="field"><label for="settingLlmBaseUrl">Base URL</label><input id="settingLlmBaseUrl" value="https://api.openai.com/v1" autocomplete="off"></div>
+                <div class="field"><label for="settingApiKeyEnv">API Key Env</label><input id="settingApiKeyEnv" value="OPENAI_API_KEY" autocomplete="off"></div>
+                <div class="field"><label for="settingLlmModel">Model</label><input id="settingLlmModel" value="gpt-4o-mini" autocomplete="off"></div>
+              </div>
+            </div>
+            <div class="status-grid">
+              <span class="chip" id="passwordEnvStatus">SSH password env：未检查</span>
+              <span class="chip" id="apiKeyEnvStatus">LLM API key env：未检查</span>
+              <span class="chip" id="connectionStatus">SSH 连接：未测试</span>
+            </div>
+            <div class="save-row">
+              <button id="loadSettingsBtn" class="secondary" type="button">读取后端设置</button>
+              <button id="saveSettingsBtn" type="button">保存设置</button>
+              <button id="testConnectionBtn" class="secondary" type="button">测试远程连接</button>
+              <button id="clearSettingsBtn" class="secondary" type="button">清空浏览器设置</button>
+            </div>
+            <div class="settings-note" style="margin-top:12px">页面不显示真实 password 或 API key，只保存环境变量名或 key path。</div>
+          </section>
+        </section>
 
-    <div id="alerts" class="alerts"></div>
-
-    <section class="section" id="hardwareSection">
-      <div class="section-head">
-        <h2>????</h2>
-        <span class="muted" id="hardwareStatus">waiting</span>
-      </div>
-      <p class="section-kicker">读取 <code>hardware_detected.yaml</code>，展示 hardware name、backend、source、confidence 和 unknown 字段。</p>
-      <div id="hardwarePanel"></div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <h2>硬件 Probe</h2>
-        <span class="muted" id="probeStatus">waiting</span>
-      </div>
-      <p class="section-kicker">读取 <code>hardware_probe.jsonl</code>。safe_probe 不是官方硬件上限；local_mock 不代表真实硬件验证。</p>
-      <div id="probePanel"></div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <h2>Profiler 指标</h2>
-        <span class="muted" id="profilerStatus">waiting</span>
-      </div>
-      <p class="section-kicker">只读 <code>profiler_results.jsonl</code>。缺失指标显示 null / unavailable，不伪造 profiler 结果。</p>
-      <div id="profilerPanel"></div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <h2>Bottleneck diagnosis</h2>
-        <span class="muted" id="diagnosisStatus">waiting</span>
-      </div>
-      <p class="section-kicker">只读 <code>diagnosis.jsonl</code>，展示 bottleneck、confidence、evidence 和 uncertainty。</p>
-      <div id="diagnosisPanel"></div>
-    </section>
-
-    <section class="section" id="pathsSection">
-      <div class="section-head">
-        <h2>Patch 尝试记录</h2>
-        <span class="muted" id="patchTrialsStatus">waiting</span>
-      </div>
-      <p class="section-kicker">只读 <code>patch_trials.jsonl</code>，展示 patch 名称、状态、收益和失败原因。</p>
-      <div id="patchTrialsPanel" class="table-wrap"></div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <h2>Baseline vs Best 对比</h2>
-        <span class="muted" id="sourceNote">waiting</span>
-      </div>
-      <p class="section-kicker">对比 baseline 与预算内 best-seen，默认以 latency 越低越好计算提升。</p>
-      <div class="compare-grid" id="compareGrid"></div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <h2>Baseline vs Best Diff</h2>
-        <span class="muted" id="bestDiffStatus">waiting</span>
-      </div>
-      <p class="section-kicker">只读 <code>best_vs_baseline.diff</code>，用于验收 best kernel 相对 baseline 的代码差异。</p>
-      <pre id="bestDiffText">waiting</pre>
-    </section>
-
-    <section class="section grid-2">
-      <div>
-        <div class="section-head">
-          <h2>Latency / TFLOPS / Bandwidth 趋势</h2>
-          <span class="muted">成功候选按轮次 / 候选序号排序</span>
-        </div>
-        <div class="chart" id="trendChart"></div>
-      </div>
-      <div>
-        <div class="section-head">
-          <h2>最佳配置 Best Config</h2>
-          <span class="muted" id="bestIdentity">waiting</span>
-        </div>
-        <pre id="bestConfig">waiting</pre>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <h2>候选明细</h2>
-        <span class="muted" id="trialCount">waiting</span>
-      </div>
-      <div id="candidateTable" class="table-wrap"></div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <h2>失败案例</h2>
-        <span class="muted" id="failedCount">waiting</span>
-      </div>
-      <div id="failedCases"></div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <h2>日志 / Patch 路径</h2>
-        <span class="muted">只展示路径，不读取内容</span>
-      </div>
-      <div id="pathsTable" class="table-wrap"></div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <h2>report.md</h2>
-        <span class="muted">已做基础脱敏</span>
-      </div>
-      <pre id="reportText">waiting</pre>
-    </section>
+        <section id="developerView" class="view-panel">
+          <div class="breadcrumb">首页 / 开发者模式</div>
+          <section class="section">
+            <div class="section-head">
+              <h2>开发者模式</h2>
+              <span class="muted">低优先级入口</span>
+            </div>
+            <div class="action-bar">
+              <button id="downloadRunRequestYamlBtn" class="secondary" type="button">下载 run_request.yaml</button>
+              <button id="copyRunCommandBtn" class="secondary" type="button">复制 CLI 命令</button>
+              <button id="downloadSettingsBtn" class="secondary" type="button">下载 settings.yaml</button>
+              <button id="chooseDirBtn" class="secondary" type="button">选择结果目录</button>
+              <button id="reloadBtn" class="secondary" type="button">刷新本地结果</button>
+            </div>
+            <div class="field" style="margin-top:12px">
+              <label for="runCommandOutput">CLI 命令</label>
+              <input id="runCommandOutput" readonly value="python main.py --run-request run_request.yaml --settings settings.yaml">
+            </div>
+            <textarea id="settingsOutput" readonly style="margin-top:12px" placeholder="settings.yaml 预览；不包含密钥值。"></textarea>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>本地结果查看器</h2>
+              <span class="muted" id="sourceNote">waiting</span>
+            </div>
+            <p class="section-kicker">只读结果文件模式用于开发验收，不作为普通用户主入口。</p>
+            <div class="compare-grid" id="compareGrid"></div>
+          </section>
+          <section class="section grid-2">
+            <div>
+              <div class="section-head">
+                <h2>Latency / TFLOPS / Bandwidth 趋势</h2>
+                <span class="muted">成功候选按轮次 / 候选序号排序</span>
+              </div>
+              <div class="chart" id="trendChart"></div>
+            </div>
+            <div>
+              <div class="section-head">
+                <h2>Best Config</h2>
+                <span class="muted" id="bestIdentity">waiting</span>
+              </div>
+              <pre id="bestConfig">waiting</pre>
+            </div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>候选明细</h2>
+              <span class="muted" id="trialCount">waiting</span>
+            </div>
+            <div id="candidateTable" class="table-wrap"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>失败案例</h2>
+              <span class="muted" id="failedCount">waiting</span>
+            </div>
+            <div id="failedCases"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>日志 / Patch 路径</h2>
+              <span class="muted">只展示路径，不读取内容</span>
+            </div>
+            <div id="pathsTable" class="table-wrap"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>best_vs_baseline.diff</h2>
+              <span class="muted" id="bestDiffStatus">waiting</span>
+            </div>
+            <pre id="bestDiffText">waiting</pre>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>report.md</h2>
+              <span class="muted">已做基础脱敏</span>
+            </div>
+            <pre id="reportText">waiting</pre>
+          </section>
         </section>
       </div>
     </div>
@@ -1492,6 +1495,7 @@
       reloadBtn: document.getElementById("reloadBtn"),
       v2ProjectName: document.getElementById("v2ProjectName"),
       v2GpuModel: document.getElementById("v2GpuModel"),
+      v2Backend: document.getElementById("v2Backend"),
       v2BuildCommand: document.getElementById("v2BuildCommand"),
       v2BenchmarkCommand: document.getElementById("v2BenchmarkCommand"),
       v2CorrectnessCommand: document.getElementById("v2CorrectnessCommand"),
@@ -1503,7 +1507,9 @@
       v2MaxIterations: document.getElementById("v2MaxIterations"),
       v2CandidatesPerIteration: document.getElementById("v2CandidatesPerIteration"),
       v2TimeoutSeconds: document.getElementById("v2TimeoutSeconds"),
+      v2ProfilerEnabled: document.getElementById("v2ProfilerEnabled"),
       v2ProfilerType: document.getElementById("v2ProfilerType"),
+      v2PatchingEnabled: document.getElementById("v2PatchingEnabled"),
       v2SampleFile: document.getElementById("v2SampleFile"),
       v2SampleText: document.getElementById("v2SampleText"),
       v2HardwareEditor: document.getElementById("v2HardwareEditor"),
@@ -1535,6 +1541,8 @@
       connectionStatus: document.getElementById("connectionStatus"),
       sshStatus: document.getElementById("sshStatus"),
       llmStatus: document.getElementById("llmStatus"),
+      startSshStatus: document.getElementById("startSshStatus"),
+      startLlmStatus: document.getElementById("startLlmStatus"),
     };
 
     document.querySelectorAll("[data-view-target]").forEach((button) => {
@@ -1552,6 +1560,7 @@
     el.reloadBtn.addEventListener("click", loadAndRender);
     el.v2SampleFile.addEventListener("change", readSampleFile);
     el.v2GpuModel.addEventListener("input", renderHardwareEditor);
+    el.v2Backend.addEventListener("input", renderHardwareEditor);
     el.resolveHardwareBtn.addEventListener("click", resolveHardwareProfile);
     el.startOptimizationBtn.addEventListener("click", startOptimization);
     el.v2BudgetMode.addEventListener("change", applyBudgetPreset);
@@ -1578,10 +1587,9 @@
     applyBudgetPreset();
     renderHardwareEditor();
     updateStartButtonState();
-    renderTaskWaiting("等待任务启动。");
+    renderTaskWaiting("暂无任务，点击开始优化后这里会显示进度。");
     renderTaskList();
     checkApiHealth();
-    loadAndRender();
 
     function activateView(targetId) {
       document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.viewTarget === targetId));
@@ -1760,6 +1768,8 @@
       setEnvStatusChip(el.apiKeyEnvStatus, "LLM API key env", state.settingsEnv.apiKeyEnvExists);
       setStatusChip(el.sshStatus, "SSH", !!(settings.ssh_host && settings.ssh_username && settings.remote_workspace));
       setStatusChip(el.llmStatus, "LLM", !!(settings.llm_base_url && settings.llm_model && settings.api_key_env));
+      setStartSettingChip(el.startSshStatus, "SSH", !!(settings.ssh_host && settings.ssh_username && settings.remote_workspace));
+      setStartSettingChip(el.startLlmStatus, "LLM", !!(settings.llm_base_url && settings.llm_model && settings.api_key_env));
     }
 
     function settingsFileObject() {
@@ -1797,6 +1807,11 @@
     function setStatusChip(node, label, configured) {
       node.className = `chip ${configured ? "ok" : "warn"}`;
       node.textContent = `${label}：${configured ? "已填写" : "未填写"}`;
+    }
+
+    function setStartSettingChip(node, label, configured) {
+      node.className = `chip ${configured ? "ok" : "warn"}`;
+      node.textContent = `${label}：${configured ? "已保存" : "未配置"}`;
     }
 
     function setEnvStatusChip(node, label, exists) {
@@ -2082,18 +2097,21 @@
       const hardware = state.resolvedHardware || state.hardware || { fields: {} };
       const detectedFields = hardware.fields || {};
       const gpuModel = el.v2GpuModel.value.trim();
+      const backendInput = el.v2Backend.value.trim();
       const rows = HARDWARE_FIELD_NAMES.map((field) => {
         const detected = detectedFields[field] || {};
         const userTarget = field === "target_name" && gpuModel;
+        const userBackend = field === "backend" && backendInput && backendInput !== "unknown";
         const override = state.hardwareOverrides[field];
-        const value = override !== undefined ? override : (userTarget ? gpuModel : pick(detected.value, field === "target_name" ? gpuModel : "", ""));
-        const source = override !== undefined ? "用户修改" : (userTarget ? "user_input" : pick(detected.source, value ? "user_input" : "unknown"));
-        const confidence = override !== undefined ? "high" : (userTarget ? "medium" : pick(detected.confidence, value ? "medium" : "unknown"));
-        const notes = userTarget ? "from V2 GPU model input" : pick(detected.notes, value ? "from V2 form input" : "not available yet");
+        const formValue = userTarget ? gpuModel : userBackend ? backendInput : "";
+        const value = override !== undefined ? override : pick(detected.value, formValue, "");
+        const source = override !== undefined ? "用户修改" : (formValue ? "user_input" : pick(detected.source, value ? "user_input" : "unknown"));
+        const confidence = override !== undefined ? "high" : (formValue ? "medium" : pick(detected.confidence, value ? "medium" : "unknown"));
+        const notes = formValue ? "from V2 user input" : pick(detected.notes, value ? "from V2 form input" : "not available yet");
         return { field, value, unit: unitForHardwareField(field), source, confidence, modified: override !== undefined, notes };
       });
       el.v2HardwareEditor.innerHTML = `<table>
-        <thead><tr><th>字段</th><th>value</th><th>unit</th><th>source</th><th>confidence</th><th>状态</th></tr></thead>
+        <thead><tr><th>字段</th><th>值</th><th>单位</th><th>来源</th><th>置信度</th><th>是否可编辑</th></tr></thead>
         <tbody>
           ${rows.map((row) => `<tr>
             <td>${escapeHtml(row.field)}</td>
@@ -2101,7 +2119,7 @@
             <td>${escapeHtml(row.unit)}</td>
             <td>${escapeHtml(display(row.source))}</td>
             <td>${escapeHtml(display(row.confidence))}</td>
-            <td>${row.modified ? `<span class="badge best">用户修改</span>` : `<span class="badge warn">自动补全</span>`}</td>
+            <td>${row.modified ? `<span class="badge best">用户修改</span>` : `<span class="badge warn">可编辑</span>`}</td>
           </tr>`).join("")}
         </tbody>
       </table>`;
@@ -2221,7 +2239,7 @@
         },
         target: {
           gpu_model: sanitizeText(el.v2GpuModel.value.trim()),
-          backend: "unknown",
+          backend: sanitizeText(el.v2Backend.value.trim() || "unknown"),
         },
         settings_ref: {
           use_saved_settings: true,
@@ -2237,11 +2255,11 @@
           objective: "latency",
         },
         profiler: {
-          enabled: true,
+          enabled: el.v2ProfilerEnabled.value === "true",
           type: el.v2ProfilerType.value,
         },
         patching: {
-          enabled: false,
+          enabled: el.v2PatchingEnabled.value === "true",
           run_controlled_trial: false,
         },
       };
@@ -2275,14 +2293,14 @@
           cache: "no-store",
         });
       } catch (error) {
-        throw new Error("后端服务未启动，请运行 python -m kernel_opt_agent.server.app");
+        throw new Error("后端服务未启动，请确认本地服务已开启。");
       }
       const contentType = response.headers.get("content-type") || "";
       const payload = contentType.includes("application/json") ? await response.json() : await response.text();
       if (!response.ok) {
         const detail = typeof payload === "object" ? (payload.detail || payload.error || JSON.stringify(payload)) : payload;
-        if (response.status === 404 && path.startsWith("/api/")) throw new Error("后端服务未启动，请运行 python -m kernel_opt_agent.server.app");
-        if (response.status === 502 && String(detail).includes("backend API unavailable")) throw new Error("后端服务未启动，请运行 python -m kernel_opt_agent.server.app");
+        if (response.status === 404 && path.startsWith("/api/")) throw new Error("后端服务未启动，请确认本地服务已开启。");
+        if (response.status === 502 && String(detail).includes("backend API unavailable")) throw new Error("后端服务未启动，请确认本地服务已开启。");
         throw new Error(detail || `${response.status} ${response.statusText}`);
       }
       return payload;
@@ -2300,7 +2318,7 @@
         renderAlerts();
       } catch (error) {
         state.apiHealthy = false;
-        state.apiError = error.message || "后端服务未启动，请运行 python -m kernel_opt_agent.server.app";
+        state.apiError = error.message || "后端服务未启动，请确认本地服务已开启。";
         el.apiHealthStatus.className = "chip bad";
         el.apiHealthStatus.textContent = "API：未启动";
         renderTaskWaiting(state.apiError);
@@ -2319,7 +2337,7 @@
           method: "POST",
           body: {
             gpu_model: sanitizeText(el.v2GpuModel.value.trim() || "unknown"),
-            backend: "unknown",
+            backend: sanitizeText(el.v2Backend.value.trim() || "unknown"),
             user_overrides: readHardwareOverrideFields(),
             allow_llm_lookup: false,
             allow_web_lookup: false,
@@ -2336,7 +2354,7 @@
         addOneShotWarning(`硬件参数解析失败：${error.message}`);
       } finally {
         el.resolveHardwareBtn.disabled = false;
-        el.resolveHardwareBtn.textContent = "自动搜索硬件参数";
+        el.resolveHardwareBtn.textContent = "解析硬件参数";
         renderAlerts();
       }
     }
@@ -2357,7 +2375,7 @@
         sample,
         target: {
           gpu_model: inputValue("v2GpuModel") || "unknown",
-          backend: String(pick(state.hardwareOverrides.backend, state.resolvedHardware?.fields?.backend?.value, "unknown")),
+          backend: String(pick(state.hardwareOverrides.backend, inputValue("v2Backend"), state.resolvedHardware?.fields?.backend?.value, "unknown")),
           user_overrides: readHardwareOverrideFields(),
           allow_llm_lookup: false,
           allow_web_lookup: false,
@@ -2375,11 +2393,11 @@
           objective: "latency",
         },
         profiler: {
-          enabled: true,
+          enabled: el.v2ProfilerEnabled.value === "true",
           type: "dummy",
         },
         patching: {
-          enabled: false,
+          enabled: el.v2PatchingEnabled.value === "true",
           run_controlled_trial: false,
         },
         runner: {
@@ -2419,6 +2437,7 @@
       el.startOptimizationBtn.disabled = true;
       el.startOptimizationBtn.textContent = "提交中";
       renderTaskWaiting("正在调用 POST /api/tasks，等待后端返回 task_id。");
+      activateView("taskView");
       try {
         const payload = await apiFetch("/api/tasks", { method: "POST", body: request });
         state.activeTaskId = payload.task_id;
@@ -2427,7 +2446,6 @@
         state.taskResults = null;
         el.cancelTaskBtn.disabled = false;
         renderTaskDetail();
-        activateView("startView");
         loadTaskList();
         startTaskPolling();
       } catch (error) {
@@ -2535,7 +2553,7 @@
     async function loadTaskList() {
       if (!state.apiHealthy) {
         state.taskList = [];
-        renderTaskList(state.apiError || "后端服务未启动，请运行 python -m kernel_opt_agent.server.app");
+        renderTaskList(state.apiError || "后端服务未启动，请确认本地服务已开启。");
         return;
       }
       el.taskListPanel.innerHTML = `<div class="empty">正在读取最近任务。</div>`;
@@ -2601,7 +2619,7 @@
     function renderTaskDetail() {
       const task = state.task;
       if (!task) {
-        renderTaskWaiting("等待任务启动。");
+        renderTaskWaiting("暂无任务，点击开始优化后这里会显示进度。");
         return;
       }
       const latestEvent = state.taskEvents[state.taskEvents.length - 1] || task.events?.[task.events.length - 1] || null;
@@ -2612,12 +2630,12 @@
       el.taskStatus.textContent = task.status || "waiting";
       el.taskDetailPanel.innerHTML = `
         <div class="compare-grid">
-          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(task.current_stage || latestEvent?.type || task.status))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div><div>message</div><div>${escapeHtml(display(task.latest_message || latestEvent?.message))}</div></div></article>
-          <article class="result-card"><div class="metric-label">trial 数量</div><div class="metric-main">${display(pick(task.total_trials, summary.length || null))}</div><div class="kv"><div>iteration</div><div>${escapeHtml(display(task.current_iteration))}</div><div>results</div><div>${escapeHtml(display(task.results_dir))}</div></div></article>
-          <article class="result-card"><div class="metric-label">提升比例</div><div class="metric-main ${numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${improvement === null || improvement === undefined ? "waiting" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>baseline</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.objective_value, baseline?.latency)))}</div><div>best</div><div>${escapeHtml(display(pick(task.best_latency, best?.objective_value, best?.latency)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(task.current_stage || latestEvent?.type || task.status))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
+          <article class="result-card"><div class="metric-label">当前 trial 数</div><div class="metric-main">${display(pick(task.total_trials, summary.length || null))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>current best latency</div><div>${escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${improvement === null || improvement === undefined ? "waiting" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(task.latest_message || latestEvent?.message))}</div><div>事件类型</div><div>${escapeHtml(display(latestEvent?.type))}</div></div></article>
         </div>
         ${task.error ? `<div class="empty">失败原因：${escapeHtml(task.error)}</div>` : ""}
-        <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${(state.taskEvents || task.events || []).slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(event.type))}</td><td>${escapeHtml(display(event.message))}</td></tr>`).join("") || `<tr><td colspan="3">等待日志事件</td></tr>`}</tbody></table></div>
+        <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${(state.taskEvents || task.events || []).slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(event.type))}</td><td>${escapeHtml(display(event.message))}</td></tr>`).join("") || `<tr><td colspan="3">暂无任务事件</td></tr>`}</tbody></table></div>
       `;
     }
 
@@ -2634,18 +2652,36 @@
       el.downloadReportBtn.disabled = !reportMarkdown;
       const summary = Array.isArray(results.summary_table) ? results.summary_table : (Array.isArray(results.summary) ? results.summary : []);
       const failedCases = Array.isArray(results.failed_cases) ? results.failed_cases : [];
+      const baseline = summary[0] || {};
+      const best = results.best_row || summary.find((row) => row.status === "benchmark_ok") || {};
+      const bestTrialId = pick(best.trial_id, best.candidate_id, best.config_hash, "waiting");
       el.apiResultsPanel.innerHTML = `
         <div class="compare-grid">
-          <article class="result-card"><div class="metric-label">best kernel</div><pre>${escapeHtml(results.best_kernel || "等待结果文件：best_kernel.py")}</pre></article>
-          <article class="result-card"><div class="metric-label">best config</div><pre>${escapeHtml(results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "等待结果文件：best_config.yaml")}</pre></article>
-          <article class="result-card"><div class="metric-label">提升比例</div><div class="metric-main">${results.improvement_percent === null || results.improvement_percent === undefined ? "waiting" : `${formatNumber(results.improvement_percent)}%`}</div></article>
+          <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(pick(baseline.latency, baseline.objective_value, state.task?.baseline_latency)))}</div></article>
+          <article class="result-card best-card"><div class="metric-label">best latency</div><div class="metric-main best">${escapeHtml(display(pick(best.latency, best.objective_value, state.task?.best_latency)))}</div><div class="kv"><div>best trial id</div><div>${escapeHtml(display(bestTrialId))}</div></div></article>
+          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${results.improvement_percent === null || results.improvement_percent === undefined ? "waiting" : `${formatNumber(results.improvement_percent)}%`}</div></article>
         </div>
-        <h3>summary</h3>
-        <div class="table-wrap">${summary.length ? `<table><thead><tr>${Object.keys(summary[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${summary.map((row) => `<tr>${Object.keys(summary[0]).map((key) => `<td>${escapeHtml(display(row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录：summary.csv 尚未返回。</div>`}</div>
-        <h3>failed cases</h3>
-        <div class="table-wrap">${failedCases.length ? `<table><thead><tr>${Object.keys(failedCases[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${failedCases.map((row) => `<tr>${Object.keys(failedCases[0]).map((key) => `<td>${escapeHtml(display(typeof row[key] === "object" ? JSON.stringify(redactObject(row[key])) : row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录：failed_cases.jsonl 为空或尚未返回。</div>`}</div>
-        <h3>report</h3>
+        <h3>best kernel</h3>
+        <pre>${escapeHtml(results.best_kernel || "等待结果文件：best_kernel.py")}</pre>
+        <h3>best_config.yaml</h3>
+        <pre>${escapeHtml(results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "等待结果文件：best_config.yaml")}</pre>
+        <h3>report.md</h3>
         <pre>${escapeHtml(reportMarkdown || "等待结果文件：report.md")}</pre>
+        <details style="margin-top:12px">
+          <summary>高级详情</summary>
+          <h3>summary.csv</h3>
+          <div class="table-wrap">${summary.length ? `<table><thead><tr>${Object.keys(summary[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${summary.map((row) => `<tr>${Object.keys(summary[0]).map((key) => `<td>${escapeHtml(display(row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录。</div>`}</div>
+          <h3>failed_cases.jsonl</h3>
+          <div class="table-wrap">${failedCases.length ? `<table><thead><tr>${Object.keys(failedCases[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${failedCases.map((row) => `<tr>${Object.keys(failedCases[0]).map((key) => `<td>${escapeHtml(display(typeof row[key] === "object" ? JSON.stringify(redactObject(row[key])) : row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录。</div>`}</div>
+          <h3>profiler_results.jsonl</h3>
+          <pre>${escapeHtml(JSON.stringify(redactObject(results.profiler_results || results.profiler || null), null, 2))}</pre>
+          <h3>diagnosis.jsonl</h3>
+          <pre>${escapeHtml(JSON.stringify(redactObject(results.diagnosis || null), null, 2))}</pre>
+          <h3>patch_trials.jsonl</h3>
+          <pre>${escapeHtml(JSON.stringify(redactObject(results.patch_trials || null), null, 2))}</pre>
+          <h3>best_vs_baseline.diff</h3>
+          <pre>${escapeHtml(results.best_vs_baseline_diff || "unavailable")}</pre>
+        </details>
       `;
     }
 
@@ -3026,7 +3062,7 @@
         addAlert("warn", `以下结果文件仍在 waiting：<ul class="waiting-list">${list}</ul>通常表示后端尚未跑完，或选择的不是 workspace/results/。`);
       }
       for (const warning of state.warnings) addAlert("warn", escapeHtml(warning));
-      if (!state.missing.length && !state.warnings.length) addAlert("ok", "已读取本地结果文件。高级文件模式只读结果文件。");
+      if (state.lastLoadedAt && !state.missing.length && !state.warnings.length) addAlert("ok", "已读取本地结果文件。开发者模式只读结果文件。");
     }
 
     function renderCompare(data) {
