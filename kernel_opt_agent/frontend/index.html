@@ -1137,6 +1137,18 @@
                       <option value="deep">深入：5 rounds / 6 candidates / 5 patches</option>
                     </select>
                   </div>
+                  <div class="field">
+                    <label for="v2MaxIterations">最大迭代次数</label>
+                    <input id="v2MaxIterations" type="number" min="1" step="1" value="3">
+                  </div>
+                  <div class="field">
+                    <label for="v2CandidatesPerIteration">每轮候选数</label>
+                    <input id="v2CandidatesPerIteration" type="number" min="1" step="1" value="4">
+                  </div>
+                  <div class="field">
+                    <label for="v2TimeoutSeconds">timeout 秒数</label>
+                    <input id="v2TimeoutSeconds" type="number" min="1" step="1" value="60">
+                  </div>
                 </div>
                 <p class="section-kicker">点击“自动搜索硬件参数”会调用 <code>POST /api/hardware/resolve</code>；后端未返回时保持等待，不伪造硬件能力。</p>
               </section>
@@ -1441,9 +1453,9 @@
       "hbm_bandwidth_GBps",
     ];
     const BUDGET_PRESETS = {
-      quick: { max_iterations: 1, candidates_per_iteration: 3 },
-      standard: { max_iterations: 3, candidates_per_iteration: 4 },
-      deep: { max_iterations: 5, candidates_per_iteration: 6 },
+      quick: { max_iterations: 1, candidates_per_iteration: 3, timeout_seconds: 60 },
+      standard: { max_iterations: 3, candidates_per_iteration: 4, timeout_seconds: 60 },
+      deep: { max_iterations: 5, candidates_per_iteration: 6, timeout_seconds: 60 },
     };
     const FIXED_RESULT_DIR = "../workspace/results/";
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
@@ -1488,6 +1500,9 @@
       v2SamplePath: document.getElementById("v2SamplePath"),
       v2RunnerType: document.getElementById("v2RunnerType"),
       v2BudgetMode: document.getElementById("v2BudgetMode"),
+      v2MaxIterations: document.getElementById("v2MaxIterations"),
+      v2CandidatesPerIteration: document.getElementById("v2CandidatesPerIteration"),
+      v2TimeoutSeconds: document.getElementById("v2TimeoutSeconds"),
       v2ProfilerType: document.getElementById("v2ProfilerType"),
       v2SampleFile: document.getElementById("v2SampleFile"),
       v2SampleText: document.getElementById("v2SampleText"),
@@ -1539,6 +1554,10 @@
     el.v2GpuModel.addEventListener("input", renderHardwareEditor);
     el.resolveHardwareBtn.addEventListener("click", resolveHardwareProfile);
     el.startOptimizationBtn.addEventListener("click", startOptimization);
+    el.v2BudgetMode.addEventListener("change", applyBudgetPreset);
+    [el.v2MaxIterations, el.v2CandidatesPerIteration, el.v2TimeoutSeconds].forEach((input) => {
+      input.addEventListener("input", updateStartButtonState);
+    });
     el.cancelTaskBtn.addEventListener("click", cancelActiveTask);
     el.refreshTaskListBtn.addEventListener("click", loadTaskList);
     el.refreshTaskResultsBtn.addEventListener("click", refreshTaskResults);
@@ -1556,7 +1575,9 @@
       document.getElementById(id).addEventListener("input", () => { updateSettingStatus(); renderSettingsOutput(); });
     });
     loadSettings();
+    applyBudgetPreset();
     renderHardwareEditor();
+    updateStartButtonState();
     renderTaskWaiting("等待任务启动。");
     renderTaskList();
     checkApiHealth();
@@ -2133,8 +2154,55 @@
       return "-";
     }
 
+    function applyBudgetPreset() {
+      const preset = BUDGET_PRESETS[el.v2BudgetMode.value] || BUDGET_PRESETS.standard;
+      el.v2MaxIterations.value = preset.max_iterations;
+      el.v2CandidatesPerIteration.value = preset.candidates_per_iteration;
+      el.v2TimeoutSeconds.value = preset.timeout_seconds;
+      updateStartButtonState();
+    }
+
+    function readBudgetInputs() {
+      return {
+        max_iterations: Number(el.v2MaxIterations.value),
+        candidates_per_iteration: Number(el.v2CandidatesPerIteration.value),
+        timeout_seconds: Number(el.v2TimeoutSeconds.value),
+      };
+    }
+
+    function budgetValidationError() {
+      const budget = readBudgetInputs();
+      if (!Number.isInteger(budget.max_iterations) || budget.max_iterations < 1) return "最大迭代次数必须是大于等于 1 的整数。";
+      if (!Number.isInteger(budget.candidates_per_iteration) || budget.candidates_per_iteration < 1) return "每轮候选数必须是大于等于 1 的整数。";
+      if (!Number.isInteger(budget.timeout_seconds) || budget.timeout_seconds < 1) return "timeout 秒数必须是大于等于 1 的整数。";
+      return "";
+    }
+
+    function budgetFieldError(input, message) {
+      const value = Number(input.value);
+      return message && (!Number.isInteger(value) || value < 1) ? message : "";
+    }
+
+    function updateStartButtonState() {
+      const error = budgetValidationError();
+      el.v2MaxIterations.setCustomValidity(budgetFieldError(el.v2MaxIterations, error));
+      el.v2CandidatesPerIteration.setCustomValidity(budgetFieldError(el.v2CandidatesPerIteration, error));
+      el.v2TimeoutSeconds.setCustomValidity(budgetFieldError(el.v2TimeoutSeconds, error));
+      el.startOptimizationBtn.disabled = !!error;
+      if (error) {
+        el.taskStatus.textContent = "waiting";
+        el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(error)}</div>`;
+      }
+    }
+
     function generateRunRequest() {
-      const budget = BUDGET_PRESETS[el.v2BudgetMode.value] || BUDGET_PRESETS.standard;
+      const budgetError = budgetValidationError();
+      if (budgetError) {
+        addOneShotWarning(budgetError);
+        renderAlerts();
+        return;
+      }
+      const budget = readBudgetInputs();
       const sampleText = sanitizeText(el.v2SampleText.value);
       const sourceType = el.v2SampleSourceType.value || "inline";
       const request = {
@@ -2165,7 +2233,7 @@
           strategy: "rule_based",
           max_iterations: budget.max_iterations,
           candidates_per_iteration: budget.candidates_per_iteration,
-          timeout_seconds: 60,
+          timeout_seconds: budget.timeout_seconds,
           objective: "latency",
         },
         profiler: {
@@ -2274,7 +2342,7 @@
     }
 
     function buildApiTaskRequest() {
-      const budget = BUDGET_PRESETS[el.v2BudgetMode.value] || BUDGET_PRESETS.standard;
+      const budget = readBudgetInputs();
       const sampleText = sanitizeText(el.v2SampleText.value);
       const sourceType = el.v2SampleSourceType.value || "inline";
       const usePath = sourceType === "path" || (sourceType === "upload" && inputValue("v2SamplePath"));
@@ -2303,7 +2371,7 @@
           strategy: "rule_based",
           max_iterations: budget.max_iterations,
           candidates_per_iteration: budget.candidates_per_iteration,
-          timeout_seconds: 60,
+          timeout_seconds: budget.timeout_seconds,
           objective: "latency",
         },
         profiler: {
@@ -2324,6 +2392,15 @@
       if (!state.apiHealthy) {
         await checkApiHealth();
         if (!state.apiHealthy) return;
+      }
+      const budgetError = budgetValidationError();
+      if (budgetError) {
+        el.taskStatus.textContent = "waiting";
+        el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(budgetError)}</div>`;
+        addOneShotWarning(budgetError);
+        renderAlerts();
+        updateStartButtonState();
+        return;
       }
       const request = buildApiTaskRequest();
       const remoteBlocker = remoteRunnerBlocker(request.runner.type);
@@ -2357,8 +2434,8 @@
         el.taskStatus.textContent = "failed";
         el.taskDetailPanel.innerHTML = `<div class="empty">任务启动失败：${escapeHtml(error.message)}</div>`;
       } finally {
-        el.startOptimizationBtn.disabled = false;
         el.startOptimizationBtn.textContent = "开始优化";
+        updateStartButtonState();
       }
     }
 
