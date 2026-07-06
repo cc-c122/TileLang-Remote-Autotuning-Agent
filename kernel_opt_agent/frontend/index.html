@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TileLang 结果查看器</title>
+  <title>TileLang 算子优化 Agent</title>
   <link rel="icon" href="data:,">
   <style>
     :root {
@@ -1210,7 +1210,7 @@
           <section class="section">
             <div class="section-head">
               <h2>任务详情</h2>
-              <span class="muted" id="taskStatus">waiting</span>
+              <span class="muted" id="taskStatus">暂无任务</span>
             </div>
             <div class="action-bar">
               <button id="cancelTaskBtn" class="secondary" type="button" disabled>取消任务</button>
@@ -1231,7 +1231,7 @@
           <section class="section">
             <div class="section-head">
               <h2>查看结果</h2>
-              <span class="muted" id="apiResultsStatus">waiting</span>
+              <span class="muted" id="apiResultsStatus">暂无结果</span>
             </div>
             <div class="action-bar">
               <button id="refreshTaskResultsBtn" class="secondary" type="button">刷新结果</button>
@@ -1247,7 +1247,7 @@
           <section class="section" id="hardwareSection">
             <div class="section-head">
               <h2>硬件画像</h2>
-              <span class="muted" id="hardwareStatus">waiting</span>
+              <span class="muted" id="hardwareStatus">尚未加载</span>
             </div>
             <p class="section-kicker">展示硬件名称、backend、source、confidence 和 unknown 字段。</p>
             <div id="hardwarePanel"></div>
@@ -1255,7 +1255,7 @@
           <section class="section">
             <div class="section-head">
               <h2>硬件 Probe</h2>
-              <span class="muted" id="probeStatus">waiting</span>
+              <span class="muted" id="probeStatus">尚未加载</span>
             </div>
             <p class="section-kicker">safe_probe 不是官方硬件上限；local_mock 不代表真实硬件验证。</p>
             <div id="probePanel"></div>
@@ -1263,21 +1263,21 @@
           <section class="section">
             <div class="section-head">
               <h2>Profiler 指标</h2>
-              <span class="muted" id="profilerStatus">waiting</span>
+              <span class="muted" id="profilerStatus">尚未加载</span>
             </div>
             <div id="profilerPanel"></div>
           </section>
           <section class="section">
             <div class="section-head">
               <h2>Bottleneck diagnosis</h2>
-              <span class="muted" id="diagnosisStatus">waiting</span>
+              <span class="muted" id="diagnosisStatus">尚未加载</span>
             </div>
             <div id="diagnosisPanel"></div>
           </section>
           <section class="section">
             <div class="section-head">
               <h2>Patch 尝试记录</h2>
-              <span class="muted" id="patchTrialsStatus">waiting</span>
+              <span class="muted" id="patchTrialsStatus">尚未加载</span>
             </div>
             <div id="patchTrialsPanel" class="table-wrap"></div>
           </section>
@@ -1348,7 +1348,7 @@
           <section class="section">
             <div class="section-head">
               <h2>本地结果查看器</h2>
-              <span class="muted" id="sourceNote">waiting</span>
+              <span class="muted" id="sourceNote">暂无本地结果文件</span>
             </div>
             <p class="section-kicker">只读结果文件模式用于开发验收，不作为普通用户主入口。</p>
             <div class="compare-grid" id="compareGrid"></div>
@@ -1364,22 +1364,22 @@
             <div>
               <div class="section-head">
                 <h2>Best Config</h2>
-                <span class="muted" id="bestIdentity">waiting</span>
+                <span class="muted" id="bestIdentity">暂无数据</span>
               </div>
-              <pre id="bestConfig">waiting</pre>
+              <pre id="bestConfig">暂无本地结果文件</pre>
             </div>
           </section>
           <section class="section">
             <div class="section-head">
               <h2>候选明细</h2>
-              <span class="muted" id="trialCount">waiting</span>
+              <span class="muted" id="trialCount">暂无候选明细</span>
             </div>
             <div id="candidateTable" class="table-wrap"></div>
           </section>
           <section class="section">
             <div class="section-head">
               <h2>失败案例</h2>
-              <span class="muted" id="failedCount">waiting</span>
+              <span class="muted" id="failedCount">暂无失败案例</span>
             </div>
             <div id="failedCases"></div>
           </section>
@@ -1393,16 +1393,16 @@
           <section class="section">
             <div class="section-head">
               <h2>best_vs_baseline.diff</h2>
-              <span class="muted" id="bestDiffStatus">waiting</span>
+              <span class="muted" id="bestDiffStatus">暂无 diff</span>
             </div>
-            <pre id="bestDiffText">waiting</pre>
+            <pre id="bestDiffText">暂无 diff</pre>
           </section>
           <section class="section">
             <div class="section-head">
               <h2>report.md</h2>
               <span class="muted">已做基础脱敏</span>
             </div>
-            <pre id="reportText">waiting</pre>
+            <pre id="reportText">暂无 report</pre>
           </section>
         </section>
       </div>
@@ -2115,7 +2115,7 @@
         <tbody>
           ${rows.map((row) => `<tr>
             <td>${escapeHtml(row.field)}</td>
-            <td><input data-hardware-override="${escapeHtml(row.field)}" value="${escapeHtml(display(row.value) === "waiting" ? "" : display(row.value))}" placeholder="unavailable"></td>
+            <td><input data-hardware-override="${escapeHtml(row.field)}" value="${escapeHtml(display(row.value) === "暂无数据" ? "" : display(row.value))}" placeholder="unavailable"></td>
             <td>${escapeHtml(row.unit)}</td>
             <td>${escapeHtml(display(row.source))}</td>
             <td>${escapeHtml(display(row.confidence))}</td>
@@ -2208,7 +2208,7 @@
       el.v2TimeoutSeconds.setCustomValidity(budgetFieldError(el.v2TimeoutSeconds, error));
       el.startOptimizationBtn.disabled = !!error;
       if (error) {
-        el.taskStatus.textContent = "waiting";
+        el.taskStatus.textContent = "暂无任务";
         el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(error)}</div>`;
       }
     }
@@ -2322,7 +2322,7 @@
         el.apiHealthStatus.className = "chip bad";
         el.apiHealthStatus.textContent = "API：未启动";
         renderTaskWaiting(state.apiError);
-        el.apiResultsStatus.textContent = "waiting";
+        el.apiResultsStatus.textContent = "暂无结果";
         el.apiResultsPanel.innerHTML = `<div class="empty">${escapeHtml(state.apiError)}</div>`;
         renderTaskList(state.apiError);
         renderAlerts();
@@ -2413,7 +2413,7 @@
       }
       const budgetError = budgetValidationError();
       if (budgetError) {
-        el.taskStatus.textContent = "waiting";
+        el.taskStatus.textContent = "暂无任务";
         el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(budgetError)}</div>`;
         addOneShotWarning(budgetError);
         renderAlerts();
@@ -2423,7 +2423,7 @@
       const request = buildApiTaskRequest();
       const remoteBlocker = remoteRunnerBlocker(request.runner.type);
       if (remoteBlocker) {
-        el.taskStatus.textContent = "waiting";
+        el.taskStatus.textContent = "暂无任务";
         el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(remoteBlocker)}</div>`;
         addOneShotWarning(remoteBlocker);
         renderAlerts();
@@ -2518,7 +2518,7 @@
 
     async function refreshTaskResults() {
       if (!state.activeTaskId) {
-        el.apiResultsStatus.textContent = "waiting";
+        el.apiResultsStatus.textContent = "暂无结果";
         el.apiResultsPanel.innerHTML = `<div class="empty">等待任务结果：请先开始优化。</div>`;
         return;
       }
@@ -2578,7 +2578,7 @@
       el.taskListPanel.innerHTML = `<table>
         <thead><tr><th>task_id</th><th>项目</th><th>状态</th><th>提升比例</th><th>最新消息</th></tr></thead>
         <tbody>
-          ${state.taskList.map((task) => `<tr class="click-row" data-task-id="${escapeHtml(task.task_id)}"><td>${escapeHtml(shortId(task.task_id))}</td><td>${escapeHtml(display(task.project_name))}</td><td>${taskStatusBadge(task.status)}</td><td>${task.improvement_percent === null || task.improvement_percent === undefined ? "waiting" : `${formatNumber(task.improvement_percent)}%`}</td><td>${escapeHtml(display(task.latest_message))}</td></tr>`).join("")}
+          ${state.taskList.map((task) => `<tr class="click-row" data-task-id="${escapeHtml(task.task_id)}"><td>${escapeHtml(shortId(task.task_id))}</td><td>${escapeHtml(display(task.project_name))}</td><td>${taskStatusBadge(task.status)}</td><td>${task.improvement_percent === null || task.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(task.improvement_percent)}%`}</td><td>${escapeHtml(display(task.latest_message))}</td></tr>`).join("")}
         </tbody>
       </table>`;
       el.taskListPanel.querySelectorAll("[data-task-id]").forEach((row) => {
@@ -2612,7 +2612,7 @@
     }
 
     function renderTaskWaiting(message) {
-      el.taskStatus.textContent = "waiting";
+      el.taskStatus.textContent = "暂无任务";
       el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
     }
 
@@ -2627,12 +2627,12 @@
       const best = state.taskResults?.best_row || state.task?.best_row || null;
       const baseline = summary[0] || null;
       const improvement = pick(state.task?.improvement_percent, state.taskResults?.improvement_percent);
-      el.taskStatus.textContent = task.status || "waiting";
+      el.taskStatus.textContent = task.status || "暂无任务";
       el.taskDetailPanel.innerHTML = `
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(task.current_stage || latestEvent?.type || task.status))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
           <article class="result-card"><div class="metric-label">当前 trial 数</div><div class="metric-main">${display(pick(task.total_trials, summary.length || null))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>current best latency</div><div>${escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
-          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${improvement === null || improvement === undefined ? "waiting" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(task.latest_message || latestEvent?.message))}</div><div>事件类型</div><div>${escapeHtml(display(latestEvent?.type))}</div></div></article>
+          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(task.latest_message || latestEvent?.message))}</div><div>事件类型</div><div>${escapeHtml(display(latestEvent?.type))}</div></div></article>
         </div>
         ${task.error ? `<div class="empty">失败原因：${escapeHtml(task.error)}</div>` : ""}
         <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${(state.taskEvents || task.events || []).slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(event.type))}</td><td>${escapeHtml(display(event.message))}</td></tr>`).join("") || `<tr><td colspan="3">暂无任务事件</td></tr>`}</tbody></table></div>
@@ -2642,8 +2642,8 @@
     function renderApiResults() {
       const results = state.taskResults;
       if (!results) {
-        el.apiResultsStatus.textContent = "waiting";
-        el.apiResultsPanel.innerHTML = `<div class="empty">等待结果文件。</div>`;
+        el.apiResultsStatus.textContent = "暂无结果";
+        el.apiResultsPanel.innerHTML = `<div class="empty">暂无结果，任务完成后展示 best kernel 和 report。</div>`;
         return;
       }
       el.apiResultsStatus.textContent = state.task?.status || "已读取";
@@ -2654,12 +2654,12 @@
       const failedCases = Array.isArray(results.failed_cases) ? results.failed_cases : [];
       const baseline = summary[0] || {};
       const best = results.best_row || summary.find((row) => row.status === "benchmark_ok") || {};
-      const bestTrialId = pick(best.trial_id, best.candidate_id, best.config_hash, "waiting");
+      const bestTrialId = pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
       el.apiResultsPanel.innerHTML = `
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(pick(baseline.latency, baseline.objective_value, state.task?.baseline_latency)))}</div></article>
           <article class="result-card best-card"><div class="metric-label">best latency</div><div class="metric-main best">${escapeHtml(display(pick(best.latency, best.objective_value, state.task?.best_latency)))}</div><div class="kv"><div>best trial id</div><div>${escapeHtml(display(bestTrialId))}</div></div></article>
-          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${results.improvement_percent === null || results.improvement_percent === undefined ? "waiting" : `${formatNumber(results.improvement_percent)}%`}</div></article>
+          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
         </div>
         <h3>best kernel</h3>
         <pre>${escapeHtml(results.best_kernel || "等待结果文件：best_kernel.py")}</pre>
@@ -2706,13 +2706,13 @@
 
     function renderHardware(hardware) {
       if (!hardware?.available) {
-        el.hardwareStatus.textContent = "waiting";
-        el.hardwarePanel.innerHTML = `<div class="empty">等待 hardware_detected.yaml：后端可能仍在运行，文件出现后点击刷新即可。</div>`;
+        el.hardwareStatus.textContent = "尚未加载";
+        el.hardwarePanel.innerHTML = `<div class="empty">暂无硬件画像。</div>`;
         return;
       }
       const target = hardware.fields.target_name || {};
       const backend = hardware.fields.backend || {};
-      const conservative = hardware.conservative_mode === true ? "开启" : hardware.conservative_mode === false ? "关闭" : "waiting";
+      const conservative = hardware.conservative_mode === true ? "开启" : hardware.conservative_mode === false ? "关闭" : "暂无数据";
       const unknown = hardware.unknownFields || [];
       const rows = Object.entries(hardware.fields || {}).sort(([a], [b]) => a.localeCompare(b));
       el.hardwareStatus.textContent = `${display(target.value)} / ${display(backend.value)}`;
@@ -2756,8 +2756,8 @@
 
     function renderHardwareProbe(rows) {
       if (!state.files.has("hardware_probe.jsonl")) {
-        el.probeStatus.textContent = "waiting";
-        el.probePanel.innerHTML = `<div class="empty">等待 hardware_probe.jsonl：后端可能仍在运行，文件出现后点击刷新即可。</div>`;
+        el.probeStatus.textContent = "尚未加载";
+        el.probePanel.innerHTML = `<div class="empty">暂无硬件 probe 文件。</div>`;
         return;
       }
       if (!rows.length) {
@@ -2830,8 +2830,8 @@
 
     function renderProfiler(rows) {
       if (!state.files.has("profiler_results.jsonl")) {
-        el.profilerStatus.textContent = "waiting";
-        el.profilerPanel.innerHTML = `<div class="empty">等待后端结果文件：profiler_results.jsonl。</div>`;
+        el.profilerStatus.textContent = "尚未加载";
+        el.profilerPanel.innerHTML = `<div class="empty">暂无 profiler 指标。</div>`;
         return;
       }
       if (!rows.length) {
@@ -2853,8 +2853,8 @@
 
     function renderDiagnosis(rows) {
       if (!state.files.has("diagnosis.jsonl")) {
-        el.diagnosisStatus.textContent = "waiting";
-        el.diagnosisPanel.innerHTML = `<div class="empty">等待后端结果文件：diagnosis.jsonl。</div>`;
+        el.diagnosisStatus.textContent = "尚未加载";
+        el.diagnosisPanel.innerHTML = `<div class="empty">暂无瓶颈诊断。</div>`;
         return;
       }
       if (!rows.length) {
@@ -2875,8 +2875,8 @@
 
     function renderPatchTrials(rows) {
       if (!state.files.has("patch_trials.jsonl")) {
-        el.patchTrialsStatus.textContent = "waiting";
-        el.patchTrialsPanel.innerHTML = `<div class="empty">等待后端结果文件：patch_trials.jsonl。</div>`;
+        el.patchTrialsStatus.textContent = "尚未加载";
+        el.patchTrialsPanel.innerHTML = `<div class="empty">暂无 patch 尝试记录。</div>`;
         return;
       }
       if (!rows.length) {
@@ -2900,8 +2900,8 @@
 
     function renderBestDiff(text) {
       if (!state.files.has("best_vs_baseline.diff")) {
-        el.bestDiffStatus.textContent = "waiting";
-        el.bestDiffText.textContent = "等待 best_vs_baseline.diff：后端生成 baseline vs best diff 后点击刷新即可。";
+        el.bestDiffStatus.textContent = "暂无 diff";
+        el.bestDiffText.textContent = "暂无 diff";
         return;
       }
       el.bestDiffStatus.textContent = text.trim() ? "已读取" : "empty";
@@ -2932,7 +2932,7 @@
 
     function diagnosisList(title, value) {
       const items = Array.isArray(value) ? value : (value ? [value] : []);
-      const body = items.length ? items.map((item) => `<li>${escapeHtml(display(item))}</li>`).join("") : `<li>waiting</li>`;
+      const body = items.length ? items.map((item) => `<li>${escapeHtml(display(item))}</li>`).join("") : `<li>暂无数据</li>`;
       return `<div><div class="metric-label">${escapeHtml(title)}</div><ul class="list-plain">${body}</ul></div>`;
     }
 
@@ -2971,14 +2971,14 @@
     }
 
     function patchStatusBadge(row) {
-      const status = patchStatus(row) || "waiting";
+      const status = patchStatus(row) || "暂无数据";
       const ok = ["pass", "passed", "success", "accepted", "best", "improved"].includes(status);
       const warn = ["neutral", "regressed", "rollback", "rolled_back", "not_applicable", "skipped"].includes(status);
       return `<span class="badge ${ok ? "ok" : warn ? "warn" : "bad"}">${escapeHtml(status)}</span>`;
     }
 
     function displayList(value) {
-      if (Array.isArray(value)) return value.length ? value.map((item) => display(item)).join("; ") : "waiting";
+      if (Array.isArray(value)) return value.length ? value.map((item) => display(item)).join("; ") : "暂无数据";
       return display(value);
     }
 
@@ -3059,7 +3059,7 @@
       if (state.apiError) addAlert("warn", escapeHtml(state.apiError));
       if (state.missing.length) {
         const list = state.missing.map((name) => `<li>${escapeHtml(name)}</li>`).join("");
-        addAlert("warn", `以下结果文件仍在 waiting：<ul class="waiting-list">${list}</ul>通常表示后端尚未跑完，或选择的不是 workspace/results/。`);
+        addAlert("warn", `以下结果文件暂未加载：<ul class="waiting-list">${list}</ul>通常表示文件不存在，或选择的不是 workspace/results/。`);
       }
       for (const warning of state.warnings) addAlert("warn", escapeHtml(warning));
       if (state.lastLoadedAt && !state.missing.length && !state.warnings.length) addAlert("ok", "已读取本地结果文件。开发者模式只读结果文件。");
@@ -3072,12 +3072,12 @@
         ${resultCard("Best-seen 最优已见", data.best, "best-card")}
         <article class="result-card">
           <div class="metric-label">提升比例</div>
-          <div class="metric-main ${delta !== null && delta >= 0 ? "good" : ""}">${delta === null ? "waiting" : `${formatNumber(delta)}%`}</div>
+          <div class="metric-main ${delta !== null && delta >= 0 ? "good" : ""}">${delta === null ? "暂无性能提升数据" : `${formatNumber(delta)}%`}</div>
           <div class="kv">
             <div>口径</div><div>基于 latency，越低越好</div>
             <div>Run ID</div><div>${escapeHtml(display(data.runId))}</div>
             <div>成功/失败</div><div>${data.rows.filter(isSuccess).length} / ${data.rows.filter((row) => !isSuccess(row)).length}</div>
-            <div>总候选</div><div>${data.rows.length || "waiting"}</div>
+            <div>总候选</div><div>${data.rows.length || "暂无候选明细"}</div>
           </div>
         </article>`;
       el.sourceNote.textContent = sourceLabel();
@@ -3138,14 +3138,14 @@
     }
 
     function renderBestConfig(best) {
-      el.bestIdentity.textContent = best ? candidateLabel(best) : "waiting";
-      el.bestConfig.textContent = best ? JSON.stringify(redactObject(best.config || {}), null, 2) : "等待 best-seen config：尚无成功候选。";
+      el.bestIdentity.textContent = best ? candidateLabel(best) : "暂无数据";
+      el.bestConfig.textContent = best ? JSON.stringify(redactObject(best.config || {}), null, 2) : "暂无本地结果文件";
     }
 
     function renderCandidates(rows, best) {
-      el.trialCount.textContent = rows.length ? `${rows.length} 个候选` : "waiting";
+      el.trialCount.textContent = rows.length ? `${rows.length} 个候选` : "暂无候选明细";
       if (!rows.length) {
-        el.candidateTable.innerHTML = `<div class="empty">等待候选记录：后端运行中时这里会先为空，summary.csv / experiments.jsonl 出现后点击刷新即可。</div>`;
+        el.candidateTable.innerHTML = `<div class="empty">暂无候选明细。</div>`;
         return;
       }
       const headers = ["iteration", "candidate_id", "status", "latency", "tflops", "bandwidth", "objective_value", "config_hash", "config"];
@@ -3157,7 +3157,7 @@
     function renderFailedCases(failed) {
       el.failedCount.textContent = failed.length ? `${failed.length} 条失败` : "0 条失败";
       if (!failed.length) {
-        el.failedCases.innerHTML = `<div class="empty">暂无失败案例。若 failed_cases.jsonl 缺失，会在顶部显示 waiting。</div>`;
+        el.failedCases.innerHTML = `<div class="empty">暂无失败案例。</div>`;
         return;
       }
       el.failedCases.innerHTML = `<div class="chips">${failed.slice(0, 8).map((item) => `<span class="chip">${escapeHtml(candidateLabel(item))}: ${escapeHtml(errorCategory(item))}</span>`).join("")}</div>
@@ -3169,7 +3169,7 @@
     function renderPaths(rows) {
       const withPaths = rows.filter((row) => row.kernel_path || row.patch_path || row.stdout || row.stderr);
       if (!withPaths.length) {
-        el.pathsTable.innerHTML = `<div class="empty">等待 log/patch 路径：路径缺失时页面不会尝试读取文件内容。</div>`;
+        el.pathsTable.innerHTML = `<div class="empty">暂无日志或 patch 路径。</div>`;
         return;
       }
       const fields = ["kernel_path", "patch_path", "stdout", "stderr"];
@@ -3201,7 +3201,7 @@
     function displayStatus(status) {
       const raw = display(status);
       const normalized = raw.toLowerCase();
-      if (normalized === "waiting") return "waiting";
+      if (normalized === "waiting") return "等待中";
       if (normalized.includes("ok") || normalized === "success" || normalized === "pass") return `成功 (${raw})`;
       if (normalized === "skipped" || normalized === "skip") return "跳过 (skipped)";
       if (normalized === "timeout" || normalized === "timed_out") return "超时 (timeout)";
@@ -3252,13 +3252,13 @@
     }
 
     function candidateLabel(row) {
-      if (!row) return "waiting";
+      if (!row) return "暂无数据";
       return `第 ${display(row.iteration)} 轮 / 候选 ${display(row.candidate_id)}`;
     }
 
     function sourceLabel() {
       const mode = state.dirHandle ? "用户选择的结果目录" : "固定目录 ../workspace/results/";
-      const time = state.lastLoadedAt ? state.lastLoadedAt.toLocaleTimeString() : "waiting";
+      const time = state.lastLoadedAt ? state.lastLoadedAt.toLocaleTimeString() : "尚未加载";
       return `${mode}，最后刷新 ${time}`;
     }
 
@@ -3270,17 +3270,17 @@
 
     function displayNumber(value) {
       const number = numeric(value);
-      return number === null ? "waiting" : formatNumber(number);
+      return number === null ? "暂无数据" : formatNumber(number);
     }
 
     function formatNumber(value) {
       const number = Number(value);
-      if (!Number.isFinite(number)) return "waiting";
+      if (!Number.isFinite(number)) return "暂无数据";
       return Math.abs(number) >= 100 ? number.toFixed(2) : number.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
     }
 
     function display(value) {
-      if (value === null || value === undefined || value === "") return "waiting";
+      if (value === null || value === undefined || value === "") return "暂无数据";
       if (typeof value === "object") return JSON.stringify(redactObject(value));
       return sanitizeText(String(value));
     }
