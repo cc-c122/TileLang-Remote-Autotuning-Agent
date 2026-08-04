@@ -61,6 +61,21 @@
       opacity: 0.65;
     }
 
+    label[for="v2ProfilerEnabled"],
+    #v2ProfilerEnabled,
+    label[for="v2PatchingEnabled"],
+    #v2PatchingEnabled,
+    label[for="v2ProfilerType"],
+    #v2ProfilerType,
+    .field:has(#v2ProfilerEnabled),
+    .field:has(#v2PatchingEnabled),
+    .field:has(#v2ProfilerType),
+    section:has(#profilerPanel),
+    section:has(#diagnosisPanel),
+    section:has(#patchTrialsPanel) {
+      display: none;
+    }
+
     h1, h2, h3, p { margin: 0; }
 
     h1 {
@@ -722,14 +737,6 @@
       line-height: 1;
     }
 
-    .collapse-hint {
-      position: absolute;
-      bottom: 22px;
-      right: 18px;
-      color: #111827;
-      font-size: 24px;
-    }
-
     .workspace {
       min-width: 0;
       padding: 20px 20px 30px;
@@ -1036,7 +1043,6 @@
       </div>
       <div class="user-menu">
         <span class="chip warn" id="apiHealthStatus">API：checking</span>
-        <span class="icon-chip">?</span>
         <span class="icon-chip avatar">U</span>
         <span>user</span>
       </div>
@@ -1052,7 +1058,6 @@
           <button class="tab-button" type="button" data-view-target="settingsView"><span class="nav-ico">⚙</span><span>设置</span></button>
           <button class="tab-button developer-tab" type="button" data-view-target="developerView"><span class="nav-ico">⌘</span><span>开发者模式</span></button>
         </nav>
-        <div class="collapse-hint">‹</div>
       </aside>
 
       <div class="workspace">
@@ -1415,7 +1420,7 @@
   </main>
 
   <script>
-    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml", "hardware_probe.jsonl", "profiler_results.jsonl", "diagnosis.jsonl", "patch_trials.jsonl", "best_vs_baseline.diff"];
+    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml", "hardware_probe.jsonl", "best_vs_baseline.diff"];
     const PROFILER_METRIC_FIELDS = ["latency_ms", "tflops", "estimated_hbm_bandwidth", "register_count", "shared_memory_bytes", "private_memory_bytes", "occupancy", "warp_active_ratio", "hbm_read_bandwidth", "hbm_write_bandwidth", "shared_bank_conflict", "memory_coalescing_efficiency"];
     const PROBE_STATUSES = ["pass", "failed", "timeout", "guard_denied", "exception", "skipped"];
     const PROBE_STATUS_LABELS = {
@@ -1887,9 +1892,6 @@
       const experiments = parseJsonl("experiments.jsonl");
       const failed = parseJsonl("failed_cases.jsonl");
       const hardwareProbe = parseJsonl("hardware_probe.jsonl");
-      const profilerResults = normalizeProfilerRows(parseJsonl("profiler_results.jsonl"));
-      const diagnosis = normalizeDiagnosisRows(parseJsonl("diagnosis.jsonl"));
-      const patchTrials = normalizePatchTrialRows(parseJsonl("patch_trials.jsonl"));
       const summary = parseCsvFile("summary.csv");
       const allResults = parseCsvFile("all_results.csv");
       const rows = mergeRows(experiments, allResults.rows, summary.rows);
@@ -1897,7 +1899,7 @@
       const best = findBest(rows, experiments, baseline);
       const runId = pick(baseline?.run_id, best?.run_id, rows.find((row) => row.run_id)?.run_id, experiments.find((row) => row.run_id)?.run_id);
       const hardware = parseHardwareYaml(state.files.get("hardware_detected.yaml") || "");
-      return { experiments, failed, hardwareProbe, profilerResults, diagnosis, patchTrials, summary, allResults, rows, baseline, best, runId, hardware, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "", bestDiff: state.files.get("best_vs_baseline.diff") || "" };
+      return { experiments, failed, hardwareProbe, summary, allResults, rows, baseline, best, runId, hardware, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "", bestDiff: state.files.get("best_vs_baseline.diff") || "" };
     }
 
     function parseHardwareYaml(text) {
@@ -2086,9 +2088,6 @@
       renderAlerts();
       renderHardware(data.hardware);
       renderHardwareProbe(data.hardwareProbe);
-      renderProfiler(data.profilerResults);
-      renderDiagnosis(data.diagnosis);
-      renderPatchTrials(data.patchTrials);
       renderCompare(data);
       renderBestDiff(data.bestDiff);
       renderTrend(data.rows, data.best);
@@ -2266,11 +2265,11 @@
           objective: "latency",
         },
         profiler: {
-          enabled: el.v2ProfilerEnabled.value === "true",
+          enabled: false,
           type: el.v2ProfilerType.value,
         },
         patching: {
-          enabled: el.v2PatchingEnabled.value === "true",
+          enabled: false,
           run_controlled_trial: false,
         },
       };
@@ -2354,7 +2353,7 @@
             allow_web_lookup: false,
           },
         });
-        state.resolvedHardware = payload.hardware || null;
+        state.resolvedHardware = payload.hardware_profile || payload.hardware || null;
         state.hardwareResolveError = "";
         renderHardwareEditor();
         addOneShotWarning("硬件参数已由后端解析；低置信度或 unknown 字段请手动确认。");
@@ -2404,17 +2403,22 @@
           objective: "latency",
         },
         profiler: {
-          enabled: el.v2ProfilerEnabled.value === "true",
+          enabled: false,
           type: "dummy",
         },
         patching: {
-          enabled: el.v2PatchingEnabled.value === "true",
+          enabled: false,
           run_controlled_trial: false,
         },
         runner: {
           type: el.v2RunnerType.value === "ssh" ? "ssh" : "local",
         },
       };
+    }
+
+    function unwrapTaskPayload(payload) {
+      if (!payload || typeof payload !== "object") return null;
+      return payload.task || payload.task_detail || (payload.task_id ? payload : null);
     }
 
     async function startOptimization() {
@@ -2451,8 +2455,8 @@
       activateView("taskView");
       try {
         const payload = await apiFetch("/api/tasks", { method: "POST", body: request });
-        state.activeTaskId = payload.task_id;
-        state.task = payload.task || null;
+        state.task = unwrapTaskPayload(payload);
+        state.activeTaskId = pick(payload.task_id, state.task?.task_id);
         state.taskEvents = state.task?.events || [];
         state.taskResults = null;
         el.cancelTaskBtn.disabled = false;
@@ -2487,7 +2491,7 @@
       if (!state.activeTaskId) return;
       try {
         const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}`);
-        state.task = payload.task;
+        state.task = unwrapTaskPayload(payload);
         renderTaskDetail();
         if (["completed", "failed", "cancelled"].includes(state.task.status)) {
           stopTaskPolling();
@@ -2518,7 +2522,7 @@
       el.cancelTaskBtn.disabled = true;
       try {
         const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/cancel`, { method: "POST" });
-        state.task = payload.task;
+        state.task = unwrapTaskPayload(payload);
         renderTaskDetail();
       } catch (error) {
         addOneShotWarning(`取消任务失败：${error.message}`);
@@ -2606,7 +2610,7 @@
           apiFetch(`/api/tasks/${encodeURIComponent(taskId)}`),
           apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/events`),
         ]);
-        state.task = taskPayload.task;
+        state.task = unwrapTaskPayload(taskPayload);
         state.taskEvents = eventPayload.events || [];
         renderTaskDetail();
         await refreshTaskResults();
@@ -2684,12 +2688,6 @@
           <div class="table-wrap">${summary.length ? `<table><thead><tr>${Object.keys(summary[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${summary.map((row) => `<tr>${Object.keys(summary[0]).map((key) => `<td>${escapeHtml(display(row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录。</div>`}</div>
           <h3>failed_cases.jsonl</h3>
           <div class="table-wrap">${failedCases.length ? `<table><thead><tr>${Object.keys(failedCases[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${failedCases.map((row) => `<tr>${Object.keys(failedCases[0]).map((key) => `<td>${escapeHtml(display(typeof row[key] === "object" ? JSON.stringify(redactObject(row[key])) : row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录。</div>`}</div>
-          <h3>profiler_results.jsonl</h3>
-          <pre>${escapeHtml(JSON.stringify(redactObject(results.profiler_results || results.profiler || null), null, 2))}</pre>
-          <h3>diagnosis.jsonl</h3>
-          <pre>${escapeHtml(JSON.stringify(redactObject(results.diagnosis || null), null, 2))}</pre>
-          <h3>patch_trials.jsonl</h3>
-          <pre>${escapeHtml(JSON.stringify(redactObject(results.patch_trials || null), null, 2))}</pre>
           <h3>best_vs_baseline.diff</h3>
           <pre>${escapeHtml(results.best_vs_baseline_diff || "unavailable")}</pre>
         </details>
