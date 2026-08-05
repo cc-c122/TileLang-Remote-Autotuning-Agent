@@ -1,0 +1,75 @@
+schema_version: v2.paged_attention_baseline.v1
+project_name: c500-paged-attention-decode-baseline
+status: blocked_remote_exec_channel
+operator: Paged Attention Decode
+not_substitutes:
+  - GEMM
+  - MoE Gate/Up
+  - mock kernel
+target:
+  gpu_model: MetaX C500
+  dtype: fp16
+  backend: mxmaca
+  batch: 1
+  query_heads: 32
+  kv_heads: 8
+  head_dimension: 128
+  page_size: 16
+  context_lengths:
+    - 128
+    - 512
+    - 2048
+sample_source:
+  upstream_repository: tile-ai/tilelang
+  upstream_path: examples/blocksparse_attention/example_tilelang_sparse_gqa_decode_paged.py
+  upstream_access_date: '2026-08-05'
+  local_status: source_identified_not_vendor_validated
+  required_adjustments:
+    - upstream default batch is 8; baseline target is batch 1
+    - upstream default page_block_size is 256; baseline target is page size 16
+    - upstream default max_cache_seqlen is 8192; baseline contexts are 128, 512, 2048
+correctness:
+  reference: torch_scaled_dot_product_attention_over_paged_kv_cache
+  tolerance:
+    atol: 0.002
+    rtol: 0.002
+  max_error: null
+  status: not_collected
+benchmark:
+  warmup_runs: 3
+  measurement_runs: 5
+  per_shape_required_outputs:
+    - raw_samples_ms
+    - median_ms
+    - p90_ms
+    - stddev_ms
+  status: not_collected
+mcprofiler:
+  collection_mode: report_import
+  native_artifacts_required: true
+  status: not_collected
+  blocked_reason: ssh authentication succeeds but shell/exec channel closes with EOFError
+environment:
+  mxmaca_version: null
+  driver_version: null
+  tilelang_version: null
+  mctilelang_version: null
+  mcprofiler_version: null
+  gpu_model: MetaX C500
+reproduction_commands:
+  command_guard_validated: true
+  commands:
+    - label: inspect_environment
+      command: python -c "import torch, tilelang; print('torch', torch.__version__); print('tilelang', getattr(tilelang, '__version__', 'unknown'))"
+    - label: run_context_128
+      command: python kernel_opt_agent/samples/paged_attention_decode/run_paged_attention_decode.py --context-length 128 --warmup 3 --repeat 5 --dtype fp16 --batch 1 --query-heads 32 --kv-heads 8 --head-dim 128 --page-size 16
+    - label: run_context_512
+      command: python kernel_opt_agent/samples/paged_attention_decode/run_paged_attention_decode.py --context-length 512 --warmup 3 --repeat 5 --dtype fp16 --batch 1 --query-heads 32 --kv-heads 8 --head-dim 128 --page-size 16
+    - label: run_context_2048
+      command: python kernel_opt_agent/samples/paged_attention_decode/run_paged_attention_decode.py --context-length 2048 --warmup 3 --repeat 5 --dtype fp16 --batch 1 --query-heads 32 --kv-heads 8 --head-dim 128 --page-size 16
+    - label: import_mcprofiler_report
+      command: python -m kernel_opt_agent.profiler.mcprofiler.report_import --case-dir mcprofiler_cases/paged_attention_decode --out-dir kernel_opt_agent/workspace/results/paged_attention_decode_baseline
+notes:
+  - This manifest is a reproducibility checklist for a real C500 Paged Attention Decode baseline.
+  - No optimization patch is generated or claimed by this baseline.
+  - Current PR includes report_import parser coverage; real mcProfiler native artifacts must be imported after a C500 shell/exec channel is available.

@@ -98,11 +98,28 @@ def _extract_manifest_metadata(manifest_path: Path | None) -> dict[str, Any]:
         return {}
     if not isinstance(manifest, dict):
         return {}
-    return {
-        key: manifest[key]
-        for key in ("case_name", "exec_id", "maca_version", "target_subkernel", "shape")
-        if key in manifest
-    }
+    keys = (
+        "case_name",
+        "exec_id",
+        "maca_version",
+        "mxmaca_version",
+        "driver_version",
+        "tilelang_version",
+        "mctilelang_version",
+        "mcprofiler_version",
+        "gpu_model",
+        "target_subkernel",
+        "operator",
+        "kernel_name",
+        "dtype",
+        "shape",
+        "benchmark",
+        "correctness",
+        "collection_mode",
+        "collection_status",
+        "sample_source",
+    )
+    return {key: manifest[key] for key in keys if key in manifest}
 
 
 def _parse_shape(text: str) -> dict[str, int | str]:

@@ -7,14 +7,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
+from kernel_opt_agent.profiler.mcprofiler.report_import import import_report
 from kernel_opt_agent.profiler.mcprofiler import parse_mcprofiler_case
 from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
 from kernel_opt_agent.diagnosis import diagnose_from_evidence_records, profiler_observations_to_evidence
 from kernel_opt_agent.profiler.base import MetricObservation, ProfilerResult
+from kernel_opt_agent.runner.command_guard import validate
 from kernel_opt_agent.storage.experiment_db import ExperimentDB
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcprofiler" / "real_v8_tc1_gate"
+PAGED_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcprofiler" / "paged_attention_decode_c500_import"
+WORKSPACE = Path(__file__).resolve().parents[1]
 
 
 class McProfilerParserTests(unittest.TestCase):
@@ -28,6 +34,46 @@ class McProfilerParserTests(unittest.TestCase):
         first = parse_mcprofiler_case(FIXTURE).to_dict()
         second = parse_mcprofiler_case(FIXTURE).to_dict()
         self.assertEqual(first, second)
+
+    def test_paged_attention_fixture_manifest_sha256_matches_report(self) -> None:
+        manifest = json.loads((PAGED_FIXTURE / "manifest.json").read_text(encoding="utf-8"))
+        digest = hashlib.sha256((PAGED_FIXTURE / "report_dumped_result.json").read_bytes()).hexdigest()
+        self.assertEqual(digest, manifest["sha256"])
+        self.assertEqual(digest, "bda53b6ed9eecc7eb884dac7fa5a08c589ce0611884afd73f74f05399f01dd7f")
+
+    def test_paged_attention_metadata_is_identified_without_gate_up_confusion(self) -> None:
+        parsed = parse_mcprofiler_case(PAGED_FIXTURE)
+        self.assertEqual(parsed.metadata["operator"], "Paged Attention Decode")
+        self.assertEqual(parsed.metadata["target_subkernel"], "Paged Attention Decode")
+        self.assertEqual(parsed.metadata["gpu_model"], "MetaX C500")
+        self.assertEqual(parsed.metadata["shape"]["batch"], 1)
+        self.assertEqual(parsed.metadata["shape"]["query_heads"], 32)
+        self.assertEqual(parsed.metadata["shape"]["kv_heads"], 8)
+        self.assertEqual(parsed.metadata["shape"]["head_dim"], 128)
+        self.assertEqual(parsed.metadata["shape"]["page_size"], 16)
+        self.assertEqual(parsed.metadata["shape"]["context_lengths"], [128, 512, 2048])
+        self.assertNotEqual(parse_mcprofiler_case(FIXTURE).metadata.get("operator"), "Paged Attention Decode")
+        public = json.dumps(parsed.to_dict(), ensure_ascii=False)
+        self.assertIn("Paged Attention Decode Metadata", public)
+        self.assertIn("block_table_layout", public)
+
+    def test_paged_attention_report_import_keeps_insufficient_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = import_report(PAGED_FIXTURE, Path(tmp))
+            self.assertEqual(payload["metadata"]["operator"], "Paged Attention Decode")
+            self.assertTrue((Path(tmp) / "parsed_mcprofiler_case.json").exists())
+            self.assertTrue((Path(tmp) / "metric_observations.jsonl").exists())
+            diagnoses = [json.loads(line) for line in (Path(tmp) / "diagnoses.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual({item["bottleneck_type"] for item in diagnoses}, {"insufficient_evidence"})
+
+    def test_paged_attention_baseline_manifest_commands_pass_guard(self) -> None:
+        manifest_path = WORKSPACE / "kernel_opt_agent" / "samples" / "paged_attention_decode" / "baseline_manifest.yaml"
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["operator"], "Paged Attention Decode")
+        self.assertIn("blocked", manifest["status"])
+        for item in manifest["reproduction_commands"]["commands"]:
+            result = validate(item["command"], WORKSPACE, WORKSPACE)
+            self.assertTrue(result.allowed, f"{item['label']}: {result.reason}")
 
     def test_real_case_metrics_are_normalized_without_clamping_percentages(self) -> None:
         parsed = parse_mcprofiler_case(FIXTURE)
@@ -314,11 +360,12 @@ class McProfilerParserTests(unittest.TestCase):
 
     def test_fixture_does_not_contain_plaintext_secrets(self) -> None:
         forbidden = ("password", "api_key", "token", "Cc.051026")
-        for path in FIXTURE.rglob("*"):
-            if path.is_file():
-                text = path.read_text(encoding="utf-8", errors="ignore").lower()
-                for marker in forbidden:
-                    self.assertNotIn(marker.lower(), text, str(path))
+        for fixture_root in (FIXTURE, PAGED_FIXTURE):
+            for path in fixture_root.rglob("*"):
+                if path.is_file():
+                    text = path.read_text(encoding="utf-8", errors="ignore").lower()
+                    for marker in forbidden:
+                        self.assertNotIn(marker.lower(), text, str(path))
 
 
 if __name__ == "__main__":
