@@ -105,9 +105,53 @@ def _make_inputs(shape: ShapeConfig):
     return upstream, sparse_attn, query, key_cache, value_cache, block_indices, cache_seqlens, block_table
 
 
+def _compiled_kernel_call(upstream, sparse_attn, query, key_cache, value_cache, block_indices, cache_seqlens, block_table):
+    batch = sparse_attn.batch
+    heads = sparse_attn.heads
+    heads_kv = sparse_attn.heads_kv
+    dim_v = sparse_attn.dim_v
+    dim = sparse_attn.dim
+    block_size = sparse_attn.block_N
+    max_selected_blocks = block_indices.shape[-1]
+    num_m_blocks = 1 * (heads // heads_kv + sparse_attn.block_H - 1) // sparse_attn.block_H
+    num_n_blocks = max_selected_blocks
+    size_one_kv_head = max_selected_blocks * block_size * (dim + dim_v) * 2
+    total_mblocks = batch * heads_kv * num_m_blocks
+    num_split = upstream.num_splits_heuristic(
+        total_mblocks,
+        sparse_attn.num_sm,
+        num_n_blocks,
+        num_m_blocks,
+        size_one_kv_head,
+        is_causal_or_local=True,
+        max_splits=128,
+    )
+    glse = torch.empty((batch, heads, num_split), dtype=torch.float32, device="cuda")
+    output_partial = torch.empty((batch, heads, num_split, dim_v), dtype=torch.float32, device="cuda")
+    kernel = upstream.flashattn(
+        batch,
+        heads,
+        heads_kv,
+        dim,
+        dim_v,
+        block_N=block_size,
+        block_H=sparse_attn.block_H,
+        page_block_size=sparse_attn.page_block_size,
+        num_stages=2,
+        threads=128,
+        num_pages=sparse_attn.num_pages,
+    )
+
+    def run_once():
+        return kernel(query, key_cache, value_cache, block_indices, cache_seqlens, block_table, glse, output_partial)
+
+    return run_once
+
+
 def run_baseline(shape: ShapeConfig, warmup: int, repeat: int, atol: float, rtol: float) -> dict:
     upstream, sparse_attn, query, key_cache, value_cache, block_indices, cache_seqlens, block_table = _make_inputs(shape)
-    output = sparse_attn.forward(query, key_cache, value_cache, block_indices, cache_seqlens, block_table)
+    run_kernel_once = _compiled_kernel_call(upstream, sparse_attn, query, key_cache, value_cache, block_indices, cache_seqlens, block_table)
+    output = run_kernel_once()
     reference = upstream.ref_program_torch_paged(
         query,
         key_cache,
@@ -124,7 +168,7 @@ def run_baseline(shape: ShapeConfig, warmup: int, repeat: int, atol: float, rtol
         raise AssertionError(f"correctness failed: max_error={max_error} atol={atol} rtol={rtol}")
 
     def kernel_once() -> None:
-        sparse_attn.forward(query, key_cache, value_cache, block_indices, cache_seqlens, block_table)
+        run_kernel_once()
 
     for _ in range(warmup):
         kernel_once()
@@ -153,7 +197,7 @@ def run_baseline(shape: ShapeConfig, warmup: int, repeat: int, atol: float, rtol
             "median_ms": statistics.median(samples),
             "p90_ms": _percentile(samples, 0.9),
             "stddev_ms": statistics.stdev(samples) if len(samples) > 1 else 0.0,
-            "measurement_protocol": "one sparse_attn.forward call per sample after fixed warmup",
+            "measurement_protocol": "one precompiled TileLang paged-attention kernel invocation per sample after fixed warmup; inputs and intermediate buffers are preallocated before timing",
         },
     }
 

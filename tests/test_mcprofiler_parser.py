@@ -74,9 +74,18 @@ class McProfilerParserTests(unittest.TestCase):
         self.assertIn("blocked", manifest["status"])
         self.assertEqual(manifest["sample_source"]["upstream_commit"], "1d155f4b80865edfe0009ad952135b7afbd4f05a")
         self.assertEqual(len(manifest["sample_source"]["vendored_file_sha256"]), 64)
+        self.assertEqual(manifest["sample_source"]["upstream_license_spdx"], "MIT")
+        self.assertEqual(manifest["sshrunner_probe"]["connection"], "<redacted>")
+        self.assertNotIn("host_redacted", manifest["sshrunner_probe"])
+        self.assertNotIn("port", manifest["sshrunner_probe"])
+        self.assertNotIn("username_redacted", manifest["sshrunner_probe"])
+        self.assertNotIn("remote_workspace", manifest["sshrunner_probe"])
         for item in manifest["reproduction_commands"]["commands"]:
             result = validate(item["command"], WORKSPACE, WORKSPACE)
             self.assertTrue(result.allowed, f"{item['label']}: {result.reason}")
+        notice = (manifest_path.parent / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+        self.assertIn("MIT License", notice)
+        self.assertIn("Copyright (c) Tile-AI", notice)
 
     def test_paged_attention_runner_has_explicit_correctness_and_sample_protocol(self) -> None:
         runner_path = WORKSPACE / "kernel_opt_agent" / "samples" / "paged_attention_decode" / "run_paged_attention_decode.py"
@@ -84,7 +93,8 @@ class McProfilerParserTests(unittest.TestCase):
         self.assertIn("torch.allclose(output, reference, atol=atol, rtol=rtol)", source)
         self.assertIn("max_error", source)
         self.assertIn("raise AssertionError", source)
-        self.assertIn("one sparse_attn.forward call per sample after fixed warmup", source)
+        self.assertIn("one precompiled TileLang paged-attention kernel invocation per sample", source)
+        self.assertIn("_compiled_kernel_call", source)
         self.assertNotIn("upstream.main(", source)
         self.assertNotIn("do_bench", source)
         self.assertNotIn("see upstream correctness output", source)
