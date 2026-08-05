@@ -148,87 +148,6 @@ def diagnose_from_evidence_records(records: list[EvidenceRecord]) -> list[Eviden
             )
         )
 
-    shared_eff = _first_number(records, "shared_memory_access_efficiency")
-    shared_conflict = _first_number(records, "shared_conflict_cycles")
-    shared_ids: list[str] = []
-    if shared_eff is not None:
-        shared_ids.append(shared_eff[0].evidence_id)
-    if shared_conflict is not None:
-        shared_ids.append(shared_conflict[0].evidence_id)
-    if shared_ids:
-        diagnoses.append(
-            EvidenceDiagnosis(
-                bottleneck_type="shared_bank_conflict",
-                confidence="low",
-                evidence_ids=shared_ids,
-                counter_evidence=[],
-                uncertainty=[
-                    "mcProfiler shared conflict cycles use cycles_per_instruction; backend-specific thresholds are not established",
-                    "shared memory access efficiency semantics are preserved as reported and not normalized",
-                ],
-                recommended_actions=["inspect shared memory indexing and bank layout before changing kernel code"],
-            )
-        )
-
-    l2 = _first_number(records, "l2c_hit_rate")
-    vl1 = _first_number(records, "vl1_hit_rate")
-    dnoc = _first_number(records, "dnoc_read_average_latency")
-    memory_ids = [item[0].evidence_id for item in (l2, vl1, dnoc) if item is not None]
-    if memory_ids:
-        diagnoses.append(
-            EvidenceDiagnosis(
-                bottleneck_type="memory_bound",
-                confidence="low",
-                evidence_ids=memory_ids,
-                counter_evidence=[],
-                uncertainty=[
-                    "hit rate and latency evidence suggest memory behavior but no backend-specific saturation threshold is applied",
-                    "percentage fields are retained as reported and not clamped or normalized",
-                ],
-                recommended_actions=["compare against another case or profiler pass before changing memory strategy"],
-            )
-        )
-
-    mma = _first_number(records, "mma_duty")
-    if mma is not None:
-        diagnoses.append(
-            EvidenceDiagnosis(
-                bottleneck_type="compute_underutilization",
-                confidence="low",
-                evidence_ids=[mma[0].evidence_id],
-                counter_evidence=[],
-                uncertainty=["MMA duty alone does not prove the kernel is compute limited or compute underutilized"],
-                recommended_actions=["correlate MMA duty with occupancy, waves, and memory metrics before patching"],
-            )
-        )
-
-    achieved = _first_number(records, "achieved_waves")
-    dispatched = _first_number(records, "dispatched_waves")
-    if achieved is not None and dispatched is not None:
-        diagnoses.append(
-            EvidenceDiagnosis(
-                bottleneck_type="low_occupancy",
-                confidence="low",
-                evidence_ids=[achieved[0].evidence_id, dispatched[0].evidence_id],
-                counter_evidence=[],
-                uncertainty=["wave counts are preserved as evidence; no device occupancy threshold is inferred"],
-                recommended_actions=["compare achieved and dispatched waves with occupancy metrics from the same backend"],
-            )
-        )
-
-    if not (_has_metric(records, "mma_duty") or _has_metric(records, "achieved_waves")):
-        sample_ids = [item.evidence_id for item in available[:3]]
-        diagnoses.append(
-            EvidenceDiagnosis(
-                bottleneck_type="hardware_intrinsic_missing",
-                confidence="low",
-                evidence_ids=sample_ids,
-                counter_evidence=[],
-                uncertainty=["no intrinsic usage metric was available in normalized evidence"],
-                recommended_actions=["collect compiler/codegen logs before diagnosing intrinsic usage"],
-            )
-        )
-
     if unknown_ids and not diagnoses:
         diagnoses.append(
             EvidenceDiagnosis(
@@ -246,8 +165,11 @@ def diagnose_from_evidence_records(records: list[EvidenceRecord]) -> list[Eviden
                 bottleneck_type="insufficient_evidence",
                 confidence="low",
                 evidence_ids=sample_ids,
-                uncertainty=["available evidence is not enough for a strong bottleneck conclusion"],
-                recommended_actions=["collect additional profiler metrics before patching"],
+                uncertainty=[
+                    "available evidence is not enough for a supported B-1 bottleneck conclusion",
+                    "MetaX-specific thresholds are not established for shared memory, cache hit rates, DNoC latency, MMA duty, or wave counts",
+                ],
+                recommended_actions=["collect paired baseline/variant profiler cases or backend thresholds before bottleneck diagnosis"],
             )
         )
     return diagnoses

@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 from fastapi.testclient import TestClient
 
-from kernel_opt_agent.server.app import TASKS_ROOT, app
+from kernel_opt_agent.server.app import TASKS_ROOT, _result_payload, app
 from kernel_opt_agent.server.models import TaskCreateRequest
 from kernel_opt_agent.server.run_request_builder import build_effective_config
 
@@ -145,9 +145,11 @@ class FastApiServerTests(unittest.TestCase):
         self.assertIn("evidence_summary", payload)
         self.assertIn("diagnoses", payload)
         self.assertIn("profiler_available", payload)
+        self.assertIn("profiler_status", payload)
         self.assertIsInstance(payload["evidence_summary"], list)
         self.assertIsInstance(payload["diagnoses"], list)
-        self.assertTrue(payload["profiler_available"])
+        self.assertEqual(payload["profiler_status"], "benchmark_only")
+        self.assertFalse(payload["profiler_available"])
         self.assertIsInstance(payload["summary_table"], list)
         self.assertIsInstance(payload["failed_cases"], list)
         self.assertIn("def kernel_score", payload["best_kernel"])
@@ -166,7 +168,6 @@ class FastApiServerTests(unittest.TestCase):
             "profiling_started",
             "trial_completed",
             "profiler_parsed",
-            "diagnosis_completed",
             "best_updated",
             "report_generated",
             "task_completed",
@@ -199,6 +200,27 @@ class FastApiServerTests(unittest.TestCase):
         self.assertIn("max_iterations must be >= 1", response.text)
         after = {path.name for path in TASKS_ROOT.iterdir()} if TASKS_ROOT.exists() else set()
         self.assertEqual(after, before)
+
+    def test_result_payload_distinguishes_profiler_statuses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = _result_payload(root)
+            self.assertEqual(payload["profiler_status"], "disabled")
+            self.assertFalse(payload["profiler_available"])
+            (root / "profiler_results.jsonl").write_text(
+                '{"profiler":{"enabled":true,"error":"failed","result":{"available_metrics":{}}}}\n',
+                encoding="utf-8",
+            )
+            payload = _result_payload(root)
+            self.assertEqual(payload["profiler_status"], "collection_failed")
+            self.assertFalse(payload["profiler_available"])
+            (root / "metric_observations.jsonl").write_text(
+                '{"evidence_id":"ev_1","metric":"l2c_hit_rate","available":true}\n',
+                encoding="utf-8",
+            )
+            payload = _result_payload(root)
+            self.assertEqual(payload["profiler_status"], "profiler_metrics_available")
+            self.assertTrue(payload["profiler_available"])
 
     def test_ssh_runner_uses_saved_settings_without_leaking_secrets(self) -> None:
         request = TaskCreateRequest.model_validate(
@@ -352,6 +374,9 @@ class FastApiServerTests(unittest.TestCase):
         results = self.client.get(f"/api/tasks/{task_id}/results")
         self.assertEqual(results.status_code, 200)
         self.assertIn("generated_files", results.json()["results"])
+        event_types = {event["type"] for event in events}
+        self.assertNotIn("profiling_started", event_types)
+        self.assertNotIn("profiler_parsed", event_types)
 
     def test_second_task_waits_for_serial_worker_slot(self) -> None:
         request = {

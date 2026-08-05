@@ -183,8 +183,33 @@ class McProfilerParserTests(unittest.TestCase):
         for diagnosis in diagnoses:
             for evidence_id in diagnosis.evidence_ids:
                 self.assertIn(evidence_id, evidence_ids)
-        self.assertTrue(any(item.bottleneck_type == "memory_bound" for item in diagnoses))
+        self.assertEqual({item.bottleneck_type for item in diagnoses}, {"insufficient_evidence"})
         self.assertTrue(all("Paged Attention" not in json.dumps(item.to_dict()) for item in diagnoses))
+
+    def test_supported_metrics_without_thresholds_do_not_force_bottleneck(self) -> None:
+        result = MxmacaProfiler().collect({"mcprofiler_case_path": str(FIXTURE)})
+        diagnoses = diagnose_from_evidence_records(profiler_observations_to_evidence(result, "trial-gate-up"))
+        self.assertEqual(len(diagnoses), 1)
+        self.assertEqual(diagnoses[0].bottleneck_type, "insufficient_evidence")
+        self.assertTrue(diagnoses[0].evidence_ids)
+
+    def test_private_memory_traffic_can_support_spill_diagnosis(self) -> None:
+        result = ProfilerResult(
+            observations=[
+                MetricObservation(
+                    metric_name="private_read_instructions",
+                    source_field_name="Private Read Instructions",
+                    value=4,
+                    unit="instructions",
+                    source="mcprofiler",
+                    available=True,
+                    confidence="high",
+                    artifact="case:sha",
+                )
+            ]
+        )
+        diagnoses = diagnose_from_evidence_records(profiler_observations_to_evidence(result, "trial-private"))
+        self.assertEqual(diagnoses[0].bottleneck_type, "private_memory_spill")
 
     def test_unknown_metric_only_produces_insufficient_evidence(self) -> None:
         result = ProfilerResult(

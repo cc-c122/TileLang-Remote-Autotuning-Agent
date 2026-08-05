@@ -83,6 +83,25 @@ def _best_summary(summary_rows: list[dict[str, Any]]) -> tuple[dict[str, Any] | 
     return best, improvement
 
 
+def _profiler_status(profiler_rows: list[dict[str, Any]], evidence_rows: list[dict[str, Any]]) -> str:
+    if evidence_rows:
+        return "profiler_metrics_available"
+    if not profiler_rows:
+        return "disabled"
+    enabled_rows = [item for item in profiler_rows if item.get("profiler", {}).get("enabled")]
+    if not enabled_rows:
+        return "disabled"
+    if any(item.get("profiler", {}).get("error") for item in enabled_rows):
+        return "collection_failed"
+    benchmark_fields = {"latency_ms", "tflops", "estimated_hbm_bandwidth"}
+    for item in enabled_rows:
+        result = item.get("profiler", {}).get("result") or {}
+        available = result.get("available_metrics") or {}
+        if any(available.get(name) for name in benchmark_fields):
+            return "benchmark_only"
+    return "collection_failed"
+
+
 def _task_payload(task: Any) -> dict[str, Any]:
     payload = task.model_dump()
     summary = _read_csv(Path(task.results_dir) / "summary.csv")
@@ -125,6 +144,10 @@ def _result_payload(results_dir: Path) -> dict[str, Any]:
     best_kernel = _read_text(results_dir / "best_kernel.py")
     best_config = _read_yaml(results_dir / "best_config.yaml")
     report = _read_text(results_dir / "report.md")
+    evidence_summary = _read_jsonl(results_dir / "metric_observations.jsonl")
+    diagnoses = _read_jsonl(results_dir / "diagnoses.jsonl")
+    profiler_rows = _read_jsonl(results_dir / "profiler_results.jsonl")
+    profiler_status = _profiler_status(profiler_rows, evidence_summary)
     payload = {
         "results_dir": str(results_dir),
         "best_kernel": best_kernel,
@@ -134,12 +157,10 @@ def _result_payload(results_dir: Path) -> dict[str, Any]:
         "improvement_percent": improvement,
         "failed_cases": _read_jsonl(results_dir / "failed_cases.jsonl"),
         "generated_files": files,
-        "evidence_summary": _read_jsonl(results_dir / "metric_observations.jsonl"),
-        "diagnoses": _read_jsonl(results_dir / "diagnoses.jsonl"),
-        "profiler_available": any(
-            item.get("profiler", {}).get("enabled") and not item.get("profiler", {}).get("error")
-            for item in _read_jsonl(results_dir / "profiler_results.jsonl")
-        ),
+        "evidence_summary": evidence_summary,
+        "diagnoses": diagnoses,
+        "profiler_status": profiler_status,
+        "profiler_available": profiler_status == "profiler_metrics_available",
     }
     payload.update({"files": files, "summary": summary, "best_row": best_row, "report": report})
     return payload
