@@ -112,7 +112,9 @@ def _result_payload(results_dir: Path) -> dict[str, Any]:
         "experiments.jsonl",
         "summary.csv",
         "profiler_results.jsonl",
+        "metric_observations.jsonl",
         "diagnosis.jsonl",
+        "diagnoses.jsonl",
         "patch_trials.jsonl",
         "best_kernel.py",
         "best_config.yaml",
@@ -132,6 +134,12 @@ def _result_payload(results_dir: Path) -> dict[str, Any]:
         "improvement_percent": improvement,
         "failed_cases": _read_jsonl(results_dir / "failed_cases.jsonl"),
         "generated_files": files,
+        "evidence_summary": _read_jsonl(results_dir / "metric_observations.jsonl"),
+        "diagnoses": _read_jsonl(results_dir / "diagnoses.jsonl"),
+        "profiler_available": any(
+            item.get("profiler", {}).get("enabled") and not item.get("profiler", {}).get("error")
+            for item in _read_jsonl(results_dir / "profiler_results.jsonl")
+        ),
     }
     payload.update({"files": files, "summary": summary, "best_row": best_row, "report": report})
     return payload

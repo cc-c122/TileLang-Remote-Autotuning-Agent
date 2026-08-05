@@ -58,6 +58,7 @@ class JobWorker:
             config = build_effective_config(request, workspace, self.settings_path)
             self.manager.add_event(task_id, "correctness_started", "starting correctness and benchmark loop")
             self.manager.add_event(task_id, "benchmark_started", "benchmark command will run after correctness passes")
+            self.manager.add_event(task_id, "profiling_started", "profiler evidence collection enabled")
             agent_main.WORKSPACE_ROOT = workspace
             agent_main.RESULTS_DIR = results_dir
             agent_main.GENERATED_DIR = generated_dir
@@ -67,6 +68,8 @@ class JobWorker:
                 self.manager.set_status(task_id, "cancelled")
             else:
                 self.manager.add_event(task_id, "trial_completed", "runner completed trial loop")
+                self.manager.add_event(task_id, "profiler_parsed", "profiler results parsed")
+                self.manager.add_event(task_id, "diagnosis_completed", "evidence-guided diagnosis completed")
                 self.manager.add_event(task_id, "best_updated", "best-seen artifacts generated")
                 self.manager.add_event(task_id, "report_generated", "report.md generated")
                 self.manager.set_status(task_id, "completed")

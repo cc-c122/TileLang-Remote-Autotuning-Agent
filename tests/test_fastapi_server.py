@@ -138,8 +138,16 @@ class FastApiServerTests(unittest.TestCase):
         self.assertTrue(payload["generated_files"]["experiments.jsonl"]["exists"])
         self.assertTrue(payload["generated_files"]["summary.csv"]["exists"])
         self.assertTrue(payload["generated_files"]["profiler_results.jsonl"]["exists"])
+        self.assertTrue(payload["generated_files"]["metric_observations.jsonl"]["exists"])
         self.assertTrue(payload["generated_files"]["diagnosis.jsonl"]["exists"])
+        self.assertTrue(payload["generated_files"]["diagnoses.jsonl"]["exists"])
         self.assertTrue(payload["generated_files"]["patch_trials.jsonl"]["exists"])
+        self.assertIn("evidence_summary", payload)
+        self.assertIn("diagnoses", payload)
+        self.assertIn("profiler_available", payload)
+        self.assertIsInstance(payload["evidence_summary"], list)
+        self.assertIsInstance(payload["diagnoses"], list)
+        self.assertTrue(payload["profiler_available"])
         self.assertIsInstance(payload["summary_table"], list)
         self.assertIsInstance(payload["failed_cases"], list)
         self.assertIn("def kernel_score", payload["best_kernel"])
@@ -155,7 +163,10 @@ class FastApiServerTests(unittest.TestCase):
             "build_started",
             "correctness_started",
             "benchmark_started",
+            "profiling_started",
             "trial_completed",
+            "profiler_parsed",
+            "diagnosis_completed",
             "best_updated",
             "report_generated",
             "task_completed",

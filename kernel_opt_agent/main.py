@@ -15,7 +15,12 @@ from kernel_opt_agent.benchmark.correctness import parse_correctness
 from kernel_opt_agent.benchmark.metrics import is_better
 from kernel_opt_agent.benchmark.parser import parse_benchmark
 from kernel_opt_agent.config_model import AppConfig, load_config, resolve_path, safe_config_dict
-from kernel_opt_agent.diagnosis import EvidenceBundle, diagnose_bottlenecks
+from kernel_opt_agent.diagnosis import (
+    EvidenceBundle,
+    diagnose_bottlenecks,
+    diagnose_from_evidence_records,
+    profiler_observations_to_evidence,
+)
 from kernel_opt_agent.hardware.detector import detect_hardware
 from kernel_opt_agent.hardware.hardware_info import HardwareInfo
 from kernel_opt_agent.kernel.variant_generator import VariantGenerator
@@ -322,6 +327,9 @@ def run_trial(
 
     profiler_record, profiler_result = collect_profiler_result(config, paths, benchmark_stdout, benchmark_stderr, compile_log)
     source_trial_id = f"{run_id}:{label}"
+    evidence_records = profiler_observations_to_evidence(profiler_result, source_trial_id)
+    metric_observations = [item.to_dict() for item in evidence_records]
+    diagnoses = [item.to_dict() for item in diagnose_from_evidence_records(evidence_records)]
     diagnosis = [
         item.to_dict()
         for item in diagnose_bottlenecks(
@@ -345,6 +353,8 @@ def run_trial(
         "correctness": correctness_data,
         "metrics": metrics_data,
         "profiler": profiler_record,
+        "metric_observations": metric_observations,
+        "diagnoses": diagnoses,
         "bottleneck_diagnosis": diagnosis,
         "objective": objective,
         "paths": {
