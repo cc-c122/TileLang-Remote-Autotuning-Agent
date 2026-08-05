@@ -35,12 +35,20 @@ def diagnosis_records(diagnoses: list[dict[str, Any]] | None) -> list[str]:
         "| --- | --- | --- | --- | --- | --- |",
     ]
     for item in diagnoses or []:
+        evidence = item.get("evidence")
+        if evidence is None:
+            evidence = item.get("evidence_ids")
+        if evidence is None:
+            evidence = []
+        counter_evidence = item.get("counter_evidence") or []
+        if counter_evidence:
+            evidence = list(evidence) + [f"counter: {value}" for value in counter_evidence]
         lines.append(
             "| {source} | {kind} | {confidence} | {evidence} | {uncertainty} | {actions} |".format(
                 source=item.get("source_trial_id") or "unknown",
                 kind=item.get("bottleneck_type"),
                 confidence=item.get("confidence"),
-                evidence="<br>".join(item.get("evidence") or ["none"]),
+                evidence="<br>".join(evidence or ["none"]),
                 uncertainty="<br>".join(item.get("uncertainty") or ["none"]),
                 actions=", ".join(item.get("recommended_actions") or []),
             )

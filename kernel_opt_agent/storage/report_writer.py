@@ -8,7 +8,6 @@ from typing import Any
 
 import yaml
 
-from kernel_opt_agent.agent.diagnosis import diagnose
 from kernel_opt_agent.diagnosis.diagnosis_report import diagnosis_records, profiler_metrics_table
 from kernel_opt_agent.hardware.hardware_info import HardwareInfo
 
@@ -95,6 +94,19 @@ def _patch_trial_lines(results_dir: Path) -> list[str]:
     return lines
 
 
+def _report_diagnoses(record: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+    if not record:
+        return None
+    diagnoses = record.get("diagnoses")
+    if diagnoses is not None:
+        source_trial_id = record.get("trial_id")
+        return [
+            {**item, "source_trial_id": item.get("source_trial_id") or source_trial_id}
+            for item in diagnoses
+        ]
+    return record.get("bottleneck_diagnosis")
+
+
 def write_final_report(results_dir: Path, records: list[dict[str, Any]], objective: str, hardware_info: HardwareInfo | None = None) -> dict[str, Any] | None:
     best_records = _sort_success(records, objective)
     best = best_records[0] if best_records else None
@@ -161,10 +173,8 @@ def write_final_report(results_dir: Path, records: list[dict[str, Any]], objecti
     lines += ["", "## Failures", f"- Failed candidates: {len(failures)}. See `failed_cases.jsonl` for details."]
     report_record = best or baseline
     lines += profiler_metrics_table((report_record or {}).get("profiler") if report_record else None)
-    lines += diagnosis_records((report_record or {}).get("bottleneck_diagnosis") if report_record else None)
+    lines += diagnosis_records(_report_diagnoses(report_record))
     lines += _patch_trial_lines(results_dir)
-    lines += ["", "## Legacy Diagnosis"]
-    lines += [f"- {note}" for note in diagnose(best_records + failures)]
     lines += _hardware_lines(hardware_info)
     lines += ["", "## Next Steps", "- Increase budget or refine search_space after reviewing failure patterns and profiler data."]
     (results_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
