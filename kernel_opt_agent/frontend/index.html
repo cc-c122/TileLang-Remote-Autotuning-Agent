@@ -1470,6 +1470,18 @@
       standard: { max_iterations: 3, candidates_per_iteration: 4, timeout_seconds: 60 },
       deep: { max_iterations: 5, candidates_per_iteration: 6, timeout_seconds: 60 },
     };
+    const EVIDENCE_EVENT_LABELS = {
+      collecting_performance_evidence: "正在采集性能证据",
+      performance_evidence_collecting: "正在采集性能证据",
+      profiler_collecting: "正在采集性能证据",
+      profiler_started: "正在采集性能证据",
+      profiler_report_parsed: "profiler 报告解析完成",
+      profiler_report_parse_completed: "profiler 报告解析完成",
+      profiler_parsed: "profiler 报告解析完成",
+      bottleneck_diagnosis_completed: "瓶颈诊断完成",
+      diagnosis_completed: "瓶颈诊断完成",
+      bottleneck_diagnosed: "瓶颈诊断完成",
+    };
     const FIXED_RESULT_DIR = "../workspace/results/";
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
@@ -2541,7 +2553,7 @@
       try {
         const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/results`);
         state.task = payload.task || state.task;
-        state.taskResults = payload.results || null;
+        state.taskResults = payload.results || payload || null;
         renderApiResults();
         activateView("resultsView");
       } catch (error) {
@@ -2631,27 +2643,160 @@
       el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
     }
 
+    function eventKey(value) {
+      return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    }
+
+    function eventLabel(value) {
+      const raw = display(value);
+      return EVIDENCE_EVENT_LABELS[eventKey(value)] || raw;
+    }
+
+    function latestEventLabel(event) {
+      if (!event) return "暂无任务事件";
+      return eventLabel(pick(event.type, event.event_type, event.name));
+    }
+
+    function eventMessage(event) {
+      if (!event) return "";
+      return pick(event.message, event.detail, event.description, EVIDENCE_EVENT_LABELS[eventKey(pick(event.type, event.event_type, event.name))]);
+    }
+
     function renderTaskDetail() {
       const task = state.task;
       if (!task) {
         renderTaskWaiting("暂无任务，点击开始优化后这里会显示进度。");
         return;
       }
-      const latestEvent = state.taskEvents[state.taskEvents.length - 1] || task.events?.[task.events.length - 1] || null;
+      const events = state.taskEvents || task.events || [];
+      const latestEvent = events[events.length - 1] || null;
       const summary = state.taskResults?.summary_table || state.taskResults?.summary || [];
       const best = state.taskResults?.best_row || state.task?.best_row || null;
       const baseline = summary[0] || null;
       const improvement = pick(state.task?.improvement_percent, state.taskResults?.improvement_percent);
+      const currentStage = eventLabel(task.current_stage || latestEvent?.type || task.status);
+      const latestEventText = pick(task.latest_message, eventMessage(latestEvent), latestEventLabel(latestEvent));
       el.taskStatus.textContent = task.status || "暂无任务";
       el.taskDetailPanel.innerHTML = `
         <div class="compare-grid">
-          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(task.current_stage || latestEvent?.type || task.status))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
+          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
           <article class="result-card"><div class="metric-label">当前 trial 数</div><div class="metric-main">${display(pick(task.total_trials, summary.length || null))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>current best latency</div><div>${escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
-          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(task.latest_message || latestEvent?.message))}</div><div>事件类型</div><div>${escapeHtml(display(latestEvent?.type))}</div></div></article>
+          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
         </div>
         ${task.error ? `<div class="empty">失败原因：${escapeHtml(task.error)}</div>` : ""}
-        <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${(state.taskEvents || task.events || []).slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(event.type))}</td><td>${escapeHtml(display(event.message))}</td></tr>`).join("") || `<tr><td colspan="3">暂无任务事件</td></tr>`}</tbody></table></div>
+        <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${events.slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(latestEventLabel(event)))}</td><td>${escapeHtml(display(eventMessage(event)))}</td></tr>`).join("") || `<tr><td colspan="3">暂无任务事件</td></tr>`}</tbody></table></div>
       `;
+    }
+
+    function asArray(value) {
+      if (Array.isArray(value)) return value;
+      return value === undefined || value === null || value === "" ? [] : [value];
+    }
+
+    function hasEvidenceContent(value) {
+      if (Array.isArray(value)) return value.length > 0;
+      if (value && typeof value === "object") return Object.keys(value).length > 0;
+      return value !== undefined && value !== null && value !== "";
+    }
+
+    function evidenceSummaryFromResults(results) {
+      const summary = results?.evidence_summary || results?.evidenceSummary || null;
+      if (!hasEvidenceContent(summary)) return null;
+      return summary;
+    }
+
+    function evidenceRecordsFromSummary(summary) {
+      if (!summary) return [];
+      if (Array.isArray(summary)) return summary.filter((item) => item && typeof item === "object");
+      return asArray(pick(summary.records, summary.evidence, summary.items, summary.observations)).filter((item) => item && typeof item === "object");
+    }
+
+    function evidenceId(record) {
+      return String(pick(record?.evidence_id, record?.id, record?.record_id, record?.observation_id, record?.metric_id, "") || "");
+    }
+
+    function evidenceRecordMap(summary) {
+      const map = new Map();
+      evidenceRecordsFromSummary(summary).forEach((record) => {
+        const id = evidenceId(record);
+        if (id) map.set(id, record);
+      });
+      return map;
+    }
+
+    function diagnosisRowsFromResults(results) {
+      const sources = [
+        results?.diagnoses,
+        results?.bottleneck_diagnosis,
+        results?.diagnosis,
+        results?.bottlenecks,
+      ];
+      for (const source of sources) {
+        const rows = asArray(source).filter((item) => item && typeof item === "object");
+        if (rows.length) return rows;
+      }
+      return [];
+    }
+
+    function observationRowsFromEvidence(summary, diagnosisRows, results) {
+      const rows = [
+        ...asArray(results?.observations),
+        ...asArray(results?.raw_observations),
+        ...asArray(summary?.observations),
+        ...asArray(summary?.raw_observations),
+        ...diagnosisRows.flatMap((row) => asArray(row.observations || row.raw_observations)),
+      ];
+      return rows.filter(hasEvidenceContent);
+    }
+
+    function evidenceList(title, value) {
+      const items = asArray(value).filter(hasEvidenceContent);
+      if (!items.length) return "";
+      return `<div><strong>${escapeHtml(title)}</strong><ul class="list-plain">${items.map((item) => `<li>${escapeHtml(display(item))}</li>`).join("")}</ul></div>`;
+    }
+
+    function evidenceRecordLabel(record, fallbackId = "") {
+      const metric = pick(record?.metric_name, record?.metric, record?.name, record?.field, fallbackId);
+      const valueKey = ["value", "metric_value", "observed_value", "actual_value"].find((key) => record && Object.prototype.hasOwnProperty.call(record, key));
+      const value = valueKey ? record[valueKey] : undefined;
+      const unit = pick(record?.unit, record?.metric_unit, record?.units);
+      const source = pick(record?.source, record?.record_type, record?.kind);
+      const valueText = value === undefined || value === "" ? "" : `= ${value === null ? "null / unavailable" : display(value)}`;
+      const parts = [metric, valueText, unit, source ? `source: ${display(source)}` : ""].filter(Boolean);
+      return parts.join(" ");
+    }
+
+    function diagnosisEvidenceItems(row, evidenceMap) {
+      const ids = asArray(row?.evidence_ids || row?.evidenceIds).filter(hasEvidenceContent).map((id) => String(id));
+      const fromIds = ids.map((id) => evidenceMap.get(id) ? evidenceRecordLabel(evidenceMap.get(id), id) : `missing evidence: ${id}`);
+      return fromIds.length ? fromIds : asArray(row?.evidence || row?.evidences).filter(hasEvidenceContent);
+    }
+
+    function renderEvidenceSummary(summary, diagnosisRows, profilerAvailable) {
+      if (!summary && !diagnosisRows.length && profilerAvailable !== false) {
+        return `<section class="section"><div class="section-head"><h2>性能证据与诊断</h2><span class="muted">暂无数据</span></div><div class="empty">暂无性能证据与诊断。任务完成并返回 evidence_summary 后展示。</div></section>`;
+      }
+      const profilerUnavailable = profilerAvailable === false;
+      const evidenceMap = evidenceRecordMap(summary);
+      const cards = diagnosisRows.map((row) => `
+        <article class="diagnosis-card">
+          <h3><span>${escapeHtml(display(pick(row.bottleneck_type, row.type, row.name)))}</span><span class="badge ${display(row.confidence).toLowerCase() === "high" ? "ok" : "warn"}">${escapeHtml(display(row.confidence))}</span></h3>
+          ${evidenceList("证据", diagnosisEvidenceItems(row, evidenceMap))}
+          ${evidenceList("不确定性", pick(row.uncertainty, row.uncertainties))}
+        </article>
+      `).join("");
+      return `<section class="section">
+        <div class="section-head"><h2>性能证据与诊断</h2><span class="muted">evidence_summary</span></div>
+        ${profilerUnavailable ? `<div class="alert warn">本次任务没有可用的 profiler 数据，诊断基于 benchmark 和日志，置信度较低。</div>` : ""}
+        ${cards ? `<div class="diagnosis-grid">${cards}</div>` : `<div class="empty">暂无瓶颈诊断记录。</div>`}
+      </section>`;
+    }
+
+    function renderObservationsDetails(summary, diagnosisRows, results) {
+      const observations = observationRowsFromEvidence(summary, diagnosisRows, results);
+      const evidenceJson = hasEvidenceContent(summary) ? `<h3>完整 evidence_summary</h3><pre>${escapeHtml(JSON.stringify(redactObject(summary), null, 2))}</pre>` : "";
+      const observationsJson = observations.length ? `<h3>原始 observations</h3><pre>${escapeHtml(JSON.stringify(redactObject(observations), null, 2))}</pre>` : "";
+      return evidenceJson + observationsJson;
     }
 
     function renderApiResults() {
@@ -2670,12 +2815,16 @@
       const baseline = summary[0] || {};
       const best = results.best_row || summary.find((row) => row.status === "benchmark_ok") || {};
       const bestTrialId = pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
+      const evidenceSummary = evidenceSummaryFromResults(results);
+      const diagnosisRows = diagnosisRowsFromResults(results);
+      const profilerAvailable = pick(results.profiler_available, results.profilerAvailable, evidenceSummary?.profiler_available);
       el.apiResultsPanel.innerHTML = `
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(pick(baseline.latency, baseline.objective_value, state.task?.baseline_latency)))}</div></article>
           <article class="result-card best-card"><div class="metric-label">best latency</div><div class="metric-main best">${escapeHtml(display(pick(best.latency, best.objective_value, state.task?.best_latency)))}</div><div class="kv"><div>best trial id</div><div>${escapeHtml(display(bestTrialId))}</div></div></article>
           <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
         </div>
+        ${renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable)}
         <h3>best kernel</h3>
         <pre>${escapeHtml(results.best_kernel || "等待结果文件：best_kernel.py")}</pre>
         <h3>best_config.yaml</h3>
@@ -2688,6 +2837,7 @@
           <div class="table-wrap">${summary.length ? `<table><thead><tr>${Object.keys(summary[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${summary.map((row) => `<tr>${Object.keys(summary[0]).map((key) => `<td>${escapeHtml(display(row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录。</div>`}</div>
           <h3>failed_cases.jsonl</h3>
           <div class="table-wrap">${failedCases.length ? `<table><thead><tr>${Object.keys(failedCases[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${failedCases.map((row) => `<tr>${Object.keys(failedCases[0]).map((key) => `<td>${escapeHtml(display(typeof row[key] === "object" ? JSON.stringify(redactObject(row[key])) : row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录。</div>`}</div>
+          ${renderObservationsDetails(evidenceSummary, diagnosisRows, results)}
           <h3>best_vs_baseline.diff</h3>
           <pre>${escapeHtml(results.best_vs_baseline_diff || "unavailable")}</pre>
         </details>
