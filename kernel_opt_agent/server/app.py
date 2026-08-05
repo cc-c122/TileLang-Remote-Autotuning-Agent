@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,7 @@ from kernel_opt_agent.main import WORKSPACE_ROOT
 
 from .job_worker import JobWorker
 from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest
+from .profiler_status import profiler_status
 from .settings_store import SettingsStore
 from .task_manager import TaskManager
 
@@ -47,17 +47,9 @@ def _read_csv(path: Path) -> list[dict[str, Any]]:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists() or not path.is_file():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            rows.append(json.loads(line))
-        except json.JSONDecodeError:
-            rows.append({"parse_error": True, "raw": line})
-    return rows
+    from .profiler_status import read_jsonl
+
+    return read_jsonl(path)
 
 
 def _numeric(value: Any) -> float | None:
@@ -81,25 +73,6 @@ def _best_summary(summary_rows: list[dict[str, Any]]) -> tuple[dict[str, Any] | 
     if baseline_value and best_value is not None:
         improvement = (baseline_value - best_value) / baseline_value * 100.0
     return best, improvement
-
-
-def _profiler_status(profiler_rows: list[dict[str, Any]], evidence_rows: list[dict[str, Any]]) -> str:
-    if evidence_rows:
-        return "profiler_metrics_available"
-    if not profiler_rows:
-        return "disabled"
-    enabled_rows = [item for item in profiler_rows if item.get("profiler", {}).get("enabled")]
-    if not enabled_rows:
-        return "disabled"
-    if any(item.get("profiler", {}).get("error") for item in enabled_rows):
-        return "collection_failed"
-    benchmark_fields = {"latency_ms", "tflops", "estimated_hbm_bandwidth"}
-    for item in enabled_rows:
-        result = item.get("profiler", {}).get("result") or {}
-        available = result.get("available_metrics") or {}
-        if any(available.get(name) for name in benchmark_fields):
-            return "benchmark_only"
-    return "collection_failed"
 
 
 def _task_payload(task: Any) -> dict[str, Any]:
@@ -147,7 +120,7 @@ def _result_payload(results_dir: Path) -> dict[str, Any]:
     evidence_summary = _read_jsonl(results_dir / "metric_observations.jsonl")
     diagnoses = _read_jsonl(results_dir / "diagnoses.jsonl")
     profiler_rows = _read_jsonl(results_dir / "profiler_results.jsonl")
-    profiler_status = _profiler_status(profiler_rows, evidence_summary)
+    status = profiler_status(profiler_rows, evidence_summary)
     payload = {
         "results_dir": str(results_dir),
         "best_kernel": best_kernel,
@@ -159,8 +132,8 @@ def _result_payload(results_dir: Path) -> dict[str, Any]:
         "generated_files": files,
         "evidence_summary": evidence_summary,
         "diagnoses": diagnoses,
-        "profiler_status": profiler_status,
-        "profiler_available": profiler_status == "profiler_metrics_available",
+        "profiler_status": status,
+        "profiler_available": status == "profiler_metrics_available",
     }
     payload.update({"files": files, "summary": summary, "best_row": best_row, "report": report})
     return payload

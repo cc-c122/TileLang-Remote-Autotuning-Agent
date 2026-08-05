@@ -115,6 +115,10 @@ def diagnose_from_evidence_records(records: list[EvidenceRecord]) -> list[Eviden
         "mma_duty",
         "achieved_waves",
         "dispatched_waves",
+        "private_memory_bytes",
+        "local_memory_bytes",
+        "spill_bytes",
+        "spill_count",
     }
     unknown_ids = [item.evidence_id for item in available if item.metric not in supported_metrics]
     supported_ids = [item.evidence_id for item in available if item.metric in supported_metrics]
@@ -131,19 +135,27 @@ def diagnose_from_evidence_records(records: list[EvidenceRecord]) -> list[Eviden
 
     private_read = _first_number(records, "private_read_instructions")
     private_write = _first_number(records, "private_write_instructions")
+    private_bytes = _first_number(records, "private_memory_bytes")
+    local_bytes = _first_number(records, "local_memory_bytes")
+    spill_bytes = _first_number(records, "spill_bytes")
+    spill_count = _first_number(records, "spill_count")
     private_ids: list[str] = []
     if private_read and private_read[1] > 0:
         private_ids.append(private_read[0].evidence_id)
     if private_write and private_write[1] > 0:
         private_ids.append(private_write[0].evidence_id)
-    if private_ids:
+    compiler_private_ids = []
+    for item in (private_bytes, local_bytes, spill_bytes, spill_count):
+        if item and item[1] > 0:
+            compiler_private_ids.append(item[0].evidence_id)
+    if private_ids and compiler_private_ids:
         diagnoses.append(
             EvidenceDiagnosis(
                 bottleneck_type="private_memory_spill",
                 confidence="medium",
-                evidence_ids=private_ids,
+                evidence_ids=private_ids + compiler_private_ids,
                 counter_evidence=[],
-                uncertainty=["mcProfiler private instruction counts indicate private memory traffic but do not by themselves prove compiler spill cause"],
+                uncertainty=["private memory traffic is paired with compiler/local/spill evidence"],
                 recommended_actions=["inspect generated code for local/private memory usage", "reduce per-thread temporary storage"],
             )
         )

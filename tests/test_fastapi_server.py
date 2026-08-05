@@ -215,6 +215,13 @@ class FastApiServerTests(unittest.TestCase):
             self.assertEqual(payload["profiler_status"], "collection_failed")
             self.assertFalse(payload["profiler_available"])
             (root / "metric_observations.jsonl").write_text(
+                '{"evidence_id":"ev_0","metric":"l2c_hit_rate","available":false}\n',
+                encoding="utf-8",
+            )
+            payload = _result_payload(root)
+            self.assertEqual(payload["profiler_status"], "collection_failed")
+            self.assertFalse(payload["profiler_available"])
+            (root / "metric_observations.jsonl").write_text(
                 '{"evidence_id":"ev_1","metric":"l2c_hit_rate","available":true}\n',
                 encoding="utf-8",
             )

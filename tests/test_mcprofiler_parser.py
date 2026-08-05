@@ -193,7 +193,7 @@ class McProfilerParserTests(unittest.TestCase):
         self.assertEqual(diagnoses[0].bottleneck_type, "insufficient_evidence")
         self.assertTrue(diagnoses[0].evidence_ids)
 
-    def test_private_memory_traffic_can_support_spill_diagnosis(self) -> None:
+    def test_private_memory_traffic_alone_is_insufficient_evidence(self) -> None:
         result = ProfilerResult(
             observations=[
                 MetricObservation(
@@ -209,7 +209,36 @@ class McProfilerParserTests(unittest.TestCase):
             ]
         )
         diagnoses = diagnose_from_evidence_records(profiler_observations_to_evidence(result, "trial-private"))
+        self.assertEqual(diagnoses[0].bottleneck_type, "insufficient_evidence")
+
+    def test_private_memory_traffic_with_compiler_evidence_can_support_spill_diagnosis(self) -> None:
+        result = ProfilerResult(
+            observations=[
+                MetricObservation(
+                    metric_name="private_read_instructions",
+                    source_field_name="Private Read Instructions",
+                    value=4,
+                    unit="instructions",
+                    source="mcprofiler",
+                    available=True,
+                    confidence="high",
+                    artifact="case:sha",
+                ),
+                MetricObservation(
+                    metric_name="private_memory_bytes",
+                    source_field_name="compiler private_memory_bytes",
+                    value=128,
+                    unit="bytes",
+                    source="tilelang_log",
+                    available=True,
+                    confidence="medium",
+                    artifact="compile-log",
+                ),
+            ]
+        )
+        diagnoses = diagnose_from_evidence_records(profiler_observations_to_evidence(result, "trial-private"))
         self.assertEqual(diagnoses[0].bottleneck_type, "private_memory_spill")
+        self.assertEqual(len(diagnoses[0].evidence_ids), 2)
 
     def test_unknown_metric_only_produces_insufficient_evidence(self) -> None:
         result = ProfilerResult(
