@@ -24,7 +24,7 @@ sample_source:
   upstream_commit: 1d155f4b80865edfe0009ad952135b7afbd4f05a
   upstream_path: examples/blocksparse_attention/example_tilelang_sparse_gqa_decode_paged.py
   upstream_access_date: '2026-08-05'
-  vendored_file_sha256: 9eaf6cbd57e57e58edb2e6f4f2a4e769f842777456205de37b450e52c8ab407e
+  vendored_file_sha256: dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6
   upstream_license_spdx: MIT
   upstream_license_notice: kernel_opt_agent/samples/paged_attention_decode/THIRD_PARTY_NOTICES.md
   local_status: source_identified_not_vendor_validated

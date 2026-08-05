@@ -28,7 +28,7 @@ class McProfilerParserTests(unittest.TestCase):
         manifest = json.loads((FIXTURE / "manifest.json").read_text(encoding="utf-8"))
         digest = hashlib.sha256((FIXTURE / "report_dumped_result.json").read_bytes()).hexdigest()
         self.assertEqual(digest, manifest["sha256"])
-        self.assertEqual(digest, "2eb3b6b3f3446fedf47d01d348df938c510a1ea8adfa58dd165040ec95de955f")
+        self.assertEqual(digest, "cfe5f0e8f0a9312d7927a8351b6add1a6dfbf08f1698e7acd53d11fd4033fd2b")
 
     def test_same_case_parses_deterministically(self) -> None:
         first = parse_mcprofiler_case(FIXTURE).to_dict()
@@ -74,6 +74,9 @@ class McProfilerParserTests(unittest.TestCase):
         self.assertIn("blocked", manifest["status"])
         self.assertEqual(manifest["sample_source"]["upstream_commit"], "1d155f4b80865edfe0009ad952135b7afbd4f05a")
         self.assertEqual(len(manifest["sample_source"]["vendored_file_sha256"]), 64)
+        vendored_path = manifest_path.parent / "_upstream_sparse_gqa_decode_paged.py"
+        vendored_digest = hashlib.sha256(vendored_path.read_bytes()).hexdigest()
+        self.assertEqual(manifest["sample_source"]["vendored_file_sha256"], vendored_digest)
         self.assertEqual(manifest["sample_source"]["upstream_license_spdx"], "MIT")
         self.assertEqual(manifest["sshrunner_probe"]["connection"], "<redacted>")
         self.assertNotIn("host_redacted", manifest["sshrunner_probe"])
@@ -119,7 +122,7 @@ class McProfilerParserTests(unittest.TestCase):
         self.assertTrue(parsed.unknown_rows)
         artifact_id = parsed.artifacts["artifact_id"]
         self.assertTrue(artifact_id.startswith("v8_tc1_gate_fixed:"))
-        self.assertIn("2eb3b6b3f3446fed", artifact_id)
+        self.assertIn("cfe5f0e8f0a9312d", artifact_id)
         self.assertEqual(by_metric["l2c_hit_rate"].artifact, artifact_id)
 
     def test_missing_report_file_degrades_gracefully(self) -> None:

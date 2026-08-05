@@ -1,0 +1,4 @@
+.gitattributes text eol=lf
+kernel_opt_agent/samples/paged_attention_decode/** text eol=lf
+tests/fixtures/mcprofiler/** text eol=lf
+tests/test_mcprofiler_parser.py text eol=lf

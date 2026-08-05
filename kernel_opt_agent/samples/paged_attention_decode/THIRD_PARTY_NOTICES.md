@@ -9,11 +9,12 @@ Decode baseline scaffold.
 - Source commit: `1d155f4b80865edfe0009ad952135b7afbd4f05a`
 - Source file: `examples/blocksparse_attention/example_tilelang_sparse_gqa_decode_paged.py`
 - Vendored file: `_upstream_sparse_gqa_decode_paged.py`
-- Vendored SHA-256: `9eaf6cbd57e57e58edb2e6f4f2a4e769f842777456205de37b450e52c8ab407e`
+- Vendored SHA-256: `dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6`
 - Modifications: header comments were added to identify source and retrieval date; no functional changes were made to the vendored source.
 
 The helper file `heuristic.py` is vendored from the same repository path
-`examples/blocksparse_attention/heuristic.py` at the same commit.
+`examples/blocksparse_attention/heuristic.py` at the same commit. Its LF-normalized
+SHA-256 is `2c861d5b5a9c449745f63925353c6d98053c43222ae4c06745f6fa49afffd642`.
 
 ## License Text
 
