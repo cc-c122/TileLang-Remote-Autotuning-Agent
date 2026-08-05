@@ -28,7 +28,10 @@ class McProfilerParserTests(unittest.TestCase):
         manifest = json.loads((FIXTURE / "manifest.json").read_text(encoding="utf-8"))
         digest = hashlib.sha256((FIXTURE / "report_dumped_result.json").read_bytes()).hexdigest()
         self.assertEqual(digest, manifest["sha256"])
-        self.assertEqual(digest, "cfe5f0e8f0a9312d7927a8351b6add1a6dfbf08f1698e7acd53d11fd4033fd2b")
+        self.assertEqual(digest, manifest["source_sha256"])
+        self.assertEqual(digest, manifest["stored_sha256"])
+        self.assertEqual(manifest["storage_transform"], "none_original_bytes_preserved")
+        self.assertEqual(digest, "2eb3b6b3f3446fedf47d01d348df938c510a1ea8adfa58dd165040ec95de955f")
 
     def test_same_case_parses_deterministically(self) -> None:
         first = parse_mcprofiler_case(FIXTURE).to_dict()
@@ -122,7 +125,7 @@ class McProfilerParserTests(unittest.TestCase):
         self.assertTrue(parsed.unknown_rows)
         artifact_id = parsed.artifacts["artifact_id"]
         self.assertTrue(artifact_id.startswith("v8_tc1_gate_fixed:"))
-        self.assertIn("cfe5f0e8f0a9312d", artifact_id)
+        self.assertIn("2eb3b6b3f3446fed", artifact_id)
         self.assertEqual(by_metric["l2c_hit_rate"].artifact, artifact_id)
 
     def test_missing_report_file_degrades_gracefully(self) -> None:

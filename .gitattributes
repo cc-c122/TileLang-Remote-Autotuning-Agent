@@ -1,4 +1,7 @@
 .gitattributes text eol=lf
 kernel_opt_agent/samples/paged_attention_decode/** text eol=lf
-tests/fixtures/mcprofiler/** text eol=lf
+tests/fixtures/mcprofiler/** -text -diff
+tests/fixtures/mcprofiler/synthetic_paged_attention_decode_c500_import/manifest.json text eol=lf
+tests/fixtures/mcprofiler/synthetic_paged_attention_decode_c500_import/report_dumped_result.json text eol=lf
+tests/fixtures/mcprofiler/synthetic_paged_attention_decode_c500_import/SHA256SUMS.txt text eol=lf
 tests/test_mcprofiler_parser.py text eol=lf
