@@ -19,7 +19,7 @@ from kernel_opt_agent.storage.experiment_db import ExperimentDB
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcprofiler" / "real_v8_tc1_gate"
-PAGED_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcprofiler" / "paged_attention_decode_c500_import"
+PAGED_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcprofiler" / "synthetic_paged_attention_decode_c500_import"
 WORKSPACE = Path(__file__).resolve().parents[1]
 
 
@@ -35,13 +35,13 @@ class McProfilerParserTests(unittest.TestCase):
         second = parse_mcprofiler_case(FIXTURE).to_dict()
         self.assertEqual(first, second)
 
-    def test_paged_attention_fixture_manifest_sha256_matches_report(self) -> None:
+    def test_synthetic_paged_attention_fixture_manifest_sha256_matches_report(self) -> None:
         manifest = json.loads((PAGED_FIXTURE / "manifest.json").read_text(encoding="utf-8"))
         digest = hashlib.sha256((PAGED_FIXTURE / "report_dumped_result.json").read_bytes()).hexdigest()
         self.assertEqual(digest, manifest["sha256"])
         self.assertEqual(digest, "bda53b6ed9eecc7eb884dac7fa5a08c589ce0611884afd73f74f05399f01dd7f")
 
-    def test_paged_attention_metadata_is_identified_without_gate_up_confusion(self) -> None:
+    def test_synthetic_paged_attention_metadata_is_identified_without_gate_up_confusion(self) -> None:
         parsed = parse_mcprofiler_case(PAGED_FIXTURE)
         self.assertEqual(parsed.metadata["operator"], "Paged Attention Decode")
         self.assertEqual(parsed.metadata["target_subkernel"], "Paged Attention Decode")
@@ -57,10 +57,11 @@ class McProfilerParserTests(unittest.TestCase):
         self.assertIn("Paged Attention Decode Metadata", public)
         self.assertIn("block_table_layout", public)
 
-    def test_paged_attention_report_import_keeps_insufficient_evidence(self) -> None:
+    def test_synthetic_paged_attention_report_import_keeps_insufficient_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             payload = import_report(PAGED_FIXTURE, Path(tmp))
             self.assertEqual(payload["metadata"]["operator"], "Paged Attention Decode")
+            self.assertEqual(payload["metadata"]["collection_status"], "synthetic_parser_fixture_not_real_baseline")
             self.assertTrue((Path(tmp) / "parsed_mcprofiler_case.json").exists())
             self.assertTrue((Path(tmp) / "metric_observations.jsonl").exists())
             diagnoses = [json.loads(line) for line in (Path(tmp) / "diagnoses.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -71,9 +72,22 @@ class McProfilerParserTests(unittest.TestCase):
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["operator"], "Paged Attention Decode")
         self.assertIn("blocked", manifest["status"])
+        self.assertEqual(manifest["sample_source"]["upstream_commit"], "1d155f4b80865edfe0009ad952135b7afbd4f05a")
+        self.assertEqual(len(manifest["sample_source"]["vendored_file_sha256"]), 64)
         for item in manifest["reproduction_commands"]["commands"]:
             result = validate(item["command"], WORKSPACE, WORKSPACE)
             self.assertTrue(result.allowed, f"{item['label']}: {result.reason}")
+
+    def test_paged_attention_runner_has_explicit_correctness_and_sample_protocol(self) -> None:
+        runner_path = WORKSPACE / "kernel_opt_agent" / "samples" / "paged_attention_decode" / "run_paged_attention_decode.py"
+        source = runner_path.read_text(encoding="utf-8")
+        self.assertIn("torch.allclose(output, reference, atol=atol, rtol=rtol)", source)
+        self.assertIn("max_error", source)
+        self.assertIn("raise AssertionError", source)
+        self.assertIn("one sparse_attn.forward call per sample after fixed warmup", source)
+        self.assertNotIn("upstream.main(", source)
+        self.assertNotIn("do_bench", source)
+        self.assertNotIn("see upstream correctness output", source)
 
     def test_real_case_metrics_are_normalized_without_clamping_percentages(self) -> None:
         parsed = parse_mcprofiler_case(FIXTURE)

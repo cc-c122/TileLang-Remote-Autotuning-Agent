@@ -1,6 +1,6 @@
 schema_version: v2.paged_attention_baseline.v1
 project_name: c500-paged-attention-decode-baseline
-status: blocked_remote_exec_channel
+status: blocked_sshrunner_sftp_session
 operator: Paged Attention Decode
 not_substitutes:
   - GEMM
@@ -21,8 +21,12 @@ target:
     - 2048
 sample_source:
   upstream_repository: tile-ai/tilelang
+  upstream_commit: 1d155f4b80865edfe0009ad952135b7afbd4f05a
   upstream_path: examples/blocksparse_attention/example_tilelang_sparse_gqa_decode_paged.py
   upstream_access_date: '2026-08-05'
+  vendored_file_sha256: 9eaf6cbd57e57e58edb2e6f4f2a4e769f842777456205de37b450e52c8ab407e
+  upstream_license_spdx: NOASSERTION
+  upstream_license_note: GitHub license API did not identify a SPDX license for tile-ai/tilelang at collection time.
   local_status: source_identified_not_vendor_validated
   required_adjustments:
     - upstream default batch is 8; baseline target is batch 1
@@ -48,7 +52,17 @@ mcprofiler:
   collection_mode: report_import
   native_artifacts_required: true
   status: not_collected
-  blocked_reason: ssh authentication succeeds but shell/exec channel closes with EOFError
+  blocked_reason: SSHRunner password authentication reaches the host, but open_sftp/open_session closes with EOFError before upload or command execution.
+sshrunner_probe:
+  attempted: true
+  auth_type: password_env
+  host_redacted: 140.207.205.81
+  port: 32222
+  username_redacted: root+vm-...
+  remote_workspace: /data/kernel_agent_paged_attention_smoke
+  result: blocked
+  failure_stage: open_sftp
+  error_type: EOFError
 environment:
   mxmaca_version: null
   driver_version: null
@@ -72,4 +86,4 @@ reproduction_commands:
 notes:
   - This manifest is a reproducibility checklist for a real C500 Paged Attention Decode baseline.
   - No optimization patch is generated or claimed by this baseline.
-  - Current PR includes report_import parser coverage; real mcProfiler native artifacts must be imported after a C500 shell/exec channel is available.
+  - Current PR includes report_import parser coverage; real mcProfiler native artifacts must be imported after SSHRunner can open SFTP/exec sessions or after manual mcProfiler report export.
