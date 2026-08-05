@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,7 @@ from kernel_opt_agent.main import WORKSPACE_ROOT
 
 from .job_worker import JobWorker
 from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest
+from .profiler_status import profiler_status
 from .settings_store import SettingsStore
 from .task_manager import TaskManager
 
@@ -47,17 +47,9 @@ def _read_csv(path: Path) -> list[dict[str, Any]]:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists() or not path.is_file():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            rows.append(json.loads(line))
-        except json.JSONDecodeError:
-            rows.append({"parse_error": True, "raw": line})
-    return rows
+    from .profiler_status import read_jsonl
+
+    return read_jsonl(path)
 
 
 def _numeric(value: Any) -> float | None:
@@ -112,7 +104,9 @@ def _result_payload(results_dir: Path) -> dict[str, Any]:
         "experiments.jsonl",
         "summary.csv",
         "profiler_results.jsonl",
+        "metric_observations.jsonl",
         "diagnosis.jsonl",
+        "diagnoses.jsonl",
         "patch_trials.jsonl",
         "best_kernel.py",
         "best_config.yaml",
@@ -123,6 +117,10 @@ def _result_payload(results_dir: Path) -> dict[str, Any]:
     best_kernel = _read_text(results_dir / "best_kernel.py")
     best_config = _read_yaml(results_dir / "best_config.yaml")
     report = _read_text(results_dir / "report.md")
+    evidence_summary = _read_jsonl(results_dir / "metric_observations.jsonl")
+    diagnoses = _read_jsonl(results_dir / "diagnoses.jsonl")
+    profiler_rows = _read_jsonl(results_dir / "profiler_results.jsonl")
+    status = profiler_status(profiler_rows, evidence_summary)
     payload = {
         "results_dir": str(results_dir),
         "best_kernel": best_kernel,
@@ -132,6 +130,10 @@ def _result_payload(results_dir: Path) -> dict[str, Any]:
         "improvement_percent": improvement,
         "failed_cases": _read_jsonl(results_dir / "failed_cases.jsonl"),
         "generated_files": files,
+        "evidence_summary": evidence_summary,
+        "diagnoses": diagnoses,
+        "profiler_status": status,
+        "profiler_available": status == "profiler_metrics_available",
     }
     payload.update({"files": files, "summary": summary, "best_row": best_row, "report": report})
     return payload

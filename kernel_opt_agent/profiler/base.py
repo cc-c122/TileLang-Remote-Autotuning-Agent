@@ -4,6 +4,40 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+SENSITIVE_PATTERNS = (
+    "password",
+    "api_key",
+    "token",
+    "secret",
+    "credential",
+    "authorization",
+    "bearer",
+    "private_key",
+    "private key",
+)
+REDACTED_SECRET = "<redacted:secret>"
+
+
+def _is_sensitive_string(value: str) -> bool:
+    lowered = value.lower()
+    return any(pattern in lowered for pattern in SENSITIVE_PATTERNS)
+
+
+def redact_sensitive(data: Any) -> Any:
+    if isinstance(data, dict):
+        return {
+            str(key): REDACTED_SECRET if _is_sensitive_string(str(key)) else redact_sensitive(value)
+            for key, value in data.items()
+        }
+    if isinstance(data, list):
+        return [redact_sensitive(item) for item in data]
+    if isinstance(data, tuple):
+        return tuple(redact_sensitive(item) for item in data)
+    if isinstance(data, str) and _is_sensitive_string(data):
+        return REDACTED_SECRET
+    return data
+
+
 METRIC_FIELDS = [
     "latency_ms",
     "tflops",
@@ -41,17 +75,19 @@ class MetricObservation:
     parse_warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "metric_name": self.metric_name,
-            "source_field_name": self.source_field_name,
-            "value": self.value,
-            "unit": self.unit,
-            "source": self.source,
-            "available": self.available,
-            "confidence": self.confidence,
-            "artifact": self.artifact,
-            "parse_warnings": self.parse_warnings,
-        }
+        return redact_sensitive(
+            {
+                "metric_name": self.metric_name,
+                "source_field_name": self.source_field_name,
+                "value": self.value,
+                "unit": self.unit,
+                "source": self.source,
+                "available": self.available,
+                "confidence": self.confidence,
+                "artifact": self.artifact,
+                "parse_warnings": self.parse_warnings,
+            }
+        )
 
 
 @dataclass
@@ -96,32 +132,34 @@ class ProfilerResult:
         return self.latency_ms
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "latency_ms": self.latency_ms,
-            "tflops": self.tflops,
-            "estimated_hbm_bandwidth": self.estimated_hbm_bandwidth,
-            "register_count": self.register_count,
-            "shared_memory_bytes": self.shared_memory_bytes,
-            "private_memory_bytes": self.private_memory_bytes,
-            "occupancy": self.occupancy,
-            "warp_active_ratio": self.warp_active_ratio,
-            "hbm_read_bandwidth": self.hbm_read_bandwidth,
-            "hbm_write_bandwidth": self.hbm_write_bandwidth,
-            "shared_bank_conflict": self.shared_bank_conflict,
-            "memory_coalescing_efficiency": self.memory_coalescing_efficiency,
-            "vl1_hit_rate": self.vl1_hit_rate,
-            "l2c_hit_rate": self.l2c_hit_rate,
-            "dnoc_read_average_latency": self.dnoc_read_average_latency,
-            "shared_memory_access_efficiency": self.shared_memory_access_efficiency,
-            "shared_conflict_cycles": self.shared_conflict_cycles,
-            "achieved_waves": self.achieved_waves,
-            "dispatched_waves": self.dispatched_waves,
-            "mma_duty": self.mma_duty,
-            "raw_logs": self.raw_logs,
-            "available_metrics": self.available_metrics,
-            "observations": [item.to_dict() for item in self.observations],
-            "raw_artifact_refs": self.raw_artifact_refs,
-        }
+        return redact_sensitive(
+            {
+                "latency_ms": self.latency_ms,
+                "tflops": self.tflops,
+                "estimated_hbm_bandwidth": self.estimated_hbm_bandwidth,
+                "register_count": self.register_count,
+                "shared_memory_bytes": self.shared_memory_bytes,
+                "private_memory_bytes": self.private_memory_bytes,
+                "occupancy": self.occupancy,
+                "warp_active_ratio": self.warp_active_ratio,
+                "hbm_read_bandwidth": self.hbm_read_bandwidth,
+                "hbm_write_bandwidth": self.hbm_write_bandwidth,
+                "shared_bank_conflict": self.shared_bank_conflict,
+                "memory_coalescing_efficiency": self.memory_coalescing_efficiency,
+                "vl1_hit_rate": self.vl1_hit_rate,
+                "l2c_hit_rate": self.l2c_hit_rate,
+                "dnoc_read_average_latency": self.dnoc_read_average_latency,
+                "shared_memory_access_efficiency": self.shared_memory_access_efficiency,
+                "shared_conflict_cycles": self.shared_conflict_cycles,
+                "achieved_waves": self.achieved_waves,
+                "dispatched_waves": self.dispatched_waves,
+                "mma_duty": self.mma_duty,
+                "raw_logs": self.raw_logs,
+                "available_metrics": self.available_metrics,
+                "observations": [item.to_dict() for item in self.observations],
+                "raw_artifact_refs": self.raw_artifact_refs,
+            }
+        )
 
 
 class BaseProfiler:

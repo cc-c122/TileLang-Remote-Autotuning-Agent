@@ -6,6 +6,7 @@ from pathlib import Path
 import kernel_opt_agent.main as agent_main
 
 from .models import TaskCreateRequest
+from .profiler_status import profiler_status, read_jsonl
 from .run_request_builder import build_effective_config
 from .task_manager import TaskManager
 
@@ -58,6 +59,8 @@ class JobWorker:
             config = build_effective_config(request, workspace, self.settings_path)
             self.manager.add_event(task_id, "correctness_started", "starting correctness and benchmark loop")
             self.manager.add_event(task_id, "benchmark_started", "benchmark command will run after correctness passes")
+            if config.profiler.enabled:
+                self.manager.add_event(task_id, "profiling_started", "profiler evidence collection enabled")
             agent_main.WORKSPACE_ROOT = workspace
             agent_main.RESULTS_DIR = results_dir
             agent_main.GENERATED_DIR = generated_dir
@@ -67,6 +70,14 @@ class JobWorker:
                 self.manager.set_status(task_id, "cancelled")
             else:
                 self.manager.add_event(task_id, "trial_completed", "runner completed trial loop")
+                status = profiler_status(
+                    read_jsonl(results_dir / "profiler_results.jsonl"),
+                    read_jsonl(results_dir / "metric_observations.jsonl"),
+                )
+                if status in {"benchmark_only", "profiler_metrics_available"}:
+                    self.manager.add_event(task_id, "profiler_parsed", f"profiler status: {status}", {"profiler_status": status})
+                if status == "profiler_metrics_available" and read_jsonl(results_dir / "diagnoses.jsonl"):
+                    self.manager.add_event(task_id, "diagnosis_completed", "evidence-guided diagnosis completed")
                 self.manager.add_event(task_id, "best_updated", "best-seen artifacts generated")
                 self.manager.add_event(task_id, "report_generated", "report.md generated")
                 self.manager.set_status(task_id, "completed")

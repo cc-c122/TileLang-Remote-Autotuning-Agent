@@ -9,6 +9,9 @@ from pathlib import Path
 
 from kernel_opt_agent.profiler.mcprofiler import parse_mcprofiler_case
 from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
+from kernel_opt_agent.diagnosis import diagnose_from_evidence_records, profiler_observations_to_evidence
+from kernel_opt_agent.profiler.base import MetricObservation, ProfilerResult
+from kernel_opt_agent.storage.experiment_db import ExperimentDB
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcprofiler" / "real_v8_tc1_gate"
@@ -156,6 +159,158 @@ class McProfilerParserTests(unittest.TestCase):
             self.assertNotIn(private_key_value, public)
             self.assertNotIn("Bearer token-abc-123", public)
             self.assertIn("<redacted:secret>", public)
+
+    def test_evidence_and_diagnoses_are_deterministic_for_same_case(self) -> None:
+        first_result = MxmacaProfiler().collect({"mcprofiler_case_path": str(FIXTURE)})
+        second_result = MxmacaProfiler().collect({"mcprofiler_case_path": str(FIXTURE)})
+        first_evidence = [item.to_dict() for item in profiler_observations_to_evidence(first_result, "trial-gate-up")]
+        second_evidence = [item.to_dict() for item in profiler_observations_to_evidence(second_result, "trial-gate-up")]
+        self.assertEqual(first_evidence, second_evidence)
+        first_diagnoses = [
+            item.to_dict() for item in diagnose_from_evidence_records(profiler_observations_to_evidence(first_result, "trial-gate-up"))
+        ]
+        second_diagnoses = [
+            item.to_dict() for item in diagnose_from_evidence_records(profiler_observations_to_evidence(second_result, "trial-gate-up"))
+        ]
+        self.assertEqual(first_diagnoses, second_diagnoses)
+
+    def test_diagnosis_evidence_ids_exist(self) -> None:
+        result = MxmacaProfiler().collect({"mcprofiler_case_path": str(FIXTURE)})
+        evidence = profiler_observations_to_evidence(result, "trial-gate-up")
+        evidence_ids = {item.evidence_id for item in evidence}
+        diagnoses = diagnose_from_evidence_records(evidence)
+        self.assertTrue(diagnoses)
+        for diagnosis in diagnoses:
+            for evidence_id in diagnosis.evidence_ids:
+                self.assertIn(evidence_id, evidence_ids)
+        self.assertEqual({item.bottleneck_type for item in diagnoses}, {"insufficient_evidence"})
+        self.assertTrue(all("Paged Attention" not in json.dumps(item.to_dict()) for item in diagnoses))
+
+    def test_supported_metrics_without_thresholds_do_not_force_bottleneck(self) -> None:
+        result = MxmacaProfiler().collect({"mcprofiler_case_path": str(FIXTURE)})
+        diagnoses = diagnose_from_evidence_records(profiler_observations_to_evidence(result, "trial-gate-up"))
+        self.assertEqual(len(diagnoses), 1)
+        self.assertEqual(diagnoses[0].bottleneck_type, "insufficient_evidence")
+        self.assertTrue(diagnoses[0].evidence_ids)
+
+    def test_private_memory_traffic_alone_is_insufficient_evidence(self) -> None:
+        result = ProfilerResult(
+            observations=[
+                MetricObservation(
+                    metric_name="private_read_instructions",
+                    source_field_name="Private Read Instructions",
+                    value=4,
+                    unit="instructions",
+                    source="mcprofiler",
+                    available=True,
+                    confidence="high",
+                    artifact="case:sha",
+                )
+            ]
+        )
+        diagnoses = diagnose_from_evidence_records(profiler_observations_to_evidence(result, "trial-private"))
+        self.assertEqual(diagnoses[0].bottleneck_type, "insufficient_evidence")
+
+    def test_private_memory_traffic_with_compiler_evidence_can_support_spill_diagnosis(self) -> None:
+        result = ProfilerResult(
+            observations=[
+                MetricObservation(
+                    metric_name="private_read_instructions",
+                    source_field_name="Private Read Instructions",
+                    value=4,
+                    unit="instructions",
+                    source="mcprofiler",
+                    available=True,
+                    confidence="high",
+                    artifact="case:sha",
+                ),
+                MetricObservation(
+                    metric_name="private_memory_bytes",
+                    source_field_name="compiler private_memory_bytes",
+                    value=128,
+                    unit="bytes",
+                    source="tilelang_log",
+                    available=True,
+                    confidence="medium",
+                    artifact="compile-log",
+                ),
+            ]
+        )
+        diagnoses = diagnose_from_evidence_records(profiler_observations_to_evidence(result, "trial-private"))
+        self.assertEqual(diagnoses[0].bottleneck_type, "private_memory_spill")
+        self.assertEqual(len(diagnoses[0].evidence_ids), 2)
+
+    def test_unknown_metric_only_produces_insufficient_evidence(self) -> None:
+        result = ProfilerResult(
+            observations=[
+                MetricObservation(
+                    metric_name="unknown_backend_metric",
+                    source_field_name="Unknown Field",
+                    value=123,
+                    unit="unknown",
+                    source="mcprofiler",
+                    available=True,
+                    confidence="low",
+                    artifact="case:sha",
+                )
+            ]
+        )
+        evidence = profiler_observations_to_evidence(result, "trial-unknown")
+        diagnoses = diagnose_from_evidence_records(evidence)
+        self.assertEqual([item.bottleneck_type for item in diagnoses], ["insufficient_evidence"])
+        self.assertEqual(diagnoses[0].evidence_ids, [evidence[0].evidence_id])
+
+    def test_no_profiler_degrades_to_insufficient_evidence(self) -> None:
+        evidence = profiler_observations_to_evidence(ProfilerResult.empty(), "trial-empty")
+        diagnoses = diagnose_from_evidence_records(evidence)
+        self.assertEqual(evidence, [])
+        self.assertEqual(diagnoses[0].bottleneck_type, "insufficient_evidence")
+        self.assertEqual(diagnoses[0].confidence, "low")
+
+    def test_evidence_outputs_are_written_and_redacted(self) -> None:
+        secret_value = "credential-secret-token"
+        with tempfile.TemporaryDirectory() as tmp:
+            result = ProfilerResult(
+                observations=[
+                    MetricObservation(
+                        metric_name="dnoc_read_average_latency",
+                        source_field_name="Authorization Header",
+                        value=secret_value,
+                        unit="cycles",
+                        source="mcprofiler",
+                        available=True,
+                        confidence="low",
+                        artifact="case:sha",
+                        parse_warnings=["Bearer token should disappear"],
+                    )
+                ]
+            )
+            evidence = [item.to_dict() for item in profiler_observations_to_evidence(result, "trial-secret")]
+            diagnoses = [item.to_dict() for item in diagnose_from_evidence_records(profiler_observations_to_evidence(result, "trial-secret"))]
+            db = ExperimentDB(Path(tmp))
+            db.append(
+                {
+                    "run_id": "run",
+                    "iteration": 0,
+                    "candidate_id": 0,
+                    "trial_id": "trial-secret",
+                    "config_hash": "hash",
+                    "status": "benchmark_ok",
+                    "profiler": {"enabled": True, "type": "mxmaca", "result": result.to_dict(), "error": None},
+                    "metric_observations": evidence,
+                    "diagnoses": diagnoses,
+                    "bottleneck_diagnosis": [],
+                    "metrics": {},
+                    "objective": {},
+                    "paths": {},
+                }
+            )
+            for name in ("experiments.jsonl", "profiler_results.jsonl", "metric_observations.jsonl", "diagnoses.jsonl"):
+                text = (Path(tmp) / name).read_text(encoding="utf-8")
+                self.assertTrue(text.strip())
+                self.assertNotIn(secret_value, text)
+                self.assertNotIn("Bearer token should disappear", text)
+            self.assertIn("<redacted:secret>", (Path(tmp) / "metric_observations.jsonl").read_text(encoding="utf-8"))
 
     def test_fixture_does_not_contain_plaintext_secrets(self) -> None:
         forbidden = ("password", "api_key", "token", "Cc.051026")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .evidence import EvidenceBundle
+from .evidence import EvidenceBundle, EvidenceRecord
 
 
 BOTTLENECK_TYPES = [
@@ -17,6 +17,7 @@ BOTTLENECK_TYPES = [
     "low_occupancy",
     "pipeline_ineffective",
     "hardware_intrinsic_missing",
+    "insufficient_evidence",
 ]
 
 CONFIDENCE_LEVELS = {"low", "medium", "high"}
@@ -46,6 +47,144 @@ class BottleneckDiagnosis:
             "source_trial_id": self.source_trial_id,
             "source_metrics": self.source_metrics,
         }
+
+
+@dataclass
+class EvidenceDiagnosis:
+    bottleneck_type: str
+    confidence: str
+    evidence_ids: list[str] = field(default_factory=list)
+    counter_evidence: list[str] = field(default_factory=list)
+    uncertainty: list[str] = field(default_factory=list)
+    recommended_actions: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.confidence not in CONFIDENCE_LEVELS:
+            raise ValueError(f"unsupported diagnosis confidence: {self.confidence}")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "bottleneck_type": self.bottleneck_type,
+            "confidence": self.confidence,
+            "evidence_ids": self.evidence_ids,
+            "counter_evidence": self.counter_evidence,
+            "uncertainty": self.uncertainty,
+            "recommended_actions": self.recommended_actions,
+        }
+
+
+def _available_evidence(records: list[EvidenceRecord], metric: str) -> list[EvidenceRecord]:
+    return [item for item in records if item.metric == metric and item.available]
+
+
+def _first_number(records: list[EvidenceRecord], metric: str) -> tuple[EvidenceRecord, float] | None:
+    for item in _available_evidence(records, metric):
+        try:
+            return item, float(item.value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _has_metric(records: list[EvidenceRecord], metric: str) -> bool:
+    return bool(_available_evidence(records, metric))
+
+
+def diagnose_from_evidence_records(records: list[EvidenceRecord]) -> list[EvidenceDiagnosis]:
+    available = [item for item in records if item.available]
+    diagnoses: list[EvidenceDiagnosis] = []
+
+    if not available:
+        return [
+            EvidenceDiagnosis(
+                bottleneck_type="insufficient_evidence",
+                confidence="low",
+                evidence_ids=[],
+                uncertainty=["profiler did not provide normalized evidence records"],
+                recommended_actions=["collect mcProfiler or backend profiler metrics before bottleneck diagnosis"],
+            )
+        ]
+    supported_metrics = {
+        "private_read_instructions",
+        "private_write_instructions",
+        "shared_memory_access_efficiency",
+        "shared_conflict_cycles",
+        "l2c_hit_rate",
+        "vl1_hit_rate",
+        "dnoc_read_average_latency",
+        "mma_duty",
+        "achieved_waves",
+        "dispatched_waves",
+        "private_memory_bytes",
+        "local_memory_bytes",
+        "spill_bytes",
+        "spill_count",
+    }
+    unknown_ids = [item.evidence_id for item in available if item.metric not in supported_metrics]
+    supported_ids = [item.evidence_id for item in available if item.metric in supported_metrics]
+    if unknown_ids and not supported_ids:
+        return [
+            EvidenceDiagnosis(
+                bottleneck_type="insufficient_evidence",
+                confidence="low",
+                evidence_ids=unknown_ids,
+                uncertainty=["available profiler evidence does not map to a supported B-1 bottleneck rule"],
+                recommended_actions=["extend metric mapping or collect supported mcProfiler fields"],
+            )
+        ]
+
+    private_read = _first_number(records, "private_read_instructions")
+    private_write = _first_number(records, "private_write_instructions")
+    private_bytes = _first_number(records, "private_memory_bytes")
+    local_bytes = _first_number(records, "local_memory_bytes")
+    spill_bytes = _first_number(records, "spill_bytes")
+    spill_count = _first_number(records, "spill_count")
+    private_ids: list[str] = []
+    if private_read and private_read[1] > 0:
+        private_ids.append(private_read[0].evidence_id)
+    if private_write and private_write[1] > 0:
+        private_ids.append(private_write[0].evidence_id)
+    compiler_private_ids = []
+    for item in (private_bytes, local_bytes, spill_bytes, spill_count):
+        if item and item[1] > 0:
+            compiler_private_ids.append(item[0].evidence_id)
+    if private_ids and compiler_private_ids:
+        diagnoses.append(
+            EvidenceDiagnosis(
+                bottleneck_type="private_memory_spill",
+                confidence="medium",
+                evidence_ids=private_ids + compiler_private_ids,
+                counter_evidence=[],
+                uncertainty=["private memory traffic is paired with compiler/local/spill evidence"],
+                recommended_actions=["inspect generated code for local/private memory usage", "reduce per-thread temporary storage"],
+            )
+        )
+
+    if unknown_ids and not diagnoses:
+        diagnoses.append(
+            EvidenceDiagnosis(
+                bottleneck_type="insufficient_evidence",
+                confidence="low",
+                evidence_ids=unknown_ids,
+                uncertainty=["available profiler evidence does not map to a supported B-1 bottleneck rule"],
+                recommended_actions=["extend metric mapping or collect supported mcProfiler fields"],
+            )
+        )
+    if not diagnoses:
+        sample_ids = [item.evidence_id for item in available[:3]]
+        diagnoses.append(
+            EvidenceDiagnosis(
+                bottleneck_type="insufficient_evidence",
+                confidence="low",
+                evidence_ids=sample_ids,
+                uncertainty=[
+                    "available evidence is not enough for a supported B-1 bottleneck conclusion",
+                    "MetaX-specific thresholds are not established for shared memory, cache hit rates, DNoC latency, MMA duty, or wave counts",
+                ],
+                recommended_actions=["collect paired baseline/variant profiler cases or backend thresholds before bottleneck diagnosis"],
+            )
+        )
+    return diagnoses
 
 
 def _missing(bundle: EvidenceBundle, *names: str) -> list[str]:

@@ -43,7 +43,9 @@ class ExperimentDB:
         self.experiments_path = results_dir / "experiments.jsonl"
         self.failed_path = results_dir / "failed_cases.jsonl"
         self.profiler_path = results_dir / "profiler_results.jsonl"
+        self.metric_observations_path = results_dir / "metric_observations.jsonl"
         self.diagnosis_path = results_dir / "diagnosis.jsonl"
+        self.diagnoses_path = results_dir / "diagnoses.jsonl"
         self.patch_trials_path = results_dir / "patch_trials.jsonl"
         self.ablation_summary_path = results_dir / "ablation_summary.csv"
         self.summary_path = results_dir / "summary.csv"
@@ -54,7 +56,9 @@ class ExperimentDB:
         self.experiments_path.write_text("", encoding="utf-8")
         self.failed_path.write_text("", encoding="utf-8")
         self.profiler_path.write_text("", encoding="utf-8")
+        self.metric_observations_path.write_text("", encoding="utf-8")
         self.diagnosis_path.write_text("", encoding="utf-8")
+        self.diagnoses_path.write_text("", encoding="utf-8")
         self.patch_trials_path.write_text("", encoding="utf-8")
         for log_path in self.logs_dir.glob("*.log"):
             log_path.unlink()
@@ -92,6 +96,18 @@ class ExperimentDB:
         }
         with self.profiler_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(profiler_record, ensure_ascii=False, default=str) + "\n")
+        with self.metric_observations_path.open("a", encoding="utf-8") as f:
+            for evidence in record.get("metric_observations") or []:
+                metric_observation_record = {
+                    "run_id": record.get("run_id"),
+                    "iteration": record.get("iteration"),
+                    "candidate_id": record.get("candidate_id"),
+                    "trial_id": record.get("trial_id"),
+                    "config_hash": record.get("config_hash"),
+                    "status": record.get("status"),
+                    **evidence,
+                }
+                f.write(json.dumps(metric_observation_record, ensure_ascii=False, default=str) + "\n")
         diagnosis_record = {
             "run_id": record.get("run_id"),
             "iteration": record.get("iteration"),
@@ -103,6 +119,18 @@ class ExperimentDB:
         }
         with self.diagnosis_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(diagnosis_record, ensure_ascii=False, default=str) + "\n")
+        with self.diagnoses_path.open("a", encoding="utf-8") as f:
+            for diagnosis in record.get("diagnoses") or []:
+                diagnoses_record = {
+                    "run_id": record.get("run_id"),
+                    "iteration": record.get("iteration"),
+                    "candidate_id": record.get("candidate_id"),
+                    "trial_id": record.get("trial_id"),
+                    "config_hash": record.get("config_hash"),
+                    "status": record.get("status"),
+                    **diagnosis,
+                }
+                f.write(json.dumps(diagnoses_record, ensure_ascii=False, default=str) + "\n")
         metrics = record.get("metrics") or {}
         paths = record.get("paths") or {}
         objective = record.get("objective") or {}
