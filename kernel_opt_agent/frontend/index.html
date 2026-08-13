@@ -2799,40 +2799,14 @@
       return evidenceJson + observationsJson;
     }
 
-    function sourceKind(value) {
-      const text = display(value).toLowerCase();
-      if (!text || text === "暂无数据") return "unknown";
-      if (text.includes("synthetic")) return "synthetic";
-      if (text.includes("real_profiler") || text.includes("profiler_metrics_available")) return "real_profiler";
-      if (text.includes("benchmark") || text.includes("log") || text.includes("dummy")) return "benchmark/log";
-      if (text.includes("mcprofiler") || text.includes("mxmaca")) return "unknown";
-      if (text === "unknown") return "unknown";
-      return text;
-    }
-
-    function sourceBadge(value) {
-      const kind = sourceKind(value);
-      const cls = kind === "real_profiler" ? "ok" : kind === "benchmark/log" || kind === "synthetic" || kind === "unknown" ? "warn" : "bad";
-      return `<span class="badge ${cls}">${escapeHtml(kind)}</span>`;
-    }
-
-    function valueAtAny(row, paths) {
-      for (const path of paths) {
-        const value = valueAt(row, path);
-        if (value !== undefined && value !== null && value !== "") return value;
-      }
-      return undefined;
-    }
-
-    function contextLengthOf(row) {
-      return pick(
-        row?.context_length,
-        row?.contextLength,
-        row?.ctx_len,
-        row?.seq_len,
-        row?.sequence_length,
-        valueAtAny(row, [["shape", "context_length"], ["shape", "contextLength"], ["shape", "ctx_len"], ["shape", "seq_len"], ["metadata", "shape", "context_length"], ["metadata", "shape", "contextLength"]])
-      );
+    function explicitShapeResults(results) {
+      const rows = asArray(results?.shape_results || results?.shapeResults).filter((item) => item && typeof item === "object");
+      const byContext = new Map();
+      rows.forEach((row) => {
+        const key = normalizeContextLength(pick(row.context_length, row.contextLength));
+        if (key) byContext.set(key, row);
+      });
+      return byContext;
     }
 
     function normalizeContextLength(value) {
@@ -2840,34 +2814,56 @@
       return number === null ? "" : String(number);
     }
 
-    function contextKeyFromTrial(value) {
-      const text = display(value);
-      const match = text.match(/(?:ctx|context|seq|len)[_-]?(128|512|2048)\b/i) || text.match(/\b(128|512|2048)\b/);
-      return match ? match[1] : "";
+    function provenanceKind(value) {
+      const text = display(value).toLowerCase();
+      if (["real_profiler", "benchmark/log", "benchmark_log", "synthetic", "unknown"].includes(text)) {
+        return text === "benchmark_log" ? "benchmark/log" : text;
+      }
+      return "unknown";
     }
 
-    function rowContextKey(row) {
-      return normalizeContextLength(contextLengthOf(row)) || contextKeyFromTrial(pick(row?.trial_id, row?.source_trial_id, row?.run_id, row?.shape_id, row?.name, row?.metric_name));
+    function sourceBadge(value) {
+      const kind = provenanceKind(value);
+      const cls = kind === "real_profiler" ? "ok" : kind === "benchmark/log" || kind === "synthetic" || kind === "unknown" ? "warn" : "bad";
+      return `<span class="badge ${cls}">${escapeHtml(kind)}</span>`;
     }
 
-    function latencyStatsOf(row) {
+    function shapeCorrectness(row) {
+      const correctness = row?.correctness && typeof row.correctness === "object" ? row.correctness : null;
       return {
-        median: pick(row?.latency_median_ms, row?.latency_median, row?.median_latency_ms, row?.median_ms, row?.latency_ms_median, valueAtAny(row, [["latency", "median"], ["latency", "median_ms"], ["benchmark", "median_ms"], ["metrics", "latency_median_ms"]])),
-        p90: pick(row?.latency_p90_ms, row?.latency_p90, row?.p90_latency_ms, row?.p90_ms, row?.latency_ms_p90, valueAtAny(row, [["latency", "p90"], ["latency", "p90_ms"], ["benchmark", "p90_ms"], ["metrics", "latency_p90_ms"]])),
-        stddev: pick(row?.latency_stddev_ms, row?.latency_stddev, row?.stddev_latency_ms, row?.stddev_ms, row?.latency_ms_stddev, valueAtAny(row, [["latency", "stddev"], ["latency", "stddev_ms"], ["benchmark", "stddev_ms"], ["metrics", "latency_stddev_ms"]])),
+        status: correctness ? pick(correctness.status, correctness.result) : undefined,
+        maxError: correctness ? pick(correctness.max_error, correctness.maxError) : undefined,
       };
     }
 
-    function correctnessOf(row) {
-      const correctness = row?.correctness || row?.correctness_result || row?.validation || {};
+    function shapeLatencyStats(row) {
+      const stats = row?.latency_stats || row?.latencyStats || {};
       return {
-        status: pick(row?.correctness_status, correctness.status, row?.status === "benchmark_ok" ? "pass" : undefined),
-        maxError: pick(row?.max_error, row?.correctness_max_error, correctness.max_error),
+        median: pick(stats.median, stats.median_ms, stats.latency_median_ms),
+        p90: pick(stats.p90, stats.p90_ms, stats.latency_p90_ms),
+        stddev: pick(stats.stddev, stats.stddev_ms, stats.latency_stddev_ms),
       };
     }
 
-    function observationSource(row) {
-      return pick(row?.artifact_id, row?.source, row?.evidence_source, row?.data_source, row?.collection_status, row?.profiler_status, row?.kind, valueAt(row, ["metadata", "collection_status"]));
+    function shapeProfilerAvailable(row) {
+      if (!row || !Object.prototype.hasOwnProperty.call(row, "profiler_available")) return undefined;
+      return row.profiler_available;
+    }
+
+    function shapeProfilerStatus(row) {
+      return pick(row?.profiler_status, row?.profilerStatus);
+    }
+
+    function shapeProvenance(row) {
+      return provenanceKind(pick(row?.provenance, row?.source));
+    }
+
+    function shapeEvidenceRows(row) {
+      return asArray(row?.evidence || row?.evidence_summary || row?.evidenceSummary).filter((item) => item && typeof item === "object");
+    }
+
+    function shapeDiagnosisRows(row) {
+      return asArray(row?.diagnoses || row?.diagnosis || row?.bottlenecks).filter((item) => item && typeof item === "object");
     }
 
     function evidenceMetricName(row) {
@@ -2889,101 +2885,41 @@
       return pieces.join(" ");
     }
 
-    function buildContextGroups(results, summary, evidenceRows, diagnosisRows) {
-      const wanted = ["128", "512", "2048"];
-      const groups = new Map(wanted.map((key) => [key, { key, label: `${key} context`, summaryRows: [], evidenceRows: [], diagnosisRows: [] }]));
-      const unknown = { key: "unknown", label: "未知 context", summaryRows: [], evidenceRows: [], diagnosisRows: [] };
-      const put = (collection, row) => {
-        const key = rowContextKey(row);
-        const group = groups.get(key) || unknown;
-        collection(group).push(row);
-      };
-      summary.forEach((row) => put((group) => group.summaryRows, row));
-      evidenceRows.forEach((row) => put((group) => group.evidenceRows, row));
-      diagnosisRows.forEach((row) => put((group) => group.diagnosisRows, row));
-      return [...groups.values(), unknown].filter((group) => group.key !== "unknown" || group.summaryRows.length || group.evidenceRows.length || group.diagnosisRows.length);
-    }
-
-    function groupMetric(group, fields, nestedPaths = []) {
-      for (const row of [...group.summaryRows, ...group.evidenceRows, ...group.diagnosisRows]) {
-        for (const field of fields) {
-          if (row && Object.prototype.hasOwnProperty.call(row, field) && row[field] !== undefined && row[field] !== null && row[field] !== "") return row[field];
-        }
-        const nested = valueAtAny(row, nestedPaths);
-        if (nested !== undefined) return nested;
-      }
-      return undefined;
-    }
-
-    function groupLatencyStats(group) {
-      const statsRows = [...group.summaryRows, ...group.evidenceRows].map(latencyStatsOf);
-      const first = (field) => {
-        for (const row of statsRows) {
-          if (row[field] !== undefined && row[field] !== null && row[field] !== "") return row[field];
-        }
-        return undefined;
-      };
-      return { median: first("median"), p90: first("p90"), stddev: first("stddev") };
-    }
-
-    function groupProfilerAvailable(group, fallback) {
-      const value = groupMetric(group, ["profiler_available", "profilerAvailable", "available"], [["profiler", "available"], ["profiler", "result", "available"]]);
-      const hasRows = group.summaryRows.length || group.evidenceRows.length || group.diagnosisRows.length;
-      return value === undefined ? (hasRows ? fallback : undefined) : value;
-    }
-
-    function groupSources(group, fallbackStatus) {
-      const hasRows = group.summaryRows.length || group.evidenceRows.length || group.diagnosisRows.length;
-      const sources = [...group.evidenceRows, ...group.diagnosisRows, ...group.summaryRows]
-        .map(observationSource)
-        .filter((value) => value !== undefined && value !== null && value !== "")
-        .map(sourceKind);
-      if (!sources.length && hasRows && fallbackStatus) sources.push(sourceKind(fallbackStatus));
-      return [...new Set(sources.length ? sources : ["unknown"])];
-    }
-
-    function groupCorrectness(group) {
-      const rows = group.summaryRows.length ? group.summaryRows : group.evidenceRows;
-      for (const row of rows) {
-        const correctness = correctnessOf(row);
-        if (correctness.status !== undefined || correctness.maxError !== undefined) return correctness;
-      }
-      return { status: undefined, maxError: undefined };
-    }
-
-    function renderContextEvidenceGroups(results, summary, evidenceRows, diagnosisRows, profilerAvailable, profilerStatus) {
-      const groups = buildContextGroups(results, summary, evidenceRows, diagnosisRows);
-      if (!groups.length) {
-        return `<section class="section"><div class="section-head"><h2>按 context length 的证据</h2><span class="muted">未采集</span></div><div class="empty">未采集：后端未返回 context length、evidence_summary 或 diagnoses。</div></section>`;
-      }
-      const cards = groups.map((group) => {
-        const correctness = groupCorrectness(group);
-        const latency = groupLatencyStats(group);
-        const sources = groupSources(group, profilerStatus);
-        const synthetic = sources.includes("synthetic");
-        const profiler = groupProfilerAvailable(group, profilerAvailable);
-        const profilerBadgeText = synthetic ? "synthetic 解析" : profiler === true ? "profiler 可用" : profiler === false ? "profiler 不可用" : "未采集";
-        const profilerBadgeClass = profiler === true && !synthetic ? "ok" : "warn";
-        const diagnoses = group.diagnosisRows;
-        const evidenceMap = evidenceRecordMap(group.evidenceRows);
-        const evidence = group.evidenceRows.slice(0, 4).map(compactEvidenceLabel);
+    function renderShapeResults(results) {
+      const byContext = explicitShapeResults(results);
+      const contexts = ["128", "512", "2048"];
+      const cards = contexts.map((context) => {
+        const row = byContext.get(context);
+        const correctness = shapeCorrectness(row);
+        const latency = shapeLatencyStats(row);
+        const profiler = shapeProfilerAvailable(row);
+        const profilerText = profiler === true ? "profiler 可用" : profiler === false ? "profiler 不可用" : "未采集";
+        const profilerClass = profiler === true ? "ok" : "warn";
+        const provenance = shapeProvenance(row);
+        const synthetic = provenance === "synthetic";
+        const evidenceRows = shapeEvidenceRows(row);
+        const diagnoses = shapeDiagnosisRows(row);
+        const evidenceMap = evidenceRecordMap(evidenceRows);
+        const evidence = evidenceRows.slice(0, 4).map(compactEvidenceLabel);
         return `<article class="diagnosis-card">
-          <h3><span>${escapeHtml(group.label)}</span><span class="badge ${profilerBadgeClass}">${escapeHtml(profilerBadgeText)}</span></h3>
+          <h3><span>${escapeHtml(context)} context</span><span class="badge ${profilerClass}">${escapeHtml(profilerText)}</span></h3>
           <div class="kv">
-            <div>correctness</div><div>${escapeHtml(display(correctness.status || "未采集"))}</div>
+            <div>correctness</div><div>${escapeHtml(display(correctness.status === undefined ? "未采集" : correctness.status))}</div>
             <div>max error</div><div>${escapeHtml(display(correctness.maxError === undefined ? "未采集" : correctness.maxError))}</div>
             <div>latency median</div><div>${escapeHtml(display(latency.median === undefined ? "未采集" : latency.median))}</div>
             <div>latency p90</div><div>${escapeHtml(display(latency.p90 === undefined ? "未采集" : latency.p90))}</div>
             <div>latency stddev</div><div>${escapeHtml(display(latency.stddev === undefined ? "未采集" : latency.stddev))}</div>
-            <div>数据来源</div><div>${sources.map(sourceBadge).join(" ")}</div>
+            <div>profiler status</div><div>${escapeHtml(display(shapeProfilerStatus(row) || "未采集"))}</div>
+            <div>数据来源</div><div>${sourceBadge(provenance)}</div>
           </div>
           ${synthetic ? `<div class="alert warn">synthetic：仅解析测试，不是性能证据。</div>` : ""}
-          ${diagnoses.length ? diagnoses.slice(0, 3).map((row) => `<div style="margin-top:10px"><strong>${escapeHtml(display(pick(row.bottleneck_type, row.type, row.name, "诊断")))}</strong> ${confidenceBadgeFor(pick(row.confidence, "unknown"))}${evidenceList("证据", diagnosisEvidenceItems(row, evidenceMap))}${evidenceList("不确定性", pick(row.uncertainty, row.uncertainties))}</div>`).join("") : `<div class="empty">诊断未采集。</div>`}
+          ${diagnoses.length ? diagnoses.slice(0, 3).map((item) => `<div style="margin-top:10px"><strong>${escapeHtml(display(pick(item.bottleneck_type, item.type, item.name, "诊断")))}</strong> ${confidenceBadgeFor(pick(item.confidence, "unknown"))}${evidenceList("证据", diagnosisEvidenceItems(item, evidenceMap))}${evidenceList("不确定性", pick(item.uncertainty, item.uncertainties))}</div>`).join("") : `<div class="empty">诊断未采集。</div>`}
           ${evidence.length ? evidenceList("原始证据摘要", evidence) : ""}
         </article>`;
       }).join("");
       return `<section class="section">
         <div class="section-head"><h2>按 context length 的证据</h2><span class="muted">128 / 512 / 2048</span></div>
+        ${byContext.size ? "" : `<div class="alert warn">后端尚未返回 shape_results[]；逐 context 证据未采集。</div>`}
         <div class="diagnosis-grid">${cards}</div>
       </section>`;
     }
@@ -3005,17 +2941,15 @@
       const best = results.best_row || summary.find((row) => row.status === "benchmark_ok") || {};
       const bestTrialId = pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
       const evidenceSummary = evidenceSummaryFromResults(results);
-      const evidenceRows = evidenceRecordsFromSummary(evidenceSummary);
       const diagnosisRows = diagnosisRowsFromResults(results);
       const profilerAvailable = pick(results.profiler_available, results.profilerAvailable, evidenceSummary?.profiler_available);
-      const profilerStatus = pick(results.profiler_status, results.profilerStatus);
       el.apiResultsPanel.innerHTML = `
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(pick(baseline.latency, baseline.objective_value, state.task?.baseline_latency)))}</div></article>
           <article class="result-card best-card"><div class="metric-label">best latency</div><div class="metric-main best">${escapeHtml(display(pick(best.latency, best.objective_value, state.task?.best_latency)))}</div><div class="kv"><div>best trial id</div><div>${escapeHtml(display(bestTrialId))}</div></div></article>
           <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
         </div>
-        ${renderContextEvidenceGroups(results, summary, evidenceRows, diagnosisRows, profilerAvailable, profilerStatus)}
+        ${renderShapeResults(results)}
         <h3>best kernel</h3>
         <pre>${escapeHtml(results.best_kernel || "等待结果文件：best_kernel.py")}</pre>
         <h3>best_config.yaml</h3>
