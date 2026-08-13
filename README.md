@@ -1,41 +1,58 @@
 # TileLang Remote Autotuning Agent
 
-TileLang Remote Autotuning Agent 是一个面向 TileLang kernel sample 的远程调参工具：用户在 Web 页面输入或上传 sample、选择 GPU、使用长期保存的 SSH/LLM 设置，点击“开始优化”，系统会在受保护的 workspace 内远程执行候选 kernel，并返回当前预算内实际测到的 best-seen kernel。
+TileLang Remote Autotuning Agent 的产品目标是：让用户在 Web 中粘贴或选择单个 kernel sample 文件、选择 GPU、复用长期保存的 SSH/LLM 设置，点击“开始优化”，系统在受保护的 workspace 内远程运行候选 kernel，并返回当前预算内实际测到的 best-seen kernel。
 
-配置文件仍然存在，但在当前 V2 开发态里，它们主要是内部实现和高级调试入口；普通用户主流程是 FastAPI Web API + 单文件 Web UI。
+当前仓库的事实状态要分开看：
 
-## 当前主流程
+- 后端已经提供 FastAPI Web API。
+- 前端是 `kernel_opt_agent/frontend/index.html` 单文件页面，调用相对路径 `/api/*`。
+- `python -m kernel_opt_agent.server.app` 只启动 API，不会挂载或打开 Web 页面；`GET /api/health` 可用，`GET /` 不是 Web UI。
+- 仓库目前没有一条从零可复制的单命令 Web UI 启动路径，也没有内置 CORS/静态文件代理。完整普通用户 Web 快速开始仍是当前缺口。
+- 当前唯一完全可复制的运行入口是 CLI fallback；产品设计主入口仍然是 Web。
 
-1. 在 Web 设置页保存 SSH 和 LLM 的非密钥配置，并测试连接。
-2. 在“新建任务”里提供 sample、build/correctness/benchmark 命令、GPU 型号和搜索预算。
-3. 后端创建任务，写入任务 workspace，并按顺序执行 build、correctness、benchmark、profiler、diagnosis 和受控 patch 流程。
-4. 在“任务详情”和“实验结果”里查看事件、best kernel、report、失败样例和证据。
+系统不保证全局最优，只返回当前搜索预算内已经运行并通过 correctness 的 best-seen kernel。
 
-系统不保证全局最优，只返回当前预算内已经运行并通过 correctness 的 best-seen kernel。
-
-## 快速开始
+## 快速开始：当前可复制路径
 
 需要 Python 3.10+。
 
 ```bash
 pip install -r kernel_opt_agent/requirements.txt
+cp examples/settings.yaml.example settings.yaml
+python main.py --run-request examples/run_request.yaml --settings settings.yaml
+```
+
+如果只想启动 API：
+
+```bash
 python -m kernel_opt_agent.server.app
 ```
 
-默认服务地址是：
+默认 API 地址：
 
 ```text
 http://127.0.0.1:8765
 ```
 
-后端 API 默认监听 `127.0.0.1:8765`。Web UI 是 `kernel_opt_agent/frontend/index.html`，页面会调用同源 `/api/*` 接口；当前后端不负责挂载这个静态文件。开发时请按当前调试环境的静态服务或代理方式打开 `frontend/index.html`，并确保页面所在 origin 能访问同源 `/api/*`。
+可验证：
 
-启动后建议先进入“设置”页：
+```bash
+curl http://127.0.0.1:8765/api/health
+```
 
-- 填写 SSH host、port、username、auth type、remote workspace 等非密钥字段。
-- 填写 LLM provider、base URL、model、API key 环境变量名。
-- 点击连接测试，确认远程 SSH 可达。
-- 再回到“新建任务”创建优化任务。
+注意：上面的 API 命令不会提供 `frontend/index.html`。要使用 Web UI，需要现有开发代理或同源托管方式，让页面所在 origin 能访问同源 `/api/*`。不要把“另起一个端口打开静态页面”当成当前可用方案，因为前端没有配置跨域 API base URL。
+
+## Web 当前边界
+
+当前 Web 页面包含“新建任务、任务详情、实验结果、硬件画像、设置、开发者模式”等视图，但普通 Web UI 仍有这些边界：
+
+- sample 支持粘贴，或选择单个文件后读入 textarea，最终作为 inline 内容提交。
+- 前端没有 multipart upload、upload id 或目录上传流程。
+- `sample.source_type: path/upload` 属于后端 API/高级模式，前提是后端机器能访问该 path；它不是浏览器目录上传。
+- Web task 当前固定 `rule_based` 搜索策略和 `latency` 目标。
+- Web UI 保存 LLM 设置，但当前 Web task 未接入 LLM 参数规划、硬件查询或 patch 生成。
+- Web UI 的 profiler/patch 高级区当前隐藏；普通 Web 请求固定 `profiler.enabled=false`、`patching.enabled=false`。
+- Web API model 虽接受 profiler/patching 字段，但 profiler type 目前只允许 `dummy`；不能把它描述成完整 mcProfiler Web 闭环。
 
 ## 密钥与环境变量
 
@@ -46,7 +63,6 @@ PowerShell:
 ```powershell
 $env:KERNEL_AGENT_SSH_PASSWORD = "your-ssh-password"
 $env:OPENAI_API_KEY = "your-llm-api-key"
-python -m kernel_opt_agent.server.app
 ```
 
 bash:
@@ -54,40 +70,13 @@ bash:
 ```bash
 export KERNEL_AGENT_SSH_PASSWORD="your-ssh-password"
 export OPENAI_API_KEY="your-llm-api-key"
-python -m kernel_opt_agent.server.app
 ```
 
 不要把真实密码、API key、token 或私钥内容写进 README、settings、run request、日志、PR 描述或结果文件。
 
-## Web 页面
-
-当前 Web 控制台包含这些页面：
-
-- 新建任务：填写 sample、命令、目标 GPU、runner、预算、profiler 和 patch 开关。
-- 任务详情：查看任务状态、事件流、取消任务。
-- 实验结果：查看 best kernel、best config、report、summary、失败 case，并下载 `best_kernel.py` 和 `report.md`。
-- 硬件画像：根据 GPU 型号解析内置 profile，展示字段来源和置信度，允许用户覆盖硬件参数。
-- 设置：长期保存 SSH/LLM 非密钥配置，测试 SSH 连接。
-- 开发者模式：导出 `run_request.yaml` 和 `settings.yaml`，用于 CLI fallback 和调试；这不是普通用户入口。
-
-## 真实功能
-
-当前代码已经具备：
-
-- FastAPI Web API：settings 保存/读取/连接测试、hardware resolve、task 创建/列表/详情/events/results/download/cancel。
-- SSH runner：支持 password auth 和 key auth；password 只从环境变量读取。
-- 远程 workspace 管理：使用 `.kernel_opt_agent_workspace` 标记受管目录，拒绝危险路径和未标记的非空目录。
-- correctness-before-benchmark：候选必须先通过 correctness，失败候选不会进入性能排名。
-- 参数搜索：Web 任务当前使用 `rule_based` 策略和 `latency` 目标；候选失败会记录，不会中断整个任务。
-- 硬件 resolve、探测、profile 和 safe probe：字段带来源与置信度；自动补全不是准确性保证。
-- profiler 和日志解析：支持 dummy、TileLang log、mcProfiler 结果解析路径；拿不到的指标保持 `null`。
-- evidence 和 diagnosis：根据 profiler、benchmark、log 证据给出瓶颈判断；证据不足时输出 `insufficient_evidence`。
-- 受控 patch：只允许修改显式标记区域，执行语法/build/correctness/benchmark 校验，并在结束后 rollback。
-- 报告与产物：生成 report、best kernel、best config、CSV/JSONL 记录和失败 case。
-
 ## API 概览
 
-后端应用标题是 `TileLang Remote Autotuning Agent API`，当前路由包括：
+后端应用标题是 `TileLang Remote Autotuning Agent API`。当前路由包括：
 
 ```text
 GET  /api/health
@@ -114,6 +103,41 @@ kernel_opt_agent/workspace/tasks/{task_id}/results/
 
 其中会保存 `run_request.yaml`、`effective_config.yaml`、sample、generated kernel、patches 和 results。
 
+## 真实执行流程
+
+核心 trial 的真实顺序是：
+
+1. correctness
+2. build
+3. benchmark
+
+也就是说，build 只在 correctness 通过后执行；这个顺序不常见，但当前实现就是如此。correctness 失败的候选不会进入 benchmark，也不会参与性能排名。
+
+Web task 创建后，worker 会写入任务 workspace，构造 run request 和 effective config，然后按预算运行候选。候选失败会记录为失败 case，通常不会中断整个任务。
+
+## 搜索、LLM、Profiler 与 Patch
+
+需要区分当前 Web 普通路径和底层 CLI/核心模块能力：
+
+- 当前 Web task 固定 `rule_based`，不会选择 `llm` 或 `hybrid`。
+- V1/CLI 核心仍保留 LLM planner 能力；LLM 只能建议参数，不能执行 shell。
+- `/api/hardware/resolve` 中的 `allow_llm_lookup` 当前只返回“reserved for later phase and was not used”语义，不会真的联网或调用 LLM 查询硬件。
+- 底层核心模块支持 `dummy`、`tilelang_log`、`mxmaca` profiler 路径，但当前普通 Web UI 默认不启用 profiler。
+- Web API 当前 profiler type 只允许 `dummy`；不要把 Web 说成已完成真实 mcProfiler 闭环。
+- 底层 controlled patch trial 已有验证链和回归测试，但当前普通 Web UI 默认不启用 patch。
+- controlled patch 只允许修改显式 patch 区域，并会独立记录到 `patch_trials.jsonl`。
+- patch trial 每次都会 rollback，不会更新参数搜索得到的 `best_kernel.py`，也不是 LLM 自动代码优化器。
+
+受控 patch 区域格式：
+
+```python
+# BEGIN_AGENT_PATCH: region_name
+# patchable code here
+# END_AGENT_PATCH
+```
+
+patch 校验会拒绝 `subprocess.`、`os.system`、`shell=True`、嵌套 patch 标记等危险片段。
+
 ## 结果与证据
 
 常见结果文件包括：
@@ -132,19 +156,6 @@ kernel_opt_agent/workspace/tasks/{task_id}/results/
 
 指标缺失时字段应保持 `null`，表示没有可靠证据；系统不会伪造 profiler 指标或性能数据。诊断置信度遵循证据强度：profiler 多证据一致通常为 high，benchmark + log 通常为 medium，单一线索或缺字段通常为 low；没有 profiler 时退化为 benchmark/log based diagnosis。
 
-## 搜索与优化边界
-
-V2 当前把模板参数搜索和 evidence-guided controlled patch 组合起来使用：
-
-- 模板参数来自 sample 中的占位符和任务预算；Web 任务默认走 `rule_based`。
-- 所有候选都必须先过 correctness，correctness 失败不参与排名。
-- benchmark 失败、命令超时、guard 拦截、profiler 缺失都会被记录为证据或失败 case，通常不会让整个任务直接停止。
-- 受控 patch 只允许修改 `# BEGIN_AGENT_PATCH: name` 和 `# END_AGENT_PATCH` 包围的区域。
-- patch 校验会拒绝 `subprocess.`、`os.system`、`shell=True`、嵌套 patch 标记等危险片段。
-- patch 运行后会 rollback，避免把候选修改长期留在 workspace 中。
-
-LLM 只参与建议和生成受控候选，不拥有执行 shell 的权限，也不应被描述为会联网搜索硬件事实。硬件参数自动补全必须保留来源和置信度；`unknown` 和 `null` 是合法状态。
-
 ## 安全限制
 
 远程命令受 `kernel_opt_agent/runner/command_guard.py` 约束。当前 guard 会拦截高风险片段，例如 `rm -rf`、`mkfs`、`dd if=`、shutdown/reboot、系统包移除、`curl | sh`、`wget | sh`、`chmod 777 /`、跳出 workspace 的 `cd` 和明显针对系统路径的破坏性重定向。
@@ -155,14 +166,16 @@ SSH runner 会：
 - 要求 workspace 是安全路径。
 - 使用 `.kernel_opt_agent_workspace` 标记受管目录。
 - 拒绝清理未标记的非空 workspace。
-- 通过 SFTP 上传 sample 和拉回结果。
+- 通过 SFTP 传输 sample 和拉回结果。
 
 settings 只保存非密钥字段和环境变量名；错误信息会尽量脱敏。真实 secret 必须由运行后端的 shell 环境提供。
 
 ## 当前限制
 
 - 不保证全局最优，只返回当前预算内 best-seen kernel。
+- Web 普通用户主入口仍缺少从零可复制的同源 UI 启动方式；当前 `python -m kernel_opt_agent.server.app` 只启动 API。
 - Web V2 是当前源码开发态；V1.0.0-rc1 wheel 不应被理解为已经包含全部最新 Web 能力。
+- 当前 Web task 固定 rule-based、dummy/no-profiler、no-patch；LLM planner、mcProfiler、controlled patch 主要属于 CLI/底层模块能力。
 - profiler 不可用或证据不足时，诊断会退化为 benchmark/log based diagnosis，缺失字段保持 `null`。
 - mcProfiler 目前支持读取和解析已有 case/log 产物；不要把合成 fixture 当作真实性能证据。
 - Paged Attention C500 PR/样例当前仍是 baseline scaffold；真实采集受 SSHRunner SFTP/session 阻塞影响，尚不能作为端到端性能结论。
@@ -170,7 +183,7 @@ settings 只保存非密钥字段和环境变量名；错误信息会尽量脱�
 
 ## CLI Fallback
 
-文件驱动模式仍保留，适合开发者调试和回归验证，不是普通用户主入口。
+文件驱动模式保留，适合开发者调试和回归验证，也是当前唯一完全可复制的端到端运行入口。
 
 V2 run request + settings:
 
@@ -251,9 +264,9 @@ pip install dist/*.whl
 提交前建议运行：
 
 ```bash
+git diff --check
 python -m compileall -q kernel_opt_agent tests
 python -m unittest discover -s tests
-git diff --check
 ```
 
 不要提交真实 settings、SSH key、API key、token、password、本地 workspace 结果或远程实验日志。
