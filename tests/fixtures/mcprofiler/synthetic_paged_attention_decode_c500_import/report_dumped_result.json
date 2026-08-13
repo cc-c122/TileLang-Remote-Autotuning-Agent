@@ -1,0 +1,110 @@
+{
+  "Summary": [
+    {
+      "name": "Kernel Name",
+      "data": "paged_attention_decode_kernel",
+      "isError": false,
+      "message": ""
+    },
+    {
+      "name": "Operator",
+      "data": "Paged Attention Decode",
+      "isError": false,
+      "message": ""
+    }
+  ],
+  "Memory Statistics": [
+    {
+      "name": "Global Read Instructions",
+      "data": 123456,
+      "isError": false,
+      "message": ""
+    },
+    {
+      "name": "Global Write Instructions",
+      "data": 4096,
+      "isError": false,
+      "message": ""
+    },
+    {
+      "name": "Private Read Instructions",
+      "data": 0,
+      "isError": false,
+      "message": ""
+    },
+    {
+      "name": "Private Write Instructions",
+      "data": 0,
+      "isError": false,
+      "message": ""
+    },
+    {
+      "name": "VL1 Hit Rate",
+      "data": 67.25,
+      "isError": false,
+      "message": ""
+    },
+    {
+      "name": "L2C Hit Rate",
+      "data": 52.5,
+      "isError": false,
+      "message": ""
+    },
+    {
+      "name": "Dnoc Read Average Latency",
+      "data": 311.75,
+      "isError": false,
+      "message": ""
+    }
+  ],
+  "Workgroup Memory": [
+    {
+      "name": "shared memory access efficiency",
+      "data": 61.0,
+      "isError": false,
+      "message": ""
+    },
+    {
+      "name": "average conflict cycles per instruction",
+      "data": 2.5,
+      "isError": false,
+      "message": ""
+    }
+  ],
+  "Occupancy": [
+    {
+      "name": "Achieved waves",
+      "data": 2048,
+      "isError": false,
+      "message": ""
+    },
+    {
+      "name": "Dispatched waves",
+      "data": 32768,
+      "isError": false,
+      "message": ""
+    }
+  ],
+  "GPU Throughput Statistics": [
+    {
+      "name": "AP MMA Duty ratio",
+      "data": 12.5,
+      "isError": false,
+      "message": ""
+    }
+  ],
+  "Paged Attention Decode Metadata": [
+    {
+      "name": "context_lengths",
+      "data": [128, 512, 2048],
+      "isError": false,
+      "message": "kept as unknown row by parser"
+    },
+    {
+      "name": "block_table_layout",
+      "data": "paged_kv_cache",
+      "isError": false,
+      "message": "kept as unknown row by parser"
+    }
+  ]
+}

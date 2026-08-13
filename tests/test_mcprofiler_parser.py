@@ -7,14 +7,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
+from kernel_opt_agent.profiler.mcprofiler.report_import import import_report
 from kernel_opt_agent.profiler.mcprofiler import parse_mcprofiler_case
 from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
 from kernel_opt_agent.diagnosis import diagnose_from_evidence_records, profiler_observations_to_evidence
 from kernel_opt_agent.profiler.base import MetricObservation, ProfilerResult
+from kernel_opt_agent.runner.command_guard import validate
 from kernel_opt_agent.storage.experiment_db import ExperimentDB
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcprofiler" / "real_v8_tc1_gate"
+PAGED_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcprofiler" / "synthetic_paged_attention_decode_c500_import"
+WORKSPACE = Path(__file__).resolve().parents[1]
 
 
 class McProfilerParserTests(unittest.TestCase):
@@ -22,12 +28,82 @@ class McProfilerParserTests(unittest.TestCase):
         manifest = json.loads((FIXTURE / "manifest.json").read_text(encoding="utf-8"))
         digest = hashlib.sha256((FIXTURE / "report_dumped_result.json").read_bytes()).hexdigest()
         self.assertEqual(digest, manifest["sha256"])
+        self.assertEqual(digest, manifest["source_sha256"])
+        self.assertEqual(digest, manifest["stored_sha256"])
+        self.assertEqual(manifest["storage_transform"], "none_original_bytes_preserved")
         self.assertEqual(digest, "2eb3b6b3f3446fedf47d01d348df938c510a1ea8adfa58dd165040ec95de955f")
 
     def test_same_case_parses_deterministically(self) -> None:
         first = parse_mcprofiler_case(FIXTURE).to_dict()
         second = parse_mcprofiler_case(FIXTURE).to_dict()
         self.assertEqual(first, second)
+
+    def test_synthetic_paged_attention_fixture_manifest_sha256_matches_report(self) -> None:
+        manifest = json.loads((PAGED_FIXTURE / "manifest.json").read_text(encoding="utf-8"))
+        digest = hashlib.sha256((PAGED_FIXTURE / "report_dumped_result.json").read_bytes()).hexdigest()
+        self.assertEqual(digest, manifest["sha256"])
+        self.assertEqual(digest, "bda53b6ed9eecc7eb884dac7fa5a08c589ce0611884afd73f74f05399f01dd7f")
+
+    def test_synthetic_paged_attention_metadata_is_identified_without_gate_up_confusion(self) -> None:
+        parsed = parse_mcprofiler_case(PAGED_FIXTURE)
+        self.assertEqual(parsed.metadata["operator"], "Paged Attention Decode")
+        self.assertEqual(parsed.metadata["target_subkernel"], "Paged Attention Decode")
+        self.assertEqual(parsed.metadata["gpu_model"], "MetaX C500")
+        self.assertEqual(parsed.metadata["shape"]["batch"], 1)
+        self.assertEqual(parsed.metadata["shape"]["query_heads"], 32)
+        self.assertEqual(parsed.metadata["shape"]["kv_heads"], 8)
+        self.assertEqual(parsed.metadata["shape"]["head_dim"], 128)
+        self.assertEqual(parsed.metadata["shape"]["page_size"], 16)
+        self.assertEqual(parsed.metadata["shape"]["context_lengths"], [128, 512, 2048])
+        self.assertNotEqual(parse_mcprofiler_case(FIXTURE).metadata.get("operator"), "Paged Attention Decode")
+        public = json.dumps(parsed.to_dict(), ensure_ascii=False)
+        self.assertIn("Paged Attention Decode Metadata", public)
+        self.assertIn("block_table_layout", public)
+
+    def test_synthetic_paged_attention_report_import_keeps_insufficient_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = import_report(PAGED_FIXTURE, Path(tmp))
+            self.assertEqual(payload["metadata"]["operator"], "Paged Attention Decode")
+            self.assertEqual(payload["metadata"]["collection_status"], "synthetic_parser_fixture_not_real_baseline")
+            self.assertTrue((Path(tmp) / "parsed_mcprofiler_case.json").exists())
+            self.assertTrue((Path(tmp) / "metric_observations.jsonl").exists())
+            diagnoses = [json.loads(line) for line in (Path(tmp) / "diagnoses.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual({item["bottleneck_type"] for item in diagnoses}, {"insufficient_evidence"})
+
+    def test_paged_attention_baseline_manifest_commands_pass_guard(self) -> None:
+        manifest_path = WORKSPACE / "kernel_opt_agent" / "samples" / "paged_attention_decode" / "baseline_manifest.yaml"
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["operator"], "Paged Attention Decode")
+        self.assertIn("blocked", manifest["status"])
+        self.assertEqual(manifest["sample_source"]["upstream_commit"], "1d155f4b80865edfe0009ad952135b7afbd4f05a")
+        self.assertEqual(len(manifest["sample_source"]["vendored_file_sha256"]), 64)
+        vendored_path = manifest_path.parent / "_upstream_sparse_gqa_decode_paged.py"
+        vendored_digest = hashlib.sha256(vendored_path.read_bytes()).hexdigest()
+        self.assertEqual(manifest["sample_source"]["vendored_file_sha256"], vendored_digest)
+        self.assertEqual(manifest["sample_source"]["upstream_license_spdx"], "MIT")
+        self.assertEqual(manifest["sshrunner_probe"]["connection"], "<redacted>")
+        self.assertNotIn("host_redacted", manifest["sshrunner_probe"])
+        self.assertNotIn("port", manifest["sshrunner_probe"])
+        self.assertNotIn("username_redacted", manifest["sshrunner_probe"])
+        self.assertNotIn("remote_workspace", manifest["sshrunner_probe"])
+        for item in manifest["reproduction_commands"]["commands"]:
+            result = validate(item["command"], WORKSPACE, WORKSPACE)
+            self.assertTrue(result.allowed, f"{item['label']}: {result.reason}")
+        notice = (manifest_path.parent / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+        self.assertIn("MIT License", notice)
+        self.assertIn("Copyright (c) Tile-AI", notice)
+
+    def test_paged_attention_runner_has_explicit_correctness_and_sample_protocol(self) -> None:
+        runner_path = WORKSPACE / "kernel_opt_agent" / "samples" / "paged_attention_decode" / "run_paged_attention_decode.py"
+        source = runner_path.read_text(encoding="utf-8")
+        self.assertIn("torch.allclose(output, reference, atol=atol, rtol=rtol)", source)
+        self.assertIn("max_error", source)
+        self.assertIn("raise AssertionError", source)
+        self.assertIn("one precompiled TileLang paged-attention kernel invocation per sample", source)
+        self.assertIn("_compiled_kernel_call", source)
+        self.assertNotIn("upstream.main(", source)
+        self.assertNotIn("do_bench", source)
+        self.assertNotIn("see upstream correctness output", source)
 
     def test_real_case_metrics_are_normalized_without_clamping_percentages(self) -> None:
         parsed = parse_mcprofiler_case(FIXTURE)
@@ -314,11 +390,12 @@ class McProfilerParserTests(unittest.TestCase):
 
     def test_fixture_does_not_contain_plaintext_secrets(self) -> None:
         forbidden = ("password", "api_key", "token", "Cc.051026")
-        for path in FIXTURE.rglob("*"):
-            if path.is_file():
-                text = path.read_text(encoding="utf-8", errors="ignore").lower()
-                for marker in forbidden:
-                    self.assertNotIn(marker.lower(), text, str(path))
+        for fixture_root in (FIXTURE, PAGED_FIXTURE):
+            for path in fixture_root.rglob("*"):
+                if path.is_file():
+                    text = path.read_text(encoding="utf-8", errors="ignore").lower()
+                    for marker in forbidden:
+                        self.assertNotIn(marker.lower(), text, str(path))
 
 
 if __name__ == "__main__":
