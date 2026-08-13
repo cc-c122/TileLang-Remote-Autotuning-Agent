@@ -1,6 +1,6 @@
 schema_version: v2.paged_attention_baseline.v1
 project_name: c500-paged-attention-decode-baseline
-status: blocked_sshrunner_sftp_session
+status: blocked_sshrunner_session_channel
 operator: Paged Attention Decode
 not_substitutes:
   - GEMM
@@ -52,14 +52,15 @@ mcprofiler:
   collection_mode: report_import
   native_artifacts_required: true
   status: not_collected
-  blocked_reason: SSHRunner password authentication reaches the host, but open_sftp/open_session closes with EOFError before upload or command execution.
+  blocked_reason: SSHRunner password authentication reaches the host, but opening session channels for exec and SFTP closes with EOFError before upload or command execution.
 sshrunner_probe:
   attempted: true
   auth_type: password_env
   connection: <redacted>
   result: blocked
-  failure_stage: open_sftp
+  failure_stage: open_session
   error_type: EOFError
+  blocker_log: kernel_opt_agent/samples/paged_attention_decode/ssh_collection_blocker.yaml
 environment:
   mxmaca_version: null
   driver_version: null
@@ -83,4 +84,4 @@ reproduction_commands:
 notes:
   - This manifest is a reproducibility checklist for a real C500 Paged Attention Decode baseline.
   - No optimization patch is generated or claimed by this baseline.
-  - Current PR includes report_import parser coverage; real mcProfiler native artifacts must be imported after SSHRunner can open SFTP/exec sessions or after manual mcProfiler report export.
+  - Current PR includes report_import parser coverage; real mcProfiler native artifacts must be imported after SSHRunner can open exec/SFTP session channels or after manual mcProfiler report export.

@@ -86,6 +86,17 @@ class McProfilerParserTests(unittest.TestCase):
         self.assertNotIn("port", manifest["sshrunner_probe"])
         self.assertNotIn("username_redacted", manifest["sshrunner_probe"])
         self.assertNotIn("remote_workspace", manifest["sshrunner_probe"])
+        blocker_path = WORKSPACE / manifest["sshrunner_probe"]["blocker_log"]
+        blocker = yaml.safe_load(blocker_path.read_text(encoding="utf-8"))
+        self.assertEqual(blocker["failure_stage"], "open_session")
+        self.assertEqual(blocker["failure_category"], "ssh_session_channel_failed")
+        self.assertEqual(blocker["auth_result"], "password_auth_success")
+        serialized_blocker = json.dumps(blocker, ensure_ascii=False).lower()
+        for forbidden in ("140.207", "vm-", "password", "token", "cc."):
+            if forbidden in {"password", "token"}:
+                self.assertNotIn(f"{forbidden}:", serialized_blocker)
+            else:
+                self.assertNotIn(forbidden, serialized_blocker)
         for item in manifest["reproduction_commands"]["commands"]:
             result = validate(item["command"], WORKSPACE, WORKSPACE)
             self.assertTrue(result.allowed, f"{item['label']}: {result.reason}")
