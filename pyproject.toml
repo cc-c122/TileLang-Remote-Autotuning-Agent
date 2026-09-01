@@ -1,12 +1,26 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "tilelang-remote-autotuning-agent"
 version = "1.0.0rc1"
 description = "V1 MVP for safe, reproducible local and SSH-based TileLang kernel autotuning."
+readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [
+  { name = "cc-c122" },
+]
+keywords = ["tilelang", "kernel", "autotuning", "gpu", "ssh"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
 dependencies = [
   "pydantic>=2.0",
   "PyYAML>=6.0",
@@ -18,8 +32,15 @@ dependencies = [
 [project.scripts]
 tilelang-agent = "kernel_opt_agent.main:main"
 
+[project.urls]
+Homepage = "https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent"
+Documentation = "https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent#readme"
+Repository = "https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent"
+Issues = "https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/issues"
+
 [tool.setuptools.packages.find]
 include = ["kernel_opt_agent*"]
+exclude = ["kernel_opt_agent.workspace*"]
 
 [tool.setuptools]
 include-package-data = false
