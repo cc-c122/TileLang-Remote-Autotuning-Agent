@@ -1,3 +1,7 @@
+include README.md
+include LICENSE
+include NOTICE
+recursive-include docs *.md
 prune kernel_opt_agent/workspace
 prune build
 prune dist
