@@ -110,9 +110,16 @@ class PatchingConfig(BaseModel):
     run_controlled_trial: bool = False
 
 
+class SourceOptimizationConfig(BaseModel):
+    enabled: bool = False
+    max_candidates: int = Field(default=3, ge=1)
+    benchmark_repeats: int = Field(default=5, ge=1)
+    min_improvement_percent: float = Field(default=1.0, ge=0.0)
+
+
 class AppConfig(BaseModel):
     project_name: str = "tilelang-autotune-demo"
-    execution_mode: Literal["parameter_search", "baseline_only"] = "parameter_search"
+    execution_mode: Literal["parameter_search", "baseline_only", "source_optimization"] = "parameter_search"
     runner: RunnerConfig = Field(default_factory=RunnerConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -125,6 +132,7 @@ class AppConfig(BaseModel):
     hardware_detection: HardwareDetectionConfig = Field(default_factory=HardwareDetectionConfig)
     profiler: ProfilerConfig = Field(default_factory=ProfilerConfig)
     patching: PatchingConfig = Field(default_factory=PatchingConfig)
+    source_optimization: SourceOptimizationConfig = Field(default_factory=SourceOptimizationConfig)
 
     @model_validator(mode="after")
     def validate_app(self) -> "AppConfig":

@@ -62,10 +62,11 @@ class TaskManager:
             task.events.append({"time": utc_now(), "type": "task_cancel_requested", "message": "cancel requested", "data": {}})
             return task.model_copy(deep=True)
 
-    def set_execution_mode(self, task_id: str, execution_mode: str) -> None:
+    def set_execution_mode(self, task_id: str, execution_mode: str, reason: str | None = None) -> None:
         with self._lock:
             task = self._tasks[task_id]
             task.execution_mode = execution_mode  # type: ignore[assignment]
+            task.execution_mode_reason = reason
 
     def list_recent(self, limit: int = 50) -> list[TaskRecord]:
         with self._lock:

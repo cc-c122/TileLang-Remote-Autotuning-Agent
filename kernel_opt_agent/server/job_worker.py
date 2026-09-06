@@ -1,9 +1,22 @@
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 
 import kernel_opt_agent.main as agent_main
+import yaml
+from kernel_opt_agent.agent.llm_client import OpenAICompatibleClient
+from kernel_opt_agent.config_model import safe_config_dict
+from kernel_opt_agent.source_optimizer import (
+    SourceOptimizationResult,
+    inspect_source_optimization,
+    read_source_result,
+    redact_source_text,
+    run_source_optimization,
+    write_source_result,
+)
+from kernel_opt_agent.source_optimizer.analyzer import sha256_file
 
 from .models import TaskCreateRequest
 from .profiler_status import profiler_status, read_jsonl
@@ -39,6 +52,8 @@ class JobWorker:
         self.manager.add_event(task_id, "task_queued", "waiting for runner slot")
         with WORKER_LOCK:
             if self.manager.is_cancel_requested(task_id):
+                if request.optimization.enabled:
+                    write_source_result(results_dir, SourceOptimizationResult(status="cancelled", reason="cancelled before execution"))
                 self.manager.set_status(task_id, "cancelled")
                 return
             self._run_task_locked(task_id, request, workspace, results_dir, generated_dir, patches_dir)
@@ -62,8 +77,42 @@ class JobWorker:
         }
         try:
             config = build_effective_config(request, workspace, self.settings_path, self.upload_store)
-            self.manager.set_execution_mode(task_id, config.execution_mode)
             self.manager.add_event(task_id, "sample_uploaded", "sample saved to isolated task workspace")
+            source_entry = None
+            source_analysis = None
+            if request.optimization.enabled:
+                source_entry, source_analysis = inspect_source_optimization(config)
+                if source_entry is None or not source_analysis.targets:
+                    config.execution_mode = "baseline_only"
+                    reason = source_analysis.reason or "source optimization target is unavailable"
+                    self.manager.set_execution_mode(task_id, config.execution_mode, reason)
+                    write_source_result(
+                        results_dir,
+                        SourceOptimizationResult(
+                            status="unavailable",
+                            reason=reason,
+                            baseline_source_sha256=sha256_file(source_entry) if source_entry else None,
+                            best_source_sha256=sha256_file(source_entry) if source_entry else None,
+                        ),
+                    )
+                else:
+                    config.execution_mode = "source_optimization"
+                    self.manager.set_execution_mode(task_id, config.execution_mode)
+                    source_hash = sha256_file(source_entry)
+                    write_source_result(
+                        results_dir,
+                        SourceOptimizationResult(
+                            status="running",
+                            baseline_source_sha256=source_hash,
+                            best_source_sha256=source_hash,
+                        ),
+                    )
+            else:
+                self.manager.set_execution_mode(task_id, config.execution_mode)
+            (workspace / "effective_config.yaml").write_text(
+                yaml.safe_dump(safe_config_dict(config), sort_keys=True),
+                encoding="utf-8",
+            )
             agent_main.WORKSPACE_ROOT = workspace
             agent_main.RESULTS_DIR = results_dir
             agent_main.GENERATED_DIR = generated_dir
@@ -73,6 +122,33 @@ class JobWorker:
                 should_cancel=lambda: self.manager.is_cancel_requested(task_id),
                 event_callback=lambda event_type, message: self.manager.add_event(task_id, event_type, message),
             )
+            if request.optimization.enabled and source_entry is not None and source_analysis is not None:
+                self.manager.add_event(task_id, "source_optimization_started", "running controlled source optimization trial")
+                planning_client = None
+                if os.environ.get(config.llm.api_key_env):
+                    planning_client = OpenAICompatibleClient(
+                        config.llm.base_url,
+                        config.llm.api_key_env,
+                        config.llm.model,
+                        config.llm.temperature,
+                        config.llm.max_tokens,
+                    )
+                source_result = run_source_optimization(
+                    config,
+                    workspace,
+                    results_dir,
+                    source_analysis,
+                    source_entry,
+                    should_cancel=lambda: self.manager.is_cancel_requested(task_id),
+                    event_callback=lambda event_type, message: self.manager.add_event(task_id, event_type, message),
+                    planning_client=planning_client,
+                )
+                self.manager.add_event(
+                    task_id,
+                    "source_optimization_completed",
+                    source_result.reason or source_result.status,
+                    {"status": source_result.status, "accepted_trial_id": source_result.accepted_trial_id},
+                )
             if self.manager.is_cancel_requested(task_id):
                 self.manager.set_status(task_id, "cancelled")
             else:
@@ -97,10 +173,17 @@ class JobWorker:
                     self.manager.add_event(task_id, "report_generated", "report.md generated")
                 self.manager.set_status(task_id, "completed")
         except Exception as exc:
+            public_error = redact_source_text(config, str(exc)) if "config" in locals() else "task failed before effective configuration was available"
+            if request.optimization.enabled:
+                current_status = "cancelled" if self.manager.is_cancel_requested(task_id) else "failed"
+                source_result = SourceOptimizationResult.model_validate(read_source_result(results_dir))
+                source_result.status = current_status  # type: ignore[assignment]
+                source_result.reason = public_error
+                write_source_result(results_dir, source_result)
             if self.manager.is_cancel_requested(task_id):
-                self.manager.set_status(task_id, "cancelled", str(exc))
+                self.manager.set_status(task_id, "cancelled", public_error)
             else:
-                self.manager.set_status(task_id, "failed", str(exc))
+                self.manager.set_status(task_id, "failed", public_error)
         finally:
             agent_main.WORKSPACE_ROOT = original["WORKSPACE_ROOT"]
             agent_main.RESULTS_DIR = original["RESULTS_DIR"]

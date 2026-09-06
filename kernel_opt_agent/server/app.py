@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import os
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from kernel_opt_agent.hardware.hardware_info import CANONICAL_FIELDS, HardwareInfo
 from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader, normalize_profile_name
 from kernel_opt_agent.main import WORKSPACE_ROOT
+from kernel_opt_agent.source_optimizer import read_source_result
 
 from .job_worker import JobWorker
 from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest
@@ -56,6 +58,23 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return read_jsonl(path)
 
 
+def _summary_with_correctness(results_dir: Path, summary: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    experiments = _read_jsonl(results_dir / "experiments.jsonl")
+    by_identity = {
+        (str(item.get("run_id")), str(item.get("iteration")), str(item.get("candidate_id")), str(item.get("config_hash"))): item.get("correctness")
+        for item in experiments
+    }
+    return [
+        {
+            **row,
+            "correctness": by_identity.get(
+                (str(row.get("run_id")), str(row.get("iteration")), str(row.get("candidate_id")), str(row.get("config_hash")))
+            ),
+        }
+        for row in summary
+    ]
+
+
 def _numeric(value: Any) -> float | None:
     try:
         if value in (None, ""):
@@ -79,6 +98,47 @@ def _best_summary(summary_rows: list[dict[str, Any]]) -> tuple[dict[str, Any] | 
     return best, improvement
 
 
+def _source_best_verification(
+    results_dir: Path, source_optimization: dict[str, Any]
+) -> tuple[dict[str, Any] | None, bool, str | None]:
+    if source_optimization.get("status") != "completed":
+        return None, False, "source optimization did not complete"
+    if source_optimization.get("baseline_verified") is not True:
+        return None, False, "source optimization baseline was not verified"
+    best_hash = source_optimization.get("best_source_sha256")
+    best_kernel = results_dir / "best_kernel.py"
+    if not best_hash:
+        return None, False, "verified source result has no best source hash"
+    if not best_kernel.is_file():
+        return None, False, "verified best kernel artifact is missing"
+    if hashlib.sha256(best_kernel.read_bytes()).hexdigest() != best_hash:
+        return None, False, "best kernel hash does not match the verified source result"
+    accepted_id = source_optimization.get("accepted_trial_id")
+    if not accepted_id:
+        if best_hash != source_optimization.get("baseline_source_sha256"):
+            return None, False, "baseline-only source result has inconsistent hashes"
+        return None, True, None
+    accepted = next(
+        (item for item in source_optimization.get("trials", []) if item.get("trial_id") == accepted_id),
+        None,
+    )
+    if not accepted or accepted.get("status") != "accepted":
+        return None, False, "accepted source trial is missing or has an invalid status"
+    if (accepted.get("correctness") or {}).get("passed") is not True:
+        return None, False, "accepted source trial did not pass correctness"
+    accepted_hash = accepted.get("source_after_sha256")
+    if not accepted_hash or accepted_hash != best_hash:
+        return None, False, "accepted source trial hash does not match the best source hash"
+    if accepted.get("execution_source_sha256") != accepted_hash:
+        return None, False, "accepted source trial execution hash is inconsistent"
+    return accepted, True, None
+
+
+def _accepted_source_trial(results_dir: Path, source_optimization: dict[str, Any]) -> dict[str, Any] | None:
+    accepted, verified, _ = _source_best_verification(results_dir, source_optimization)
+    return accepted if verified else None
+
+
 def _task_payload(task: Any) -> dict[str, Any]:
     payload = task.model_dump()
     summary = _read_csv(Path(task.results_dir) / "summary.csv")
@@ -88,13 +148,27 @@ def _task_payload(task: Any) -> dict[str, Any]:
     baseline = summary[0] if summary else {}
     iterations = [_numeric(row.get("iteration")) for row in summary]
     latest_event = task.events[-1] if task.events else {}
+    source_optimization = read_source_result(Path(task.results_dir))
+    source_mode = task.execution_mode == "source_optimization"
+    accepted, source_best_verified, source_error = _source_best_verification(Path(task.results_dir), source_optimization)
+    accepted_latency = None
+    source_baseline_latency = None
+    if accepted is not None:
+        improvement = _numeric(accepted.get("improvement_percent"))
+        accepted_latency = _numeric(accepted.get("candidate_median_latency_ms"))
+        source_baseline_latency = _numeric(accepted.get("baseline_median_latency_ms"))
+    if source_mode and not source_best_verified:
+        best_row = None
+        improvement = None
     payload.update(
         {
             "current_iteration": int(max([item for item in iterations if item is not None], default=0)),
             "total_trials": len(summary),
-            "best_latency": _numeric((best_row or {}).get("latency")),
-            "baseline_latency": _numeric(baseline.get("latency")),
+            "best_latency": accepted_latency if accepted is not None else _numeric((best_row or {}).get("latency")),
+            "baseline_latency": source_baseline_latency if accepted is not None else (None if source_mode and not source_best_verified else _numeric(baseline.get("latency"))),
             "improvement_percent": improvement,
+            "source_best_verified": source_best_verified if source_mode else None,
+            "source_best_verification_error": source_error if source_mode else None,
             "current_stage": latest_event.get("type") or task.status,
             "latest_message": latest_event.get("message") or task.status,
         }
@@ -103,9 +177,19 @@ def _task_payload(task: Any) -> dict[str, Any]:
 
 
 def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dict[str, Any]:
-    summary = _read_csv(results_dir / "summary.csv")
+    summary = _summary_with_correctness(results_dir, _read_csv(results_dir / "summary.csv"))
     best_row, improvement = _best_summary(summary)
     if execution_mode == "baseline_only":
+        improvement = None
+    source_optimization = read_source_result(results_dir)
+    source_mode = execution_mode == "source_optimization"
+    accepted, source_best_verified, source_error = _source_best_verification(results_dir, source_optimization)
+    if accepted is not None:
+        improvement = _numeric(accepted.get("improvement_percent"))
+        accepted_hash = accepted.get("source_after_sha256")
+        best_row = next((row for row in summary if row.get("config_hash") == accepted_hash), best_row)
+    elif source_mode and not source_best_verified:
+        best_row = None
         improvement = None
     files = {}
     for name in [
@@ -119,11 +203,12 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "best_kernel.py",
         "best_config.yaml",
         "report.md",
+        "source_optimization.json",
     ]:
         path = results_dir / name
         files[name] = {"exists": path.exists(), "size": path.stat().st_size if path.exists() else 0}
-    best_kernel = _read_text(results_dir / "best_kernel.py")
-    best_config = _read_yaml(results_dir / "best_config.yaml")
+    best_kernel = None if source_mode and not source_best_verified else _read_text(results_dir / "best_kernel.py")
+    best_config = None if source_mode and not source_best_verified else _read_yaml(results_dir / "best_config.yaml")
     report = _read_text(results_dir / "report.md")
     evidence_summary = _read_jsonl(results_dir / "metric_observations.jsonl")
     diagnoses = _read_jsonl(results_dir / "diagnoses.jsonl")
@@ -142,6 +227,9 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "diagnoses": diagnoses,
         "profiler_status": status,
         "profiler_available": status == "profiler_metrics_available",
+        "source_optimization": source_optimization,
+        "source_best_verified": source_best_verified if source_mode else None,
+        "source_best_verification_error": source_error if source_mode else None,
     }
     payload.update({"files": files, "summary": summary, "best_row": best_row, "report": report})
     return payload
@@ -200,7 +288,12 @@ app = FastAPI(title="TileLang Remote Autotuning Agent API")
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "service": "tilelang-agent", "mode": "local-runner"}
+    return {
+        "ok": True,
+        "service": "tilelang-agent",
+        "mode": "local-runner",
+        "capabilities": {"source_optimization": True},
+    }
 
 
 @app.post("/api/settings")
@@ -356,6 +449,11 @@ def _download(task_id: str, filename: str) -> FileResponse:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="task not found") from exc
     path = Path(task.results_dir) / filename
+    if filename == "best_kernel.py" and task.execution_mode == "source_optimization":
+        source_result = read_source_result(Path(task.results_dir))
+        _, verified, error = _source_best_verification(Path(task.results_dir), source_result)
+        if not verified:
+            raise HTTPException(status_code=409, detail=error or "source best was not verified")
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"{filename} not found")
     return FileResponse(path, filename=filename)

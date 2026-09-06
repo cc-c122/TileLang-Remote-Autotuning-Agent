@@ -247,11 +247,69 @@ async (page) => {
   };
   text = await renderResult(acceptedSourceOptimization);
   check(text.includes("已接受源码修改：accepted-1") && text.includes("22.7%"), "Accepted trial is the only source of an optimized result claim");
+  check(!(await page.locator("#downloadBestKernelBtn").isDisabled()), "Missing source_best_verified keeps the legacy integrity checks");
   const acceptedMetrics = await page.locator("#apiResultsPanel > .compare-grid > .result-card .metric-main").allInnerTexts();
   check(acceptedMetrics[0] === "1.1" && acceptedMetrics[1] === "0.85" && acceptedMetrics[2] === "22.7%", "Accepted summary uses only that trial's measurement arrays and improvement");
   check(await page.locator("#apiResultsPanel .source-trial[open]").count() === 1, "Only the accepted trial is expanded by default");
   check((await page.locator("#apiResultsPanel .source-trial[open]").innerText()).includes("accepted vector load"), "The accepted trial is the default expanded change");
   check(text.includes("回滚状态未返回") && !text.includes("回滚已验证\n"), "Null rollback state is not presented as rollback success");
+
+  text = await renderResult(acceptedSourceOptimization, "source_optimization", {source_best_verified: true, source_best_verification_error: null});
+  check(text.includes("已接受源码修改：accepted-1") && !(await page.locator("#downloadBestKernelBtn").isDisabled()), "Explicit source_best_verified=true preserves a valid accepted result");
+
+  const tamperedResults = {...resultFixture(acceptedSourceOptimization), source_best_verified: false, source_best_verification_error: "published file hash mismatch <script>bad()</script>"};
+  text = await renderResult(acceptedSourceOptimization, "source_optimization", tamperedResults);
+  const tamperedMetrics = await page.locator("#apiResultsPanel > .compare-grid > .result-card .metric-main").allInnerTexts();
+  check(tamperedMetrics[1] === "未验证" && tamperedMetrics[2] === "当前 best 验证失败", "Explicit source_best_verified=false suppresses current best and accepted improvement");
+  check(text.includes("published file hash mismatch") && text.includes("accepted vector load") && text.includes("- scalar") && await page.locator("#apiResultsPanel script").count() === 0, "Verification error is escaped while historical trial and diff remain visible");
+  check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Explicit source_best_verified=false disables the best artifact download");
+  await page.evaluate(({taskValue, resultsValue}) => {
+    state.task = taskValue;
+    state.taskResults = resultsValue;
+    state.taskEvents = taskValue.events;
+    renderTaskDetail();
+    activateView("taskView");
+  }, {taskValue: task("tampered-source-best", "source_optimization"), resultsValue: tamperedResults});
+  const tamperedTaskText = await page.locator("#taskDetailPanel").innerText();
+  check(tamperedTaskText.includes("当前 best 验证失败") && tamperedTaskText.includes("current best latency\n验证失败") && tamperedTaskText.includes("published file hash mismatch"), "Task detail rejects and explains a tampered current best");
+
+  const staleResults = {...resultFixture(acceptedSourceOptimization), source_best_verified: true, source_best_verification_error: "stale results error"};
+  const rejectedTask = {...task("task-rejects-stale-results", "source_optimization"), status: "completed", source_best_verified: false, source_best_verification_error: "task artifact verification failed"};
+  await page.evaluate(({taskValue, resultsValue}) => {
+    state.task = taskValue;
+    state.taskResults = resultsValue;
+    state.taskEvents = taskValue.events;
+    renderTaskDetail();
+    renderApiResults();
+  }, {taskValue: rejectedTask, resultsValue: staleResults});
+  const staleTaskText = await page.locator("#taskDetailPanel").innerText();
+  const staleResultText = await page.locator("#apiResultsPanel").innerText();
+  check(staleTaskText.includes("current best latency\n验证失败") && staleTaskText.includes("task artifact verification failed"), "Task verification failure overrides stale verified results in task detail");
+  check(staleResultText.includes("当前 best 验证失败") && staleResultText.includes("task artifact verification failed") && !staleResultText.includes("stale results error") && await page.locator("#downloadBestKernelBtn").isDisabled(), "Task verification failure overrides stale results and disables download");
+  await page.evaluate((taskValue) => {
+    state.taskList = [taskValue];
+    renderTaskList();
+  }, rejectedTask);
+  const rejectedTaskRowText = await page.locator("#taskListPanel tbody tr").innerText();
+  check(rejectedTaskRowText.includes("当前 best 验证失败") && !rejectedTaskRowText.includes("10%"), "Task summary suppresses stale source improvement after verification failure");
+
+  const noImprovementResults = resultFixture({
+    schema_version: "v2.source_optimization.v1",
+    status: "completed",
+    reason: "no candidate met the threshold",
+    baseline_source_sha256: baselineHash,
+    best_source_sha256: baselineHash,
+    accepted_trial_id: null,
+    trials: [{trial_id: "no-gain", status: "no_improvement", correctness: {passed: true}, baseline_latency_ms: [1, 1], candidate_latency_ms: [1.01, 1.02], improvement_percent: -1.5}],
+  });
+  const noImprovementTask = {...task("no-improvement-task", "source_optimization"), status: "completed", baseline_latency: 1, best_latency: 1, improvement_percent: 0, source_best_verified: true};
+  await page.evaluate(({taskValue, resultsValue}) => {
+    state.task = taskValue;
+    state.taskResults = resultsValue;
+    state.taskEvents = taskValue.events;
+    renderTaskDetail();
+  }, {taskValue: noImprovementTask, resultsValue: noImprovementResults});
+  check((await page.locator("#taskDetailPanel").innerText()).includes("current best latency\n1"), "Completed no-improvement task detail keeps the verified baseline latency visible");
 
   for (const partialStatus of ["running", "cancelled", "failed"]) {
     text = await renderResult({...acceptedSourceOptimization, status: partialStatus});
