@@ -19,7 +19,7 @@ from kernel_opt_agent.runner.local_runner import CommandResult
 from kernel_opt_agent.source_optimizer.analyzer import analyze_source, rewrite_copy_loop
 from kernel_opt_agent.source_optimizer.engine import run_source_optimization
 from kernel_opt_agent.source_optimizer.planner import choose_plan
-from kernel_opt_agent.server.app import _accepted_source_trial, app
+from kernel_opt_agent.server.app import _accepted_source_trial, _source_best_verification, app
 
 
 PAGED_SOURCE = Path("kernel_opt_agent/samples/paged_attention_decode/_upstream_sparse_gqa_decode_paged.py")
@@ -609,6 +609,15 @@ class SourceOptimizationApiTests(unittest.TestCase):
                 ],
             }
             self.assertIsNotNone(_accepted_source_trial(results, source_result))
+            baseline_result = {
+                "status": "completed",
+                "baseline_verified": True,
+                "baseline_source_sha256": digest,
+                "best_source_sha256": digest,
+                "accepted_trial_id": None,
+                "trials": [],
+            }
+            self.assertEqual(_source_best_verification(results, baseline_result), (None, True, None))
             for field, value in [("status", "no_improvement"), ("correctness", {"passed": False}), ("source_after_sha256", "0" * 64)]:
                 invalid = json.loads(json.dumps(source_result))
                 invalid["trials"][0][field] = value
@@ -715,6 +724,10 @@ class SourceOptimizationApiTests(unittest.TestCase):
             self.assertEqual(task["baseline_latency"], accepted["baseline_median_latency_ms"])
             self.assertNotEqual(task["baseline_latency"], 999.0)
             self.assertEqual(task["improvement_percent"], accepted["improvement_percent"])
+            self.assertTrue(task["source_best_verified"])
+            self.assertIsNone(task["source_best_verification_error"])
+            self.assertTrue(result["source_best_verified"])
+            self.assertIsNone(result["source_best_verification_error"])
             self.assertGreaterEqual(task["total_trials"], 2)
             event_types = [item["type"] for item in task["events"]]
             self.assertIn("source_trial_started", event_types)
@@ -733,6 +746,43 @@ class SourceOptimizationApiTests(unittest.TestCase):
                     self.assertNotIn("fixture-api-key", path.read_text(encoding="utf-8", errors="ignore"), str(path))
             download = client.get(f"/api/tasks/{task_id}/download/best_kernel")
             self.assertEqual(download.status_code, 200)
+
+            results_root = Path(task["results_dir"])
+            best_path = results_root / "best_kernel.py"
+            source_result_path = results_root / "source_optimization.json"
+            original_best = best_path.read_bytes()
+            original_source_result = json.loads(source_result_path.read_text(encoding="utf-8"))
+            for failure in ["best_modified", "best_missing", "execution_hash", "baseline_unverified"]:
+                best_path.write_bytes(original_best)
+                current_source_result = json.loads(json.dumps(original_source_result))
+                if failure == "best_modified":
+                    best_path.write_text("tampered\n", encoding="utf-8")
+                elif failure == "best_missing":
+                    best_path.unlink()
+                elif failure == "execution_hash":
+                    current_source_result["trials"][0]["execution_source_sha256"] = "0" * 64
+                else:
+                    current_source_result["baseline_verified"] = False
+                source_result_path.write_text(json.dumps(current_source_result), encoding="utf-8")
+                with self.subTest(failure=failure):
+                    invalid_task = client.get(f"/api/tasks/{task_id}").json()["task"]
+                    invalid_result = client.get(f"/api/tasks/{task_id}/results").json()["results"]
+                    self.assertFalse(invalid_task["source_best_verified"])
+                    self.assertIsNotNone(invalid_task["source_best_verification_error"])
+                    self.assertIsNone(invalid_task["best_latency"])
+                    self.assertIsNone(invalid_task["improvement_percent"])
+                    self.assertFalse(invalid_result["source_best_verified"])
+                    self.assertIsNotNone(invalid_result["source_best_verification_error"])
+                    self.assertIsNone(invalid_result["best_kernel"])
+                    self.assertIsNone(invalid_result["best_config"])
+                    self.assertIsNone(invalid_result["best_row"])
+                    self.assertIsNone(invalid_result["improvement_percent"])
+                    self.assertEqual(invalid_result["source_optimization"]["accepted_trial_id"], accepted["trial_id"])
+                    self.assertTrue(invalid_result["summary_table"])
+                    self.assertIsNotNone(invalid_result["report_markdown"])
+                    self.assertEqual(client.get(f"/api/tasks/{task_id}/download/best_kernel").status_code, 409)
+            best_path.write_bytes(original_best)
+            source_result_path.write_text(json.dumps(original_source_result), encoding="utf-8")
 
     def test_failed_source_baseline_is_not_downloadable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -765,6 +815,14 @@ class SourceOptimizationApiTests(unittest.TestCase):
                 time.sleep(0.1)
             result = client.get(f"/api/tasks/{task_id}/results").json()["results"]
             self.assertFalse(result["source_optimization"]["baseline_verified"])
+            self.assertFalse(result["source_best_verified"])
+            self.assertIsNone(result["best_kernel"])
+            self.assertIsNone(result["best_row"])
+            self.assertIsNone(result["improvement_percent"])
+            task = client.get(f"/api/tasks/{task_id}").json()["task"]
+            self.assertFalse(task["source_best_verified"])
+            self.assertIsNone(task["best_latency"])
+            self.assertIsNone(task["improvement_percent"])
             download = client.get(f"/api/tasks/{task_id}/download/best_kernel")
             self.assertEqual(download.status_code, 409)
 
