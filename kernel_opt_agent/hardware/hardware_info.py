@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 
-Source = Literal["user_config", "remote_detection", "builtin_profile", "doc_lookup", "safe_probe", "unknown"]
+Source = Literal["user_override", "user_config", "remote_detection", "builtin_profile", "doc_lookup", "safe_probe", "unknown"]
 Confidence = Literal["high", "medium", "low", "unknown"]
 
 

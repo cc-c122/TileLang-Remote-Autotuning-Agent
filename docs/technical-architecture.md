@@ -1,8 +1,6 @@
 # 技术架构
 
-> 适用版本：本文描述 [V2 开发分支](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/tree/v2/evidence-guided-agent) 的实现。GitHub 默认 `main` 分支保留 V1；使用本文中的 Web API 和模块前，请切换到 `v2/evidence-guided-agent`。本页同步了 V2 文档，运行代码仍以对应分支为准。
-
-本文描述 `v2/evidence-guided-agent` 当前实现的模块边界、任务生命周期、数据模型、安全约束和扩展方式。它记录的是仓库中的实际行为，不代表尚未实现的产品承诺。
+本文描述默认 `main` 分支中 V2 实现的模块边界、任务生命周期、数据模型、安全约束和扩展方式。它记录的是仓库中的实际行为，不代表尚未实现的产品承诺。
 
 ## 1. 设计目标
 

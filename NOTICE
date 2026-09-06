@@ -3,4 +3,7 @@ Copyright 2026 cc-c122
 
 This product includes software developed by cc-c122 and project contributors.
 
-Third-party components retain their respective licenses and copyright notices.
+This distribution may include third-party software under separate licenses.
+The vendored TileLang Paged Attention sample and its MIT license notice are
+documented in:
+kernel_opt_agent/samples/paged_attention_decode/THIRD_PARTY_NOTICES.md

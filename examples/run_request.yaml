@@ -1,0 +1,42 @@
+schema_version: v2.run_request.v1
+project_name: example-v2-run
+
+sample:
+  source_type: inline
+  inline_text: |
+    BM = {{BM}}
+    if __name__ == "__main__":
+        print("CORRECTNESS_RESULT pass=1")
+        print("BENCHMARK_RESULT latency_ms=1.0 tflops=1.0 bandwidth_gbps=1.0")
+  path: null
+  entry_file: kernel.py
+
+commands:
+  build_command: python -m py_compile kernel.py
+  correctness_command: python kernel.py
+  benchmark_command: python kernel.py
+
+target:
+  gpu_model: Metax C500
+  backend: unknown
+
+settings_ref:
+  use_saved_settings: true
+
+hardware_overrides:
+  fields: {}
+
+search:
+  strategy: rule_based
+  max_iterations: 1
+  candidates_per_iteration: 1
+  timeout_seconds: 60
+  objective: latency
+
+profiler:
+  enabled: true
+  type: dummy
+
+patching:
+  enabled: false
+  run_controlled_trial: false

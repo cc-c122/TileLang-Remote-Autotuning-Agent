@@ -1,0 +1,43 @@
+schema_version: v2.remote_collection_attempt.v1
+attempted_at: '2026-08-13'
+runner: SSHRunner
+auth_type: password_env
+connection: <redacted>
+remote_workspace: <redacted>
+sample: kernel_opt_agent/samples/paged_attention_decode
+operator: Paged Attention Decode
+target:
+  gpu_model: MetaX C500
+  backend: mxmaca
+  dtype: fp16
+  context_lengths:
+    - 128
+    - 512
+    - 2048
+result: blocked
+failure_category: ssh_session_channel_failed
+failure_stage: open_session
+auth_result: password_auth_success
+diagnostic_summary:
+  - SSH password authentication completed through the project SSHRunner path.
+  - Paramiko exec_command failed while opening a session channel.
+  - Paramiko open_sftp failed while opening a session channel.
+  - No sample upload, remote command execution, benchmark, correctness, or mcProfiler collection occurred.
+sanitized_errors:
+  exec_command:
+    exception_type: EOFError
+    message: <redacted>
+  open_sftp:
+    exception_type: EOFError
+    message: <redacted>
+secrets_policy:
+  host: omitted
+  port: omitted
+  username: omitted
+  password: omitted
+  token: omitted
+  remote_path: omitted
+next_steps:
+  - Verify the remote sshd allows session channels for exec and subsystem requests.
+  - Verify SFTP subsystem support after session channels can be opened.
+  - Re-run the three context-length baseline commands only after SSHRunner exec and upload work.

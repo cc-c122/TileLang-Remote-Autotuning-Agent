@@ -82,6 +82,7 @@ class HardwareConfig(BaseModel):
     allow_doc_lookup: bool = False
     doc_paths: list[str] = Field(default_factory=list)
     fields: dict[str, Any] = Field(default_factory=dict)
+    fields_source: Literal["user_config", "user_override"] = "user_config"
 
 
 class HardwareDetectionConfig(BaseModel):
@@ -92,6 +93,19 @@ class HardwareDetectionConfig(BaseModel):
     safe_probe: bool = True
     conservative_unknown_mode: bool = True
     timeout_seconds: int = Field(default=60, gt=0)
+
+
+class ProfilerConfig(BaseModel):
+    enabled: bool = True
+    type: Literal["dummy", "tilelang_log", "mxmaca"] = "dummy"
+    command: str | None = None
+    timeout_seconds: int = Field(default=120, gt=0)
+    log_paths: list[str] = Field(default_factory=list)
+
+
+class PatchingConfig(BaseModel):
+    enabled: bool = False
+    run_controlled_trial: bool = False
 
 
 class AppConfig(BaseModel):
@@ -106,6 +120,8 @@ class AppConfig(BaseModel):
     constraints: ConstraintsConfig = Field(default_factory=ConstraintsConfig)
     hardware: HardwareConfig = Field(default_factory=HardwareConfig)
     hardware_detection: HardwareDetectionConfig = Field(default_factory=HardwareDetectionConfig)
+    profiler: ProfilerConfig = Field(default_factory=ProfilerConfig)
+    patching: PatchingConfig = Field(default_factory=PatchingConfig)
 
     @model_validator(mode="after")
     def validate_app(self) -> "AppConfig":

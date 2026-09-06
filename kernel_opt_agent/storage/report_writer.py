@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import csv
+import json
 import shutil
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from kernel_opt_agent.agent.diagnosis import diagnose
+from kernel_opt_agent.diagnosis.diagnosis_report import diagnosis_records, profiler_metrics_table
 from kernel_opt_agent.hardware.hardware_info import HardwareInfo
 
 
@@ -56,6 +57,54 @@ def _hardware_lines(hardware_info: HardwareInfo | None) -> list[str]:
             f"confidence={probe.get('confidence')} inference={probe.get('inference')}"
         )
     return lines
+
+
+def _patch_trial_lines(results_dir: Path) -> list[str]:
+    path = results_dir / "patch_trials.jsonl"
+    trials: list[dict[str, Any]] = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                trials.append(json.loads(line))
+            except json.JSONDecodeError:
+                trials.append({"status": "parse_error", "error": "invalid patch_trials.jsonl line"})
+    lines = [
+        "",
+        "## Patch Trials",
+        "",
+        "| Status | Hypothesis | Improvement | Rollback | Error |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    if not trials:
+        lines.append("| none | none | null | none | none |")
+        return lines
+    for trial in trials:
+        rollback = ((trial.get("artifacts") or {}).get("rollback") or {}).get("verified")
+        lines.append(
+            "| {status} | {hypothesis} | {improvement} | {rollback} | {error} |".format(
+                status=trial.get("status"),
+                hypothesis=trial.get("hypothesis") or "none",
+                improvement="null" if trial.get("improvement") is None else trial.get("improvement"),
+                rollback="none" if rollback is None else str(bool(rollback)).lower(),
+                error=trial.get("error") or "none",
+            )
+        )
+    return lines
+
+
+def _report_diagnoses(record: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+    if not record:
+        return None
+    diagnoses = record.get("diagnoses")
+    if diagnoses is not None:
+        source_trial_id = record.get("trial_id")
+        return [
+            {**item, "source_trial_id": item.get("source_trial_id") or source_trial_id}
+            for item in diagnoses
+        ]
+    return record.get("bottleneck_diagnosis")
 
 
 def write_final_report(results_dir: Path, records: list[dict[str, Any]], objective: str, hardware_info: HardwareInfo | None = None) -> dict[str, Any] | None:
@@ -122,8 +171,10 @@ def write_final_report(results_dir: Path, records: list[dict[str, Any]], objecti
         lines.append(f"- iter {r.get('iteration')} cand {r.get('candidate_id')}: {r.get('status')} {r.get('config')}")
     failures = [r for r in records if r.get("status") != "benchmark_ok"]
     lines += ["", "## Failures", f"- Failed candidates: {len(failures)}. See `failed_cases.jsonl` for details."]
-    lines += ["", "## Diagnosis"]
-    lines += [f"- {note}" for note in diagnose(best_records + failures)]
+    report_record = best or baseline
+    lines += profiler_metrics_table((report_record or {}).get("profiler") if report_record else None)
+    lines += diagnosis_records(_report_diagnoses(report_record))
+    lines += _patch_trial_lines(results_dir)
     lines += _hardware_lines(hardware_info)
     lines += ["", "## Next Steps", "- Increase budget or refine search_space after reviewing failure patterns and profiler data."]
     (results_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
