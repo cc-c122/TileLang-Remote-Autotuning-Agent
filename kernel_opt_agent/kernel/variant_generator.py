@@ -56,9 +56,15 @@ class VariantGenerator:
         rendered = self.template.render(config)
         target_entry = trial_dir.joinpath(*PurePosixPath(self.entry_file).parts)
         target_entry.parent.mkdir(parents=True, exist_ok=True)
-        target_entry.write_text(rendered, encoding="utf-8")
         kernel_copy = self.generated_dir / f"kernel_{name}.py"
-        kernel_copy.write_text(rendered, encoding="utf-8")
         patch_path = self.patches_dir / f"kernel_{name}.patch"
         save_patch(self.template.template_text, rendered, patch_path, str(self.template_path), str(target_entry))
+        if not self.template.placeholders:
+            # Baseline identity includes encoding and line endings, not just Python semantics.
+            original_bytes = self.template_path.read_bytes()
+            target_entry.write_bytes(original_bytes)
+            kernel_copy.write_bytes(original_bytes)
+        else:
+            target_entry.write_text(rendered, encoding="utf-8")
+            kernel_copy.write_text(rendered, encoding="utf-8")
         return {"trial_dir": trial_dir, "kernel": target_entry, "kernel_copy": kernel_copy, "patch": patch_path}
