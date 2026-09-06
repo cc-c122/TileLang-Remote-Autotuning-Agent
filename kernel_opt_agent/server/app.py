@@ -98,6 +98,29 @@ def _best_summary(summary_rows: list[dict[str, Any]]) -> tuple[dict[str, Any] | 
     return best, improvement
 
 
+def _accepted_source_trial(results_dir: Path, source_optimization: dict[str, Any]) -> dict[str, Any] | None:
+    if source_optimization.get("status") != "completed" or source_optimization.get("baseline_verified") is not True:
+        return None
+    accepted_id = source_optimization.get("accepted_trial_id")
+    accepted = next(
+        (item for item in source_optimization.get("trials", []) if item.get("trial_id") == accepted_id),
+        None,
+    )
+    if not accepted or accepted.get("status") != "accepted":
+        return None
+    if (accepted.get("correctness") or {}).get("passed") is not True:
+        return None
+    accepted_hash = accepted.get("source_after_sha256")
+    if not accepted_hash or accepted_hash != source_optimization.get("best_source_sha256"):
+        return None
+    if accepted.get("execution_source_sha256") != accepted_hash:
+        return None
+    best_kernel = results_dir / "best_kernel.py"
+    if not best_kernel.is_file() or hashlib.sha256(best_kernel.read_bytes()).hexdigest() != accepted_hash:
+        return None
+    return accepted
+
+
 def _task_payload(task: Any) -> dict[str, Any]:
     payload = task.model_dump()
     summary = _read_csv(Path(task.results_dir) / "summary.csv")
@@ -108,20 +131,19 @@ def _task_payload(task: Any) -> dict[str, Any]:
     iterations = [_numeric(row.get("iteration")) for row in summary]
     latest_event = task.events[-1] if task.events else {}
     source_optimization = read_source_result(Path(task.results_dir))
-    accepted = next(
-        (item for item in source_optimization.get("trials", []) if item.get("trial_id") == source_optimization.get("accepted_trial_id")),
-        None,
-    )
+    accepted = _accepted_source_trial(Path(task.results_dir), source_optimization)
     accepted_latency = None
+    source_baseline_latency = None
     if accepted is not None:
         improvement = _numeric(accepted.get("improvement_percent"))
         accepted_latency = _numeric(accepted.get("candidate_median_latency_ms"))
+        source_baseline_latency = _numeric(accepted.get("baseline_median_latency_ms"))
     payload.update(
         {
             "current_iteration": int(max([item for item in iterations if item is not None], default=0)),
             "total_trials": len(summary),
             "best_latency": accepted_latency if accepted is not None else _numeric((best_row or {}).get("latency")),
-            "baseline_latency": _numeric(baseline.get("latency")),
+            "baseline_latency": source_baseline_latency if accepted is not None else _numeric(baseline.get("latency")),
             "improvement_percent": improvement,
             "current_stage": latest_event.get("type") or task.status,
             "latest_message": latest_event.get("message") or task.status,
@@ -136,10 +158,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
     if execution_mode == "baseline_only":
         improvement = None
     source_optimization = read_source_result(results_dir)
-    accepted = next(
-        (item for item in source_optimization.get("trials", []) if item.get("trial_id") == source_optimization.get("accepted_trial_id")),
-        None,
-    )
+    accepted = _accepted_source_trial(results_dir, source_optimization)
     if accepted is not None:
         improvement = _numeric(accepted.get("improvement_percent"))
         accepted_hash = accepted.get("source_after_sha256")
