@@ -4,6 +4,7 @@ import argparse
 import logging
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,7 @@ def setup_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
+        force=True,
         handlers=[
             logging.StreamHandler(),
             logging.FileHandler(RESULTS_DIR / "agent.log", encoding="utf-8"),
@@ -177,6 +179,8 @@ def maybe_run_controlled_patch_trial(
     runner: Any,
     metrics_data: dict[str, Any],
 ) -> None:
+    if config.execution_mode == "baseline_only":
+        return
     if not (config.patching.enabled and config.patching.run_controlled_trial):
         return
     if db.patch_trials_path.exists() and db.patch_trials_path.read_text(encoding="utf-8").strip():
@@ -252,6 +256,7 @@ def run_trial(
     candidate_config: dict[str, Any],
     paths: dict[str, Path],
     hardware_info: HardwareInfo | None = None,
+    on_event: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
     label = f"iter{iteration:03d}_cand{candidate_id:03d}"
     config_path = paths["trial_dir"] / "trial_config.yaml"
@@ -275,19 +280,9 @@ def run_trial(
 
     try:
         runner = build_runner(config, paths["trial_dir"])
-        corr_cmd = runner.run("correctness", config.kernel.correctness_command)
-        stdout_all.append(corr_cmd.stdout)
-        stderr_all.append(corr_cmd.stderr)
-        if corr_cmd.returncode != 0 and corr_cmd.guard_denied:
-            status = command_failure_status(corr_cmd, "correctness")
-            error = {"category": status, "message": corr_cmd.error_message or corr_cmd.stderr}
-        else:
-            corr = parse_correctness(corr_cmd.stdout, corr_cmd.stderr, corr_cmd.returncode)
-            correctness_data = {"passed": corr.passed, "status": corr.status, "max_error": corr.max_error, "reason": corr.reason, "parse_error": corr.parse_error}
-            if not corr.passed:
-                status = "correctness_failed"
-                error = {"category": status, "message": corr.reason}
-        if error is None and config.kernel.build_command:
+        if config.kernel.build_command:
+            if on_event:
+                on_event("build_started", "running build command")
             build = runner.run("build", config.kernel.build_command)
             stdout_all.append(build.stdout)
             stderr_all.append(build.stderr)
@@ -296,6 +291,29 @@ def run_trial(
                 status = command_failure_status(build, "build")
                 error = {"category": status, "message": build.error_message or build.stderr[-500:]}
         if error is None:
+            if on_event:
+                on_event("correctness_started", "running correctness command")
+            corr_cmd = runner.run("correctness", config.kernel.correctness_command)
+            stdout_all.append(corr_cmd.stdout)
+            stderr_all.append(corr_cmd.stderr)
+            if corr_cmd.returncode != 0 and corr_cmd.guard_denied:
+                status = command_failure_status(corr_cmd, "correctness")
+                error = {"category": status, "message": corr_cmd.error_message or corr_cmd.stderr}
+            else:
+                corr = parse_correctness(corr_cmd.stdout, corr_cmd.stderr, corr_cmd.returncode)
+                correctness_data = {
+                    "passed": corr.passed,
+                    "status": corr.status,
+                    "max_error": corr.max_error,
+                    "reason": corr.reason,
+                    "parse_error": corr.parse_error,
+                }
+                if not corr.passed:
+                    status = "correctness_failed"
+                    error = {"category": status, "message": corr.reason}
+        if error is None:
+            if on_event:
+                on_event("benchmark_started", "running benchmark command")
             bench = runner.run("benchmark", config.kernel.run_command)
             stdout_all.append(bench.stdout)
             stderr_all.append(bench.stderr)
@@ -325,6 +343,8 @@ def run_trial(
         error = {"category": status, "message": str(exc)}
         stderr_all.append(str(exc))
 
+    if config.profiler.enabled and on_event:
+        on_event("profiling_started", "collecting profiler evidence")
     profiler_record, profiler_result = collect_profiler_result(config, paths, benchmark_stdout, benchmark_stderr, compile_log)
     source_trial_id = f"{run_id}:{label}"
     evidence_records = profiler_observations_to_evidence(profiler_result, source_trial_id)
@@ -384,7 +404,11 @@ def run_trial(
     return record
 
 
-def run(config: AppConfig, should_cancel=None) -> None:
+def run(
+    config: AppConfig,
+    should_cancel: Callable[[], bool] | None = None,
+    event_callback: Callable[[str, str], None] | None = None,
+) -> None:
     def cancelled() -> bool:
         return bool(should_cancel and should_cancel())
 
@@ -429,12 +453,13 @@ def run(config: AppConfig, should_cancel=None) -> None:
     paths = generator.create_trial(0, 0, baseline)
     logging.info("running baseline")
     if not cancelled():
-        record = run_trial(config, db, run_id, 0, 0, baseline, paths, hardware_info)
+        record = run_trial(config, db, run_id, 0, 0, baseline, paths, hardware_info, event_callback)
         history.append(record)
         if record["status"] == "benchmark_ok":
             best_value = record["objective"]["value"]
 
-    for iteration in range(1, config.search.max_iterations + 1):
+    iterations = range(1, config.search.max_iterations + 1) if config.execution_mode == "parameter_search" else ()
+    for iteration in iterations:
         if cancelled():
             logging.info("cancel requested; stopping before iteration %s", iteration)
             break
@@ -452,7 +477,7 @@ def run(config: AppConfig, should_cancel=None) -> None:
             tried.add(h)
             try:
                 paths = generator.create_trial(iteration, candidate_id, cand)
-                record = run_trial(config, db, run_id, iteration, candidate_id, cand, paths, hardware_info)
+                record = run_trial(config, db, run_id, iteration, candidate_id, cand, paths, hardware_info, event_callback)
             except Exception as exc:
                 record = {
                     "run_id": run_id,
@@ -473,7 +498,13 @@ def run(config: AppConfig, should_cancel=None) -> None:
             if record["status"] == "benchmark_ok" and is_better(record["objective"]["value"], best_value, config.search.objective):
                 best_value = record["objective"]["value"]
 
-    best = write_final_report(RESULTS_DIR, db.records, config.search.objective, hardware_info)
+    best = write_final_report(
+        RESULTS_DIR,
+        db.records,
+        config.search.objective,
+        hardware_info,
+        execution_mode=config.execution_mode,
+    )
     logging.info("done; best=%s results=%s", best.get("config_hash") if best else "none", RESULTS_DIR)
 
 

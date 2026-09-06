@@ -107,7 +107,13 @@ def _report_diagnoses(record: dict[str, Any] | None) -> list[dict[str, Any]] | N
     return record.get("bottleneck_diagnosis")
 
 
-def write_final_report(results_dir: Path, records: list[dict[str, Any]], objective: str, hardware_info: HardwareInfo | None = None) -> dict[str, Any] | None:
+def write_final_report(
+    results_dir: Path,
+    records: list[dict[str, Any]],
+    objective: str,
+    hardware_info: HardwareInfo | None = None,
+    execution_mode: str = "parameter_search",
+) -> dict[str, Any] | None:
     best_records = _sort_success(records, objective)
     best = best_records[0] if best_records else None
     if best:
@@ -141,16 +147,23 @@ def write_final_report(results_dir: Path, records: list[dict[str, Any]], objecti
             )
 
     baseline = records[0] if records else None
+    baseline_only = execution_mode == "baseline_only"
     lines = [
         "# TileLang Autotuning Report",
         "",
-        "This report shows the best-seen result within the configured search budget. It is not a claim of global optimality.",
+        (
+            "This is a baseline-only validation and measurement. No source optimization or parameter search was performed."
+            if baseline_only
+            else "This report shows the best-seen result within the configured search budget. It is not a claim of global optimality."
+        ),
+        "",
+        f"- Execution mode: `{execution_mode}`",
         "",
         "## Baseline",
         f"- Status: {baseline.get('status') if baseline else 'n/a'}",
         f"- Metrics: {baseline.get('metrics') if baseline else '{}'}",
         "",
-        "## Best Seen",
+        "## Baseline Result" if baseline_only else "## Best Seen",
     ]
     if best:
         lines += [
@@ -159,7 +172,7 @@ def write_final_report(results_dir: Path, records: list[dict[str, Any]], objecti
             f"- Objective: {best.get('objective')}",
             f"- Config: `{best.get('config')}`",
         ]
-        if baseline and baseline.get("objective", {}).get("value") and best.get("objective", {}).get("value"):
+        if not baseline_only and baseline and baseline.get("objective", {}).get("value") and best.get("objective", {}).get("value"):
             b = baseline["objective"]["value"]
             v = best["objective"]["value"]
             improvement = ((b - v) / b * 100.0) if objective == "latency" else ((v - b) / b * 100.0)
@@ -176,6 +189,10 @@ def write_final_report(results_dir: Path, records: list[dict[str, Any]], objecti
     lines += diagnosis_records(_report_diagnoses(report_record))
     lines += _patch_trial_lines(results_dir)
     lines += _hardware_lines(hardware_info)
-    lines += ["", "## Next Steps", "- Increase budget or refine search_space after reviewing failure patterns and profiler data."]
+    lines += ["", "## Next Steps"]
+    if baseline_only:
+        lines.append("- Use this verified baseline as evidence for a later, separately audited source-optimization trial.")
+    else:
+        lines.append("- Review failure patterns and profiler data before changing the legacy search budget or source implementation.")
     (results_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return best

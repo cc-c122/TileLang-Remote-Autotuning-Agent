@@ -198,6 +198,22 @@ class RunRequestTests(unittest.TestCase):
         config = app_config_from_run_request(request)
         self.assertEqual(config.runner.type, "local")
 
+    def test_plain_source_run_request_selects_baseline_only_without_fake_parameters(self) -> None:
+        request = RunRequest.model_validate(
+            minimal_request(
+                sample={
+                    "source_type": "inline",
+                    "inline_text": "def kernel_score():\n    return 1\n",
+                    "path": None,
+                    "entry_file": "kernel.py",
+                },
+                settings_ref={"use_saved_settings": False},
+            )
+        )
+        config = app_config_from_run_request(request)
+        self.assertEqual(config.execution_mode, "baseline_only")
+        self.assertEqual(config.search_space, {})
+
     def test_saved_settings_cannot_enable_local_mock(self) -> None:
         settings = {"runner": {"type": "local"}}
         with tempfile.TemporaryDirectory() as tmp:

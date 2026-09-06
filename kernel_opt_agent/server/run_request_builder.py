@@ -1,15 +1,23 @@
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from kernel_opt_agent.config_model import AppConfig, safe_config_dict
 from kernel_opt_agent.run_request import RunRequest, app_config_from_run_request
+from kernel_opt_agent.sample_security import (
+    UnsafeSampleError,
+    copy_safe_sample_contents,
+    normalize_sample_path,
+    private_key_marker_in_bytes,
+)
 
 from .models import SettingsPayload, TaskCreateRequest
+
+if TYPE_CHECKING:
+    from .sample_uploads import SampleUploadStore
 
 
 def _assert_within(child: Path, parent: Path) -> None:
@@ -19,38 +27,56 @@ def _assert_within(child: Path, parent: Path) -> None:
         raise ValueError(f"refusing path outside task workspace: {child}")
 
 
-def _copy_sample_tree(src: Path, dst: Path) -> None:
-    if src.is_file():
-        dst.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst / src.name)
-        return
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst)
-
-
-def materialize_sample(request: TaskCreateRequest, task_workspace: Path) -> Path:
+def materialize_sample(
+    request: TaskCreateRequest,
+    task_workspace: Path,
+    upload_store: SampleUploadStore | None = None,
+) -> Path:
     sample_dir = task_workspace / "sample"
-    entry_path = sample_dir / request.sample.entry_file
+    _assert_within(sample_dir, task_workspace)
+    try:
+        normalized_entry = normalize_sample_path(request.sample.entry_file, label="sample.entry_file")
+    except UnsafeSampleError as exc:
+        raise ValueError(str(exc)) from exc
+    entry_path = sample_dir.joinpath(*PurePosixPath(normalized_entry).parts)
     _assert_within(entry_path, sample_dir)
     if request.sample.source_type == "inline":
+        inline_bytes = (request.sample.inline_text or "").encode("utf-8")
+        contains_key, _ = private_key_marker_in_bytes(inline_bytes)
+        if contains_key:
+            raise ValueError("inline sample contains private key material")
         sample_dir.mkdir(parents=True, exist_ok=True)
         entry_path.parent.mkdir(parents=True, exist_ok=True)
         entry_path.write_text(request.sample.inline_text or "", encoding="utf-8")
         return sample_dir
+    if request.sample.source_type == "upload":
+        if upload_store is None:
+            raise ValueError("sample upload storage is not configured")
+        return upload_store.materialize(
+            request.sample.upload_id or "",
+            request.sample.entry_file,
+            sample_dir,
+        )
     source_path = Path(request.sample.path or "").expanduser()
     if not source_path.is_absolute():
-        source_path = (Path.cwd() / source_path).resolve()
+        source_path = (Path.cwd() / source_path).absolute()
     if not source_path.exists():
         raise ValueError(f"sample.path does not exist: {source_path}")
-    _copy_sample_tree(source_path, sample_dir)
+    try:
+        copy_safe_sample_contents(source_path, sample_dir)
+    except UnsafeSampleError as exc:
+        raise ValueError(str(exc)) from exc
     if not entry_path.exists():
         raise ValueError(f"sample.entry_file not found after upload: {entry_path}")
     return sample_dir
 
 
-def build_internal_run_request(request: TaskCreateRequest, task_workspace: Path) -> RunRequest:
-    sample_dir = materialize_sample(request, task_workspace)
+def build_internal_run_request(
+    request: TaskCreateRequest,
+    task_workspace: Path,
+    upload_store: SampleUploadStore | None = None,
+) -> RunRequest:
+    sample_dir = materialize_sample(request, task_workspace, upload_store)
     raw: dict[str, Any] = {
         "schema_version": "v2.run_request.v1",
         "project_name": request.project_name,
@@ -107,8 +133,13 @@ def _apply_server_settings(config: AppConfig, settings: SettingsPayload) -> None
     config.llm.api_key_env = settings.llm.api_key_env
 
 
-def build_effective_config(request: TaskCreateRequest, task_workspace: Path, settings_path: Path | None = None) -> AppConfig:
-    run_request = build_internal_run_request(request, task_workspace)
+def build_effective_config(
+    request: TaskCreateRequest,
+    task_workspace: Path,
+    settings_path: Path | None = None,
+    upload_store: SampleUploadStore | None = None,
+) -> AppConfig:
+    run_request = build_internal_run_request(request, task_workspace, upload_store)
     run_request.settings_ref.use_saved_settings = False
     config = app_config_from_run_request(run_request)
     config.runner.type = request.runner.type

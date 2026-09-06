@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
+
+from kernel_opt_agent.sample_security import UnsafeSampleError, ensure_no_link_components, normalize_sample_path
 
 
 ROOT = Path(__file__).resolve().parent
@@ -110,6 +112,7 @@ class PatchingConfig(BaseModel):
 
 class AppConfig(BaseModel):
     project_name: str = "tilelang-autotune-demo"
+    execution_mode: Literal["parameter_search", "baseline_only"] = "parameter_search"
     runner: RunnerConfig = Field(default_factory=RunnerConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -125,17 +128,31 @@ class AppConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_app(self) -> "AppConfig":
-        if not self.search_space:
+        if self.execution_mode == "parameter_search" and not self.search_space:
             raise ValueError("search_space is required and must be non-empty")
+        if self.execution_mode == "baseline_only" and self.search_space:
+            raise ValueError("baseline_only execution requires an empty search_space")
         for name, values in self.search_space.items():
             if not name or not isinstance(values, list) or not values:
                 raise ValueError(f"search_space.{name} must be a non-empty list")
         if any(k in os.environ for k in ("OPENAI_API_KEY_VALUE", "SSH_PASSWORD")):
             pass
+        try:
+            normalized_entry = normalize_sample_path(self.kernel.entry_file, label="kernel.entry_file")
+        except UnsafeSampleError as exc:
+            raise ValueError(str(exc)) from exc
         sample = resolve_path(self.kernel.sample_path)
+        try:
+            ensure_no_link_components(sample)
+        except UnsafeSampleError as exc:
+            raise ValueError(str(exc)) from exc
         if not sample.exists():
             raise ValueError(f"kernel.sample_path does not exist: {sample}")
-        entry = sample / self.kernel.entry_file if sample.is_dir() else sample
+        entry = sample.joinpath(*PurePosixPath(normalized_entry).parts) if sample.is_dir() else sample
+        try:
+            ensure_no_link_components(entry, label="kernel entry path")
+        except UnsafeSampleError as exc:
+            raise ValueError(str(exc)) from exc
         if sample.is_dir() and not entry.exists():
             raise ValueError(f"kernel.entry_file not found under sample_path: {entry}")
         if sample.is_file() and Path(self.kernel.entry_file).name != sample.name:
@@ -143,6 +160,8 @@ class AppConfig(BaseModel):
         template_text = entry.read_text(encoding="utf-8")
         placeholders = set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}", template_text))
         space_names = set(self.search_space.keys())
+        if self.execution_mode == "baseline_only" and placeholders:
+            raise ValueError("baseline_only execution does not accept template placeholders")
         if placeholders != space_names:
             missing = sorted(placeholders - space_names)
             extra = sorted(space_names - placeholders)
@@ -156,7 +175,7 @@ class AppConfig(BaseModel):
 def resolve_path(path: str) -> Path:
     p = Path(os.path.expanduser(path))
     if not p.is_absolute():
-        p = (ROOT / p).resolve()
+        p = (ROOT / p).absolute()
     return p
 
 
