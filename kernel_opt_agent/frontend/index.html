@@ -3345,7 +3345,7 @@
 
     function acceptedSourceTrialVerified(sourceOptimization) {
       const trial = acceptedSourceTrial(sourceOptimization);
-      if (!trial || sourceTrialStatus(trial) !== "accepted" || trial.correctness?.passed !== true) return false;
+      if (sourceOptimizationStatus(sourceOptimization) !== "completed" || !trial || sourceTrialStatus(trial) !== "accepted" || trial.correctness?.passed !== true) return false;
       const baselineHash = sourceSha256(sourceOptimization?.baseline_source_sha256);
       const bestHash = sourceSha256(sourceOptimization?.best_source_sha256);
       const beforeHash = sourceSha256(trial.source_before_sha256);
@@ -3782,6 +3782,8 @@
       let decision;
       if (acceptedVerified) {
         decision = `<div class="alert ok">已接受源码修改：${escapeHtml(acceptedId)}。best 仅来自后端明确接受、correctness 通过、测量数组有效且源码 hash 一致的 trial。</div>`;
+      } else if (acceptedByBackend && status !== "completed") {
+        decision = `<div class="alert warn">源码优化整体状态仍为 ${escapeHtml(status)}；当前 accepted trial 属于 partial 结果，前端不会提前标记为已验证优化。</div>`;
       } else if (acceptedByBackend && hashVerification === "mismatch") {
         decision = `<div class="alert bad">后端返回了接受决定，但发布源码 hash 与 accepted trial 不一致；前端不会把该产物标记为已验证优化。</div>`;
       } else if (acceptedByBackend) {
@@ -3822,7 +3824,7 @@
       const acceptedTrial = acceptedSourceTrial(sourceOptimization);
       const acceptedVerified = acceptedSourceTrialVerified(sourceOptimization);
       const acceptedTrialId = typeof sourceOptimization?.accepted_trial_id === "string" ? sourceOptimization.accepted_trial_id.trim() : "";
-      const bestTrialId = sourceMode ? acceptedTrialId || "无，保留 baseline" : pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
+      const bestTrialId = sourceMode ? acceptedVerified ? acceptedTrialId : "无，保留 baseline" : pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
       const baselineSucceeded = baselineOnly && !!benchmarkBest;
       const fallbackBaselineLatency = pick(state.task?.baseline_latency, baseline.latency, baseline.objective_value);
       const acceptedBaselineLatency = acceptedVerified ? sourceMeasurementMedian(acceptedTrial?.baseline_latency_ms) : null;

@@ -253,6 +253,12 @@ async (page) => {
   check((await page.locator("#apiResultsPanel .source-trial[open]").innerText()).includes("accepted vector load"), "The accepted trial is the default expanded change");
   check(text.includes("回滚状态未返回") && !text.includes("回滚已验证\n"), "Null rollback state is not presented as rollback success");
 
+  for (const partialStatus of ["running", "cancelled", "failed"]) {
+    text = await renderResult({...acceptedSourceOptimization, status: partialStatus});
+    check(text.includes("属于 partial 结果") && text.includes("未接受源码修改"), `${partialStatus} partial measurements cannot become an accepted result`);
+    check((await page.locator("#downloadBestKernelBtn").isDisabled()), `${partialStatus} partial result cannot enable the best artifact download`);
+  }
+
   text = await renderResult({...acceptedSourceOptimization, best_source_sha256: "c".repeat(64)});
   check(text.includes("发布源码 hash 与 accepted trial 不一致") && text.includes("未接受源码修改"), "Mismatched published source hash blocks a verified optimization claim");
   check((await page.locator("#apiResultsPanel .source-trial[open] > summary .badge").innerText()) === "接受状态待核验", "Mismatched source hash is not shown as a green accepted trial");
