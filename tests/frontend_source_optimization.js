@@ -100,7 +100,7 @@ async (page) => {
     };
   }
 
-  async function renderResult(sourceOptimization, executionMode = "source_optimization") {
+  async function renderResult(sourceOptimization, executionMode = "source_optimization", overrides = {}) {
     await page.evaluate(({results, executionMode}) => {
       state.task = {
         task_id: "render-contract-task",
@@ -114,7 +114,7 @@ async (page) => {
       state.taskResults = results;
       renderApiResults();
       activateView("resultsView");
-    }, {results: resultFixture(sourceOptimization), executionMode});
+    }, {results: {...resultFixture(sourceOptimization), ...overrides}, executionMode});
     return page.locator("#apiResultsPanel").innerText();
   }
 
@@ -266,6 +266,22 @@ async (page) => {
 
   text = await renderResult({...acceptedSourceOptimization, trials: acceptedSourceOptimization.trials.map((trial) => trial.trial_id === "accepted-1" ? {...trial, candidate_latency_ms: 0.85} : trial)});
   check(text.includes("测量数组或源码 hash 缺失") && text.includes("未接受源码修改"), "Scalar latency schema drift is not accepted as a measurement array");
+
+  for (const invalidMeasurements of [[-1], [0.85, "bad"]]) {
+    text = await renderResult({...acceptedSourceOptimization, trials: acceptedSourceOptimization.trials.map((trial) => trial.trial_id === "accepted-1" ? {...trial, candidate_latency_ms: invalidMeasurements} : trial)});
+    check(text.includes("测量数组或源码 hash 缺失") && text.includes("未接受源码修改"), `Invalid measurement array ${JSON.stringify(invalidMeasurements)} is rejected in full`);
+  }
+
+  text = await renderResult({...acceptedSourceOptimization, schema_version: "future.invalid"});
+  check(text.includes("schema_version 缺失或不匹配") && text.includes("未接受源码修改"), "Unknown source optimization schema cannot produce an accepted result");
+
+  const baselineOnlySourceResult = {schema_version: "v2.source_optimization.v1", status: "completed", baseline_source_sha256: baselineHash, best_source_sha256: baselineHash, accepted_trial_id: null, trials: []};
+  const verifiedBaselineRow = {trial_id: "baseline", status: "benchmark_ok", latency: 1, objective_value: 1, correctness: {passed: true}};
+  text = await renderResult(baselineOnlySourceResult, "source_optimization", {summary_table: [verifiedBaselineRow], best_row: verifiedBaselineRow});
+  check(!(await page.locator("#downloadBestKernelBtn").isDisabled()) && text.includes("最终 kernel（baseline）"), "Verified same-hash baseline remains downloadable when no trial is accepted");
+
+  text = await renderResult({...baselineOnlySourceResult, best_source_sha256: acceptedHash}, "source_optimization", {summary_table: [{status: "benchmark_ok", latency: 1}], best_row: {status: "benchmark_ok", latency: 1}});
+  check((await page.locator("#downloadBestKernelBtn").isDisabled()) && text.includes("baseline 产物不开放下载"), "Different-hash baseline without explicit correctness cannot enable an unrelated artifact download");
 
   text = await renderResult({
     schema_version: "wrong",

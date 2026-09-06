@@ -3345,7 +3345,7 @@
 
     function acceptedSourceTrialVerified(sourceOptimization) {
       const trial = acceptedSourceTrial(sourceOptimization);
-      if (sourceOptimizationStatus(sourceOptimization) !== "completed" || !trial || sourceTrialStatus(trial) !== "accepted" || trial.correctness?.passed !== true) return false;
+      if (sourceOptimization?.schema_version !== "v2.source_optimization.v1" || sourceOptimizationStatus(sourceOptimization) !== "completed" || !trial || sourceTrialStatus(trial) !== "accepted" || trial.correctness?.passed !== true) return false;
       const baselineHash = sourceSha256(sourceOptimization?.baseline_source_sha256);
       const bestHash = sourceSha256(sourceOptimization?.best_source_sha256);
       const beforeHash = sourceSha256(trial.source_before_sha256);
@@ -3704,7 +3704,23 @@
     }
 
     function sourceMeasurementValues(value) {
-      return Array.isArray(value) ? value.filter((item) => typeof item === "number" && Number.isFinite(item)) : [];
+      if (!Array.isArray(value) || !value.length || value.some((item) => typeof item !== "number" || !Number.isFinite(item) || item <= 0)) return [];
+      return value.slice();
+    }
+
+    function sourceBaselineArtifactVerified(sourceOptimization, baselineRow) {
+      const status = sourceOptimizationStatus(sourceOptimization);
+      const terminalWithBaseline = new Set(["completed", "unavailable", "failed", "cancelled"]);
+      const baselineHash = sourceSha256(sourceOptimization?.baseline_source_sha256);
+      const bestHash = sourceSha256(sourceOptimization?.best_source_sha256);
+      const baselineStatus = String(baselineRow?.status || "").trim().toLowerCase();
+      return sourceOptimization?.schema_version === "v2.source_optimization.v1"
+        && !sourceOptimization?.accepted_trial_id
+        && terminalWithBaseline.has(status)
+        && !!baselineHash
+        && baselineHash === bestHash
+        && baselineStatus === "benchmark_ok"
+        && baselineRow?.correctness?.passed === true;
     }
 
     function sourceMeasurementMedian(value) {
@@ -3824,7 +3840,8 @@
       const acceptedTrial = acceptedSourceTrial(sourceOptimization);
       const acceptedVerified = acceptedSourceTrialVerified(sourceOptimization);
       const acceptedTrialId = typeof sourceOptimization?.accepted_trial_id === "string" ? sourceOptimization.accepted_trial_id.trim() : "";
-      const bestTrialId = sourceMode ? acceptedVerified ? acceptedTrialId : "无，保留 baseline" : pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
+      const sourceBaselineVerified = sourceMode && sourceBaselineArtifactVerified(sourceOptimization, baseline);
+      const bestTrialId = sourceMode ? acceptedVerified ? acceptedTrialId : sourceBaselineVerified ? "无，保留 baseline" : "无，baseline 待核验" : pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
       const baselineSucceeded = baselineOnly && !!benchmarkBest;
       const fallbackBaselineLatency = pick(state.task?.baseline_latency, baseline.latency, baseline.objective_value);
       const acceptedBaselineLatency = acceptedVerified ? sourceMeasurementMedian(acceptedTrial?.baseline_latency_ms) : null;
@@ -3832,7 +3849,7 @@
       const baselineLatency = sourceMode && acceptedVerified ? acceptedBaselineLatency : fallbackBaselineLatency;
       const sourceBestLatency = acceptedVerified ? acceptedCandidateLatency : baselineLatency;
       const sourceImprovement = acceptedVerified ? numeric(acceptedTrial?.improvement_percent) : null;
-      const verifiedArtifact = sourceMode ? acceptedVerified || (!acceptedTrialId && !!benchmarkBest) : !!benchmarkBest;
+      const verifiedArtifact = sourceMode ? acceptedVerified || sourceBaselineVerified : !!benchmarkBest;
       el.downloadBestKernelBtn.disabled = !results.best_kernel || !verifiedArtifact;
       const evidenceSummary = evidenceSummaryFromResults(results);
       const diagnosisRows = diagnosisRowsFromResults(results);
@@ -3841,6 +3858,7 @@
       el.apiResultsPanel.innerHTML = `
         ${executionModeNotice(executionMode)}
         ${baselineOnly && !baselineSucceeded ? `<div class="alert bad">correctness 或 benchmark 未通过，本次没有已验证的基线性能结果。</div>` : ""}
+        ${sourceMode && !acceptedVerified && !sourceBaselineVerified ? `<div class="alert warn">未能同时确认 baseline correctness、benchmark、终态和同源 hash；当前 baseline 产物不开放下载。</div>` : ""}
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(baselineLatency))}</div></article>
           <article class="result-card ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best-card"}"><div class="metric-label">${baselineOnly ? "源码优化结果" : sourceMode && !acceptedVerified ? "best latency（保留 baseline）" : "best latency"}</div><div class="metric-main ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best"}">${baselineOnly ? "未执行" : escapeHtml(display(sourceMode ? sourceBestLatency : pick(best.latency, best.objective_value, state.task?.best_latency)))}</div>${baselineOnly ? "" : `<div class="kv"><div>${sourceMode ? "accepted trial id" : "best trial id"}</div><div>${escapeHtml(display(bestTrialId))}</div></div>`}</article>
@@ -3848,7 +3866,7 @@
         </div>
         ${renderSourceOptimization(results, executionMode)}
         ${shapeResultsHtml || renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable)}
-        <h3>${baselineOnly ? baselineSucceeded ? "已验证基线 kernel" : "基线 kernel 未通过验证" : sourceMode && !acceptedVerified ? "最终 kernel（baseline）" : verifiedArtifact ? "best kernel" : "尚无 best kernel"}</h3>
+        <h3>${baselineOnly ? baselineSucceeded ? "已验证基线 kernel" : "基线 kernel 未通过验证" : sourceMode && !acceptedVerified ? sourceBaselineVerified ? "最终 kernel（baseline）" : "baseline kernel 待核验" : verifiedArtifact ? "best kernel" : "尚无 best kernel"}</h3>
         <pre>${escapeHtml(verifiedArtifact ? results.best_kernel || "等待结果文件：best_kernel.py" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
         <h3>${baselineOnly ? baselineSucceeded ? "基线配置产物" : "基线配置未通过验证" : "best_config.yaml"}</h3>
         <pre>${escapeHtml(verifiedArtifact && results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "没有可作为 best 的已验证配置。")}</pre>
