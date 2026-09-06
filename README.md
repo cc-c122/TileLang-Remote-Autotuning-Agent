@@ -1,5 +1,36 @@
 # TileLang Remote Autotuning Agent
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-3DA639)](LICENSE)
+
+## 版本与技术文档
+
+**V2 的中文 README、技术架构和 HTTP API 文档已更新，项目采用 Apache License 2.0。**
+
+GitHub 默认显示的 `main` 分支保留 V1。V2 在 `v2/evidence-guided-agent` 分支持续开发；之前仅在 V2 分支更新的文档，现在也可以从这个首页访问。
+
+| 入口 | 内容 |
+| --- | --- |
+| [V2 最新 README](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/blob/v2/evidence-guided-agent/README.md) | 当前能力、安装、运行方式和限制 |
+| [技术架构](docs/technical-architecture.md) | V2 模块边界、任务生命周期、搜索、证据与安全模型 |
+| [HTTP API 参考](docs/http-api.md) | V2 设置、硬件解析、任务、进度、结果、取消和下载接口 |
+| [V2 源码](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/tree/v2/evidence-guided-agent) | Web API、profiler 解析、诊断和受控 patch 开发主线 |
+| [Apache License 2.0](LICENSE) / [NOTICE](NOTICE) | 许可证全文和版权声明 |
+
+要运行 V2，请在工作区修改已保存的前提下切换分支：
+
+```bash
+git fetch origin
+git switch v2/evidence-guided-agent
+git pull --ff-only origin v2/evidence-guided-agent
+pip install -e .
+```
+
+V2 当前提供 FastAPI，但 API 服务尚未直接托管前端页面；真实 C500 Paged Attention 基线采集仍受 SSH session channel 阻断。具体边界见上方 V2 README。
+
+**以下使用说明对应 `main` 分支的 V1 CLI 与只读结果查看器。**
+
+## V1 简介
+
 TileLang Remote Autotuning Agent 是一个面向 TileLang kernel sample 的自动调参工具。它读取用户提供的算子样例、正确性检查命令、benchmark 命令和参数搜索空间，在本地 mock 环境或远程 SSH 容器中批量生成候选 kernel，逐个执行 correctness、build、benchmark，并把当前搜索预算内表现最好的版本保存下来。
 
 这个项目的核心目标不是承诺找到全局最优解，而是提供一个安全、可复现、可审计的调参闭环：每个候选怎么生成、跑了什么命令、为什么失败、性能指标是多少、最终 best-seen kernel 来自哪组参数，都能在结果文件里复查。
@@ -479,3 +510,9 @@ python main.py --config kernel_opt_agent/config.example.yaml
 2. 用真实远程结果继续验证前端展示。
 3. 完善 V1 release checklist 和 troubleshooting。
 4. 后续实现更完整的 mxmaca/metax 真实 probe。
+
+## 开源许可
+
+Copyright 2026 cc-c122.
+
+本项目采用 [Apache License 2.0](LICENSE)。使用、修改和分发须遵守许可证条款，保留适用的版权、许可证和 NOTICE 声明，并标明修改。第三方组件保留各自的许可证与版权声明。软件按原样提供，不作担保；完整条款以许可证正文为准。
