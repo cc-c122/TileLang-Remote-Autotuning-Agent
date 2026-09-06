@@ -3345,7 +3345,33 @@
 
     function acceptedSourceTrialVerified(sourceOptimization) {
       const trial = acceptedSourceTrial(sourceOptimization);
-      return !!trial && sourceTrialStatus(trial) === "accepted" && trial.correctness?.passed === true;
+      if (!trial || sourceTrialStatus(trial) !== "accepted" || trial.correctness?.passed !== true) return false;
+      const baselineHash = sourceSha256(sourceOptimization?.baseline_source_sha256);
+      const bestHash = sourceSha256(sourceOptimization?.best_source_sha256);
+      const beforeHash = sourceSha256(trial.source_before_sha256);
+      const afterHash = sourceSha256(trial.source_after_sha256);
+      return !!baselineHash
+        && !!bestHash
+        && baselineHash === beforeHash
+        && bestHash === afterHash
+        && sourceMeasurementValues(trial.baseline_latency_ms).length > 0
+        && sourceMeasurementValues(trial.candidate_latency_ms).length > 0;
+    }
+
+    function sourceSha256(value) {
+      if (typeof value !== "string") return "";
+      const normalized = value.trim().toLowerCase();
+      return /^[a-f0-9]{64}$/.test(normalized) ? normalized : "";
+    }
+
+    function sourceHashVerification(sourceOptimization) {
+      const trial = acceptedSourceTrial(sourceOptimization);
+      const baselineHash = sourceSha256(sourceOptimization?.baseline_source_sha256);
+      const bestHash = sourceSha256(sourceOptimization?.best_source_sha256);
+      const beforeHash = sourceSha256(trial?.source_before_sha256);
+      const afterHash = sourceSha256(trial?.source_after_sha256);
+      if (!trial || !baselineHash || !bestHash || !beforeHash || !afterHash) return "missing";
+      return baselineHash === beforeHash && bestHash === afterHash ? "verified" : "mismatch";
     }
 
     function renderTaskDetail() {
@@ -3639,11 +3665,12 @@
       return `<span class="badge ${kind}">${escapeHtml(labels[status])}</span>`;
     }
 
-    function sourceTrialStatusBadge(trial) {
+    function sourceTrialStatusBadge(trial, selected, acceptedVerified) {
       const status = sourceTrialStatus(trial);
-      const acceptedVerified = status === "accepted" && trial?.correctness?.passed === true;
+      const verifiedAcceptance = status === "accepted" && selected && acceptedVerified;
+      const acceptedByBackend = status === "accepted" && trial?.correctness?.passed === true;
       const warningStatuses = new Set(["proposed", "running", "no_improvement", "cancelled"]);
-      const kind = acceptedVerified ? "ok" : warningStatuses.has(status) ? "warn" : "bad";
+      const kind = verifiedAcceptance ? "ok" : acceptedByBackend || warningStatuses.has(status) ? "warn" : "bad";
       const labels = {
         proposed: "待验证",
         running: "验证中",
@@ -3652,7 +3679,7 @@
         correctness_failed: "正确性失败",
         benchmark_failed: "性能测量失败",
         no_improvement: "无收益",
-        accepted: acceptedVerified ? "已接受" : "接受状态不完整",
+        accepted: verifiedAcceptance ? "已接受" : acceptedByBackend ? "接受状态待核验" : "接受状态不完整",
         cancelled: "已取消",
         unknown: "未知状态",
       };
@@ -3672,7 +3699,19 @@
     }
 
     function sourceMeasurementSummary(value) {
-      return Array.isArray(value) && value.length ? `${value.length} 次测量` : "未采集";
+      const values = sourceMeasurementValues(value);
+      return values.length ? `${values.length} 次测量` : "未采集";
+    }
+
+    function sourceMeasurementValues(value) {
+      return Array.isArray(value) ? value.filter((item) => typeof item === "number" && Number.isFinite(item)) : [];
+    }
+
+    function sourceMeasurementMedian(value) {
+      const values = sourceMeasurementValues(value).slice().sort((a, b) => a - b);
+      if (!values.length) return null;
+      const middle = Math.floor(values.length / 2);
+      return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
     }
 
     function sourceTrialEvidenceList(trial, evidenceMap) {
@@ -3687,7 +3726,7 @@
       }).join("")}</ul>`;
     }
 
-    function renderSourceTrial(trial, acceptedId, evidenceMap) {
+    function renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified) {
       const trialId = typeof trial.trial_id === "string" && trial.trial_id.trim() ? trial.trial_id.trim() : "未返回 trial_id";
       const selected = acceptedId && trialId === acceptedId;
       const correctness = trial.correctness && typeof trial.correctness === "object" ? trial.correctness : null;
@@ -3703,7 +3742,7 @@
         stderr_path: trial.stderr_path ?? null,
       };
       return `<details class="source-trial" ${selected ? "open" : ""}>
-        <summary><span>${escapeHtml(display(title))}</span><span>${sourceTrialStatusBadge(trial)}</span></summary>
+        <summary><span>${escapeHtml(display(title))}</span><span>${sourceTrialStatusBadge(trial, selected, acceptedVerified)}</span></summary>
         <div class="source-trial-body">
           <div class="kv">
             <div>trial_id</div><div>${escapeHtml(trialId)}</div>
@@ -3735,11 +3774,18 @@
       const trials = sourceOptimizationTrials(sourceOptimization);
       const acceptedId = typeof sourceOptimization.accepted_trial_id === "string" ? sourceOptimization.accepted_trial_id.trim() : "";
       const acceptedVerified = acceptedSourceTrialVerified(sourceOptimization);
+      const acceptedTrial = acceptedSourceTrial(sourceOptimization);
+      const acceptedByBackend = !!acceptedTrial && sourceTrialStatus(acceptedTrial) === "accepted" && acceptedTrial.correctness?.passed === true;
+      const hashVerification = sourceHashVerification(sourceOptimization);
       const evidenceMap = evidenceRecordMap(evidenceSummaryFromResults(results));
       const schemaValid = sourceOptimization.schema_version === "v2.source_optimization.v1";
       let decision;
       if (acceptedVerified) {
-        decision = `<div class="alert ok">已接受源码修改：${escapeHtml(acceptedId)}。best 仅来自后端明确接受且 correctness 通过的 trial。</div>`;
+        decision = `<div class="alert ok">已接受源码修改：${escapeHtml(acceptedId)}。best 仅来自后端明确接受、correctness 通过、测量数组有效且源码 hash 一致的 trial。</div>`;
+      } else if (acceptedByBackend && hashVerification === "mismatch") {
+        decision = `<div class="alert bad">后端返回了接受决定，但发布源码 hash 与 accepted trial 不一致；前端不会把该产物标记为已验证优化。</div>`;
+      } else if (acceptedByBackend) {
+        decision = `<div class="alert warn">后端返回了接受决定，但测量数组或源码 hash 缺失；前端不会把该产物标记为已验证优化。</div>`;
       } else if (acceptedId) {
         decision = `<div class="alert bad">后端返回了 accepted_trial_id，但对应 trial 缺失、状态不是 accepted 或 correctness 未明确通过；前端不会标记为已验证优化。</div>`;
       } else {
@@ -3750,7 +3796,7 @@
         ${schemaValid ? "" : `<div class="alert warn">source_optimization schema_version 缺失或不匹配，以下字段按兼容方式展示。</div>`}
         ${decision}
         ${status === "unavailable" ? `<div class="alert warn">当前 sample 无法安全进入源码优化，已按后端结果保留 baseline。</div>` : ""}
-        <div class="source-trials">${trials.length ? trials.map((trial) => renderSourceTrial(trial, acceptedId, evidenceMap)).join("") : `<div class="empty">暂无源码候选记录。</div>`}</div>
+        <div class="source-trials">${trials.length ? trials.map((trial) => renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified)).join("") : `<div class="empty">暂无源码候选记录。</div>`}</div>
       </section>`;
     }
 
@@ -3778,9 +3824,12 @@
       const acceptedTrialId = typeof sourceOptimization?.accepted_trial_id === "string" ? sourceOptimization.accepted_trial_id.trim() : "";
       const bestTrialId = sourceMode ? acceptedTrialId || "无，保留 baseline" : pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
       const baselineSucceeded = baselineOnly && !!benchmarkBest;
-      const baselineLatency = pick(state.task?.baseline_latency, baseline.latency, baseline.objective_value);
-      const sourceBestLatency = acceptedVerified ? pick(state.task?.best_latency, best.latency, best.objective_value) : baselineLatency;
-      const sourceImprovement = acceptedVerified ? pick(acceptedTrial?.improvement_percent, results.improvement_percent) : null;
+      const fallbackBaselineLatency = pick(state.task?.baseline_latency, baseline.latency, baseline.objective_value);
+      const acceptedBaselineLatency = acceptedVerified ? sourceMeasurementMedian(acceptedTrial?.baseline_latency_ms) : null;
+      const acceptedCandidateLatency = acceptedVerified ? sourceMeasurementMedian(acceptedTrial?.candidate_latency_ms) : null;
+      const baselineLatency = sourceMode && acceptedVerified ? acceptedBaselineLatency : fallbackBaselineLatency;
+      const sourceBestLatency = acceptedVerified ? acceptedCandidateLatency : baselineLatency;
+      const sourceImprovement = acceptedVerified ? numeric(acceptedTrial?.improvement_percent) : null;
       const verifiedArtifact = sourceMode ? acceptedVerified || (!acceptedTrialId && !!benchmarkBest) : !!benchmarkBest;
       el.downloadBestKernelBtn.disabled = !results.best_kernel || !verifiedArtifact;
       const evidenceSummary = evidenceSummaryFromResults(results);
@@ -4341,7 +4390,7 @@
 
     function executionModeNotice(mode) {
       if (mode === "source_optimization") {
-        return `<div class="alert warn">本任务由后端声明为源码优化模式；只有 accepted_trial_id 指向正确性通过的 accepted trial，前端才会标记源码修改已被接受。</div>`;
+        return `<div class="alert warn">本任务由后端声明为源码优化模式；只有 accepted_trial_id 指向正确性通过的 accepted trial，且测量数组有效、发布源码 hash 一致，前端才会标记源码修改已被验证接受。</div>`;
       }
       if (mode === "baseline_only") {
         return `<div class="alert warn">仅基线测量，未执行源码优化。此结果不能表示目标架构适配已完成。</div>`;

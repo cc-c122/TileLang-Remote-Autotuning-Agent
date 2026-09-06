@@ -3,6 +3,8 @@
 async (page) => {
   const passed = [];
   const taskRequests = [];
+  const baselineHash = "a".repeat(64);
+  const acceptedHash = "b".repeat(64);
   let sourceCapability;
   let healthOk = true;
   let taskStatus = "running";
@@ -235,19 +237,29 @@ async (page) => {
     schema_version: "v2.source_optimization.v1",
     status: "completed",
     reason: null,
-    baseline_source_sha256: "base",
-    best_source_sha256: "accepted",
+    baseline_source_sha256: baselineHash,
+    best_source_sha256: acceptedHash,
     accepted_trial_id: "accepted-1",
     trials: [
       {trial_id: "rejected-1", optimization_name: "rejected layout", status: "no_improvement", correctness: {passed: true, max_error: 0, reason: "ok"}, baseline_latency_ms: [1], candidate_latency_ms: [1.02], improvement_percent: -2, decision_reason: "regressed", diff: "- a\n+ b", rollback_verified: true},
-      {trial_id: "accepted-1", optimization_name: "accepted vector load", target_file: "kernel.py", target_function: "kernel", hypothesis: "reduce memory transactions", evidence_ids: ["ev-1"], source_before_sha256: "base", source_after_sha256: "accepted", status: "accepted", decision_reason: "above threshold", diff: "- scalar\n+ vector", correctness: {passed: true, max_error: 0, reason: "ok"}, baseline_latency_ms: [1, 1.01], candidate_latency_ms: [0.9, 0.91], improvement_percent: 10, rollback_verified: null},
+      {trial_id: "accepted-1", optimization_name: "accepted vector load", target_file: "kernel.py", target_function: "kernel", hypothesis: "reduce memory transactions", evidence_ids: ["ev-1"], source_before_sha256: baselineHash, source_after_sha256: acceptedHash, status: "accepted", decision_reason: "above threshold", diff: "- scalar\n+ vector", correctness: {passed: true, max_error: 0, reason: "ok"}, baseline_latency_ms: [1.2, 1, 1.1], candidate_latency_ms: [0.9, 0.8, 0.85], improvement_percent: 22.7, rollback_verified: null},
     ],
   };
   text = await renderResult(acceptedSourceOptimization);
-  check(text.includes("已接受源码修改：accepted-1") && text.includes("10%"), "Accepted trial is the only source of an optimized result claim");
+  check(text.includes("已接受源码修改：accepted-1") && text.includes("22.7%"), "Accepted trial is the only source of an optimized result claim");
+  const acceptedMetrics = await page.locator("#apiResultsPanel > .compare-grid > .result-card .metric-main").allInnerTexts();
+  check(acceptedMetrics[0] === "1.1" && acceptedMetrics[1] === "0.85" && acceptedMetrics[2] === "22.7%", "Accepted summary uses only that trial's measurement arrays and improvement");
   check(await page.locator("#apiResultsPanel .source-trial[open]").count() === 1, "Only the accepted trial is expanded by default");
   check((await page.locator("#apiResultsPanel .source-trial[open]").innerText()).includes("accepted vector load"), "The accepted trial is the default expanded change");
   check(text.includes("回滚状态未返回") && !text.includes("回滚已验证\n"), "Null rollback state is not presented as rollback success");
+
+  text = await renderResult({...acceptedSourceOptimization, best_source_sha256: "c".repeat(64)});
+  check(text.includes("发布源码 hash 与 accepted trial 不一致") && text.includes("未接受源码修改"), "Mismatched published source hash blocks a verified optimization claim");
+  check((await page.locator("#apiResultsPanel .source-trial[open] > summary .badge").innerText()) === "接受状态待核验", "Mismatched source hash is not shown as a green accepted trial");
+  check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Mismatched published source hash blocks the best artifact download");
+
+  text = await renderResult({...acceptedSourceOptimization, trials: acceptedSourceOptimization.trials.map((trial) => trial.trial_id === "accepted-1" ? {...trial, candidate_latency_ms: 0.85} : trial)});
+  check(text.includes("测量数组或源码 hash 缺失") && text.includes("未接受源码修改"), "Scalar latency schema drift is not accepted as a measurement array");
 
   text = await renderResult({
     schema_version: "wrong",
