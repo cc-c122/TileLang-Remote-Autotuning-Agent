@@ -8,7 +8,7 @@ from typing import Any
 
 import uvicorn
 import yaml
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -19,7 +19,7 @@ from kernel_opt_agent.main import WORKSPACE_ROOT
 from .job_worker import JobWorker
 from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest
 from .profiler_status import profiler_status
-from .sample_uploads import SampleUploadError, SampleUploadStore
+from .sample_uploads import SampleUploadError, SampleUploadStore, parse_sample_upload_request
 from .settings_store import SettingsStore
 from .task_manager import TaskManager
 
@@ -267,11 +267,10 @@ def hardware_resolve(payload: HardwareResolveRequest) -> dict[str, Any]:
 
 
 @app.post("/api/samples/upload")
-async def upload_sample(
-    files: list[UploadFile] = File(...),
-    entry_file: str = Form(...),
-) -> dict[str, Any]:
+async def upload_sample(request: Request) -> dict[str, Any]:
+    files = []
     try:
+        files, entry_file = await parse_sample_upload_request(request)
         manifest = await upload_store.create(files, entry_file)
     except SampleUploadError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

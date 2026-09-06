@@ -179,6 +179,8 @@ def maybe_run_controlled_patch_trial(
     runner: Any,
     metrics_data: dict[str, Any],
 ) -> None:
+    if config.execution_mode == "baseline_only":
+        return
     if not (config.patching.enabled and config.patching.run_controlled_trial):
         return
     if db.patch_trials_path.exists() and db.patch_trials_path.read_text(encoding="utf-8").strip():
@@ -278,21 +280,7 @@ def run_trial(
 
     try:
         runner = build_runner(config, paths["trial_dir"])
-        if on_event:
-            on_event("correctness_started", "running correctness command")
-        corr_cmd = runner.run("correctness", config.kernel.correctness_command)
-        stdout_all.append(corr_cmd.stdout)
-        stderr_all.append(corr_cmd.stderr)
-        if corr_cmd.returncode != 0 and corr_cmd.guard_denied:
-            status = command_failure_status(corr_cmd, "correctness")
-            error = {"category": status, "message": corr_cmd.error_message or corr_cmd.stderr}
-        else:
-            corr = parse_correctness(corr_cmd.stdout, corr_cmd.stderr, corr_cmd.returncode)
-            correctness_data = {"passed": corr.passed, "status": corr.status, "max_error": corr.max_error, "reason": corr.reason, "parse_error": corr.parse_error}
-            if not corr.passed:
-                status = "correctness_failed"
-                error = {"category": status, "message": corr.reason}
-        if error is None and config.kernel.build_command:
+        if config.kernel.build_command:
             if on_event:
                 on_event("build_started", "running build command")
             build = runner.run("build", config.kernel.build_command)
@@ -302,6 +290,27 @@ def run_trial(
             if build.returncode != 0:
                 status = command_failure_status(build, "build")
                 error = {"category": status, "message": build.error_message or build.stderr[-500:]}
+        if error is None:
+            if on_event:
+                on_event("correctness_started", "running correctness command")
+            corr_cmd = runner.run("correctness", config.kernel.correctness_command)
+            stdout_all.append(corr_cmd.stdout)
+            stderr_all.append(corr_cmd.stderr)
+            if corr_cmd.returncode != 0 and corr_cmd.guard_denied:
+                status = command_failure_status(corr_cmd, "correctness")
+                error = {"category": status, "message": corr_cmd.error_message or corr_cmd.stderr}
+            else:
+                corr = parse_correctness(corr_cmd.stdout, corr_cmd.stderr, corr_cmd.returncode)
+                correctness_data = {
+                    "passed": corr.passed,
+                    "status": corr.status,
+                    "max_error": corr.max_error,
+                    "reason": corr.reason,
+                    "parse_error": corr.parse_error,
+                }
+                if not corr.passed:
+                    status = "correctness_failed"
+                    error = {"category": status, "message": corr.reason}
         if error is None:
             if on_event:
                 on_event("benchmark_started", "running benchmark command")

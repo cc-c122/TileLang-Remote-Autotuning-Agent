@@ -247,7 +247,7 @@ def _materialize_sample(request: RunRequest, request_dir: Path) -> str:
 def _resolve_sample_path(sample_path: str) -> Path:
     path = Path(sample_path).expanduser()
     if not path.is_absolute():
-        path = (PACKAGE_ROOT / path).resolve()
+        path = (PACKAGE_ROOT / path).absolute()
     return path
 
 

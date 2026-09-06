@@ -192,6 +192,7 @@ class FastApiHttpSmokeTests(unittest.TestCase):
             }:
                 self.assertIn(required, event_types)
             ordered_events = [event["type"] for event in events_payload["events"]]
+            self.assertLess(ordered_events.index("build_started"), ordered_events.index("correctness_started"))
             self.assertLess(ordered_events.index("correctness_started"), ordered_events.index("benchmark_started"))
 
             workspace = Path(final_task["workspace"])

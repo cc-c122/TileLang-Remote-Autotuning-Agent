@@ -85,8 +85,16 @@ class JobWorker:
                     self.manager.add_event(task_id, "profiler_parsed", f"profiler status: {status}", {"profiler_status": status})
                 if status == "profiler_metrics_available" and read_jsonl(results_dir / "diagnoses.jsonl"):
                     self.manager.add_event(task_id, "diagnosis_completed", "evidence-guided diagnosis completed")
-                self.manager.add_event(task_id, "best_updated", "best-seen artifacts generated")
-                self.manager.add_event(task_id, "report_generated", "report.md generated")
+                trial_records = read_jsonl(results_dir / "experiments.jsonl")
+                has_usable_best = any(
+                    record.get("status") == "benchmark_ok"
+                    and (record.get("correctness") or {}).get("passed") is True
+                    for record in trial_records
+                )
+                if has_usable_best:
+                    self.manager.add_event(task_id, "best_updated", "usable best artifacts generated")
+                if (results_dir / "report.md").is_file():
+                    self.manager.add_event(task_id, "report_generated", "report.md generated")
                 self.manager.set_status(task_id, "completed")
         except Exception as exc:
             if self.manager.is_cancel_requested(task_id):

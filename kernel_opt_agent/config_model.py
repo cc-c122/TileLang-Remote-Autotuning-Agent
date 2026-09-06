@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
+
+from kernel_opt_agent.sample_security import UnsafeSampleError, ensure_no_link_components, normalize_sample_path
 
 
 ROOT = Path(__file__).resolve().parent
@@ -135,10 +137,22 @@ class AppConfig(BaseModel):
                 raise ValueError(f"search_space.{name} must be a non-empty list")
         if any(k in os.environ for k in ("OPENAI_API_KEY_VALUE", "SSH_PASSWORD")):
             pass
+        try:
+            normalized_entry = normalize_sample_path(self.kernel.entry_file, label="kernel.entry_file")
+        except UnsafeSampleError as exc:
+            raise ValueError(str(exc)) from exc
         sample = resolve_path(self.kernel.sample_path)
+        try:
+            ensure_no_link_components(sample)
+        except UnsafeSampleError as exc:
+            raise ValueError(str(exc)) from exc
         if not sample.exists():
             raise ValueError(f"kernel.sample_path does not exist: {sample}")
-        entry = sample / self.kernel.entry_file if sample.is_dir() else sample
+        entry = sample.joinpath(*PurePosixPath(normalized_entry).parts) if sample.is_dir() else sample
+        try:
+            ensure_no_link_components(entry, label="kernel entry path")
+        except UnsafeSampleError as exc:
+            raise ValueError(str(exc)) from exc
         if sample.is_dir() and not entry.exists():
             raise ValueError(f"kernel.entry_file not found under sample_path: {entry}")
         if sample.is_file() and Path(self.kernel.entry_file).name != sample.name:
@@ -161,7 +175,7 @@ class AppConfig(BaseModel):
 def resolve_path(path: str) -> Path:
     p = Path(os.path.expanduser(path))
     if not p.is_absolute():
-        p = (ROOT / p).resolve()
+        p = (ROOT / p).absolute()
     return p
 
 

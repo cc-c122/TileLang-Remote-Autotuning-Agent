@@ -8,12 +8,17 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
+import kernel_opt_agent.sample_security as sample_security
 from kernel_opt_agent.config_model import AppConfig, load_config
+from kernel_opt_agent.kernel.variant_generator import VariantGenerator
 from kernel_opt_agent.server.app import TASKS_ROOT, app, upload_store
+from kernel_opt_agent.server.models import TaskCreateRequest
+from kernel_opt_agent.server.run_request_builder import materialize_sample
 from kernel_opt_agent.server.sample_uploads import (
     MAX_UPLOAD_FILE_BYTES,
     MAX_UPLOAD_FILES,
@@ -31,6 +36,60 @@ def kernel_score():
     return VALUE + int(Path('assets/value.txt').read_text(encoding='utf-8'))
 """
 HELPER_SOURCE = b"VALUE = 4\nRAW_TEMPLATE_TEXT = '{{DEPENDENCY_LITERAL}}'\n"
+
+
+def _multipart_body(boundary: str, filename: str, content: bytes, entry_file: str = "kernel.py") -> bytes:
+    return b"".join(
+        [
+            f"--{boundary}\r\n".encode(),
+            b'Content-Disposition: form-data; name="entry_file"\r\n\r\n',
+            entry_file.encode(),
+            b"\r\n",
+            f"--{boundary}\r\n".encode(),
+            f'Content-Disposition: form-data; name="files"; filename="{filename}"\r\n'.encode(),
+            b"Content-Type: application/octet-stream\r\n\r\n",
+            content,
+            b"\r\n",
+            f"--{boundary}--\r\n".encode(),
+        ]
+    )
+
+
+async def _stream_request(body: bytes, boundary: str, content_length: bytes | None) -> tuple[int, int]:
+    offset = 0
+    received = 0
+    status = 0
+    headers = [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())]
+    if content_length is not None:
+        headers.append((b"content-length", content_length))
+
+    async def receive() -> dict:
+        nonlocal offset, received
+        chunk = body[offset : offset + 64 * 1024]
+        offset += len(chunk)
+        received += len(chunk)
+        return {"type": "http.request", "body": chunk, "more_body": offset < len(body)}
+
+    async def send(message: dict) -> None:
+        nonlocal status
+        if message["type"] == "http.response.start":
+            status = message["status"]
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/samples/upload",
+        "raw_path": b"/api/samples/upload",
+        "query_string": b"",
+        "headers": headers,
+        "client": ("127.0.0.1", 12345),
+        "server": ("127.0.0.1", 80),
+    }
+    await app(scope, receive, send)
+    return status, received
 
 
 def _task_request(upload_id: str, *, project_name: str = "uploaded-baseline") -> dict:
@@ -143,6 +202,7 @@ class WebSampleRuntimeTests(unittest.TestCase):
             ".env",
             ".env.local/secrets.txt",
             "keys/deploy.pem",
+            "bad<name.py",
         ]
         for filename in bad_paths:
             with self.subTest(filename=filename):
@@ -160,6 +220,41 @@ class WebSampleRuntimeTests(unittest.TestCase):
         self.assertEqual(private_key_after_large_prefix.status_code, 422)
         self.assertFalse(any(path.name.startswith(".staging-") for path in upload_store.root.iterdir()))
 
+    def test_streaming_upload_stops_before_reading_oversized_body_without_content_length(self) -> None:
+        boundary = "tilelang-agent-stream-boundary"
+        body = _multipart_body(boundary, "kernel.py", b"x" * (12 * 1024 * 1024))
+        parser_files = []
+
+        def tracked_spooled_file(*args, **kwargs):
+            file = tempfile.SpooledTemporaryFile(*args, **kwargs)
+            parser_files.append(file)
+            return file
+
+        with patch("starlette.formparsers.SpooledTemporaryFile", side_effect=tracked_spooled_file):
+            for content_length in (None, b"1", b"not-a-number"):
+                with self.subTest(content_length=content_length):
+                    status, received = asyncio.run(_stream_request(body, boundary, content_length))
+                    self.assertEqual(status, 413)
+                    self.assertLess(received, len(body))
+                    self.assertLessEqual(received, MAX_UPLOAD_FILE_BYTES + 128 * 1024)
+            status, received = asyncio.run(_stream_request(body, boundary, str(len(body)).encode()))
+            self.assertEqual(status, 413)
+            self.assertEqual(received, 0)
+        self.assertTrue(parser_files)
+        self.assertTrue(all(file.closed for file in parser_files))
+        self.assertFalse(any(path.name.startswith(".staging-") for path in upload_store.root.iterdir()))
+
+    def test_upload_rejects_file_directory_prefix_conflicts_in_both_orders(self) -> None:
+        for files in (
+            [("a", b"file"), ("a/kernel.py", b"print('x')")],
+            [("a/kernel.py", b"print('x')"), ("a", b"file")],
+        ):
+            with self.subTest(files=[name for name, _ in files]):
+                response = self._upload(files, entry_file="a/kernel.py")
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertIn("conflict", response.text.lower())
+        self.assertFalse(any(path.name.startswith(".staging-") for path in upload_store.root.iterdir()))
+
     def test_upload_rejects_duplicates_missing_entry_and_limits(self) -> None:
         duplicate = self._upload([("Kernel.py", b"a"), ("kernel.py", b"b")])
         self.assertEqual(duplicate.status_code, 422)
@@ -175,6 +270,9 @@ class WebSampleRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(too_many.status_code, 413)
 
+        metadata_too_large = self._upload([("kernel.py", b"x")], entry_file="x" * 5000)
+        self.assertEqual(metadata_too_large.status_code, 413)
+
         too_large = self._upload([("kernel.py", b"x" * (MAX_UPLOAD_FILE_BYTES + 1))])
         self.assertEqual(too_large.status_code, 413)
 
@@ -184,6 +282,27 @@ class WebSampleRuntimeTests(unittest.TestCase):
             + [(f"part_{index}.txt", b"x" * part_size) for index in range(1, 6)]
         )
         self.assertEqual(total_too_large.status_code, 413)
+
+    def test_unexpected_upload_field_closes_every_parsed_temporary_file(self) -> None:
+        parser_files = []
+
+        def tracked_spooled_file(*args, **kwargs):
+            file = tempfile.SpooledTemporaryFile(*args, **kwargs)
+            parser_files.append(file)
+            return file
+
+        with patch("starlette.formparsers.SpooledTemporaryFile", side_effect=tracked_spooled_file):
+            response = self.client.post(
+                "/api/samples/upload",
+                data={"entry_file": "kernel.py"},
+                files=[
+                    ("evil", ("ignored.txt", b"ignored", "application/octet-stream")),
+                    ("files", ("kernel.py", b"print('ok')", "application/octet-stream")),
+                ],
+            )
+        self.assertEqual(response.status_code, 422)
+        self.assertTrue(parser_files)
+        self.assertTrue(all(file.closed for file in parser_files))
 
     def test_upload_store_rejects_non_regular_file_streams(self) -> None:
         read_fd, write_fd = os.pipe()
@@ -195,6 +314,130 @@ class WebSampleRuntimeTests(unittest.TestCase):
                     asyncio.run(store.create([upload], "kernel.py"))
         finally:
             os.close(write_fd)
+
+    def test_upload_materialization_rejects_replaced_upload_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SampleUploadStore(Path(tmp) / "uploads")
+            stream = tempfile.SpooledTemporaryFile()
+            stream.write(b"print('ok')\n")
+            stream.seek(0)
+            upload = UploadFile(file=stream, filename="kernel.py")
+            try:
+                manifest = asyncio.run(store.create([upload], "kernel.py"))
+            finally:
+                asyncio.run(upload.close())
+            upload_root = store.root / manifest["upload_id"]
+            real_check = sample_security.is_link_or_reparse
+
+            def fake_link_check(path: Path) -> bool:
+                return path.absolute() == upload_root.absolute() or real_check(path)
+
+            with patch.object(sample_security, "is_link_or_reparse", side_effect=fake_link_check):
+                with self.assertRaisesRegex(SampleUploadError, "link or reparse"):
+                    store.materialize(manifest["upload_id"], "kernel.py", Path(tmp) / "task" / "sample")
+
+    def test_inline_and_path_materialization_share_sensitive_sample_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inline_raw = _task_request("0" * 32)
+            inline_raw["sample"] = {
+                "source_type": "inline",
+                "inline_text": "secret",
+                "entry_file": ".env",
+            }
+            inline = TaskCreateRequest.model_validate(inline_raw)
+            with self.assertRaisesRegex(ValueError, "sensitive"):
+                materialize_sample(inline, root / "inline-task")
+
+            private_raw = _task_request("0" * 32)
+            private_raw["sample"] = {
+                "source_type": "inline",
+                "inline_text": "-----BEGIN PRIVATE KEY-----\nsecret\n",
+                "entry_file": "kernel.py",
+            }
+            private_inline = TaskCreateRequest.model_validate(private_raw)
+            with self.assertRaisesRegex(ValueError, "private key"):
+                materialize_sample(private_inline, root / "private-inline-task")
+
+            valid_source = root / "valid-source"
+            (valid_source / "assets").mkdir(parents=True)
+            (valid_source / "kernel.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (valid_source / "assets" / "weights.data").write_bytes(b"data")
+            path_raw = _task_request("0" * 32)
+            path_raw["sample"] = {
+                "source_type": "path",
+                "path": str(valid_source),
+                "entry_file": "kernel.py",
+            }
+            path_request = TaskCreateRequest.model_validate(path_raw)
+            materialized = materialize_sample(path_request, root / "valid-path-task")
+            self.assertEqual((materialized / "assets" / "weights.data").read_bytes(), b"data")
+
+            sensitive_source = root / "sensitive-source"
+            sensitive_source.mkdir()
+            (sensitive_source / "kernel.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (sensitive_source / ".env").write_text("PASSWORD=secret\n", encoding="utf-8")
+            path_raw["sample"]["path"] = str(sensitive_source)
+            sensitive_request = TaskCreateRequest.model_validate(path_raw)
+            with self.assertRaisesRegex(ValueError, "sensitive"):
+                materialize_sample(sensitive_request, root / "sensitive-path-task")
+
+            key_source = root / "key-source"
+            key_source.mkdir()
+            (key_source / "kernel.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (key_source / "notes.txt").write_text(
+                "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n",
+                encoding="utf-8",
+            )
+            path_raw["sample"]["path"] = str(key_source)
+            key_request = TaskCreateRequest.model_validate(path_raw)
+            with self.assertRaisesRegex(ValueError, "private key"):
+                materialize_sample(key_request, root / "key-path-task")
+
+    def test_path_and_variant_copy_reject_link_or_reparse_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            source.mkdir()
+            (source / "kernel.py").write_text("VALUE = 1\n", encoding="utf-8")
+            raw = _task_request("0" * 32)
+            raw["sample"] = {
+                "source_type": "path",
+                "path": str(source),
+                "entry_file": "kernel.py",
+            }
+            request = TaskCreateRequest.model_validate(raw)
+            real_check = sample_security.is_link_or_reparse
+
+            def fake_link_check(path: Path) -> bool:
+                return path.absolute() == source.absolute() or real_check(path)
+
+            with patch.object(sample_security, "is_link_or_reparse", side_effect=fake_link_check):
+                with self.assertRaisesRegex(ValueError, "link or reparse"):
+                    materialize_sample(request, root / "task")
+                generator = VariantGenerator(
+                    source,
+                    "kernel.py",
+                    {},
+                    root / "linked-generated",
+                    root / "linked-patches",
+                    ["*.py"],
+                )
+                with self.assertRaisesRegex(ValueError, "link or reparse"):
+                    generator.create_trial(0, 0, {})
+
+            (source / ".env").write_text("PASSWORD=secret\n", encoding="utf-8")
+            generator = VariantGenerator(
+                source,
+                "kernel.py",
+                {},
+                root / "generated",
+                root / "patches",
+                ["*.py"],
+            )
+            with self.assertRaisesRegex(ValueError, "sensitive"):
+                generator.create_trial(0, 0, {})
+            self.assertFalse((root / "generated" / "iter000_cand000" / ".env").exists())
 
     def test_unknown_upload_is_rejected_before_task_workspace_creation(self) -> None:
         before = {path.name for path in TASKS_ROOT.iterdir()} if TASKS_ROOT.exists() else set()
@@ -274,9 +517,11 @@ class WebSampleRuntimeTests(unittest.TestCase):
         self.assertEqual(task["status"], "completed")
         events = self.client.get(f"/api/tasks/{task['task_id']}/events").json()["events"]
         event_types = [event["type"] for event in events]
+        self.assertIn("build_started", event_types)
         self.assertIn("correctness_started", event_types)
-        self.assertNotIn("build_started", event_types)
+        self.assertLess(event_types.index("build_started"), event_types.index("correctness_started"))
         self.assertNotIn("benchmark_started", event_types)
+        self.assertNotIn("best_updated", event_types)
         results_dir = Path(task["results_dir"])
         with (results_dir / "summary.csv").open(newline="", encoding="utf-8") as handle:
             rows = list(csv.DictReader(handle))
@@ -284,6 +529,85 @@ class WebSampleRuntimeTests(unittest.TestCase):
         self.assertEqual(rows[0]["status"], "correctness_failed")
         logs = "\n".join(path.read_text(encoding="utf-8") for path in (results_dir / "logs").glob("*.log"))
         self.assertNotIn("SHOULD_NOT_RUN", logs)
+
+    def test_build_artifact_is_available_to_correctness_and_build_failure_stops_trial(self) -> None:
+        upload_id = self._valid_upload()
+        success = _task_request(upload_id, project_name="build-before-correctness")
+        success["commands"]["build_command"] = (
+            "python -c \"from pathlib import Path; Path('built.txt').write_text('ready')\""
+        )
+        success["commands"]["correctness_command"] = (
+            "python -c \"from pathlib import Path; assert Path('built.txt').read_text() == 'ready'; "
+            "print('CORRECTNESS_RESULT status=PASS max_error=0 reason=ok')\""
+        )
+        created = self.client.post("/api/tasks", json=success)
+        task = self._wait(created.json()["task_id"])
+        self.assertEqual(task["status"], "completed")
+        event_types = [
+            event["type"]
+            for event in self.client.get(f"/api/tasks/{task['task_id']}/events").json()["events"]
+        ]
+        self.assertLess(event_types.index("build_started"), event_types.index("correctness_started"))
+        self.assertLess(event_types.index("correctness_started"), event_types.index("benchmark_started"))
+        self.assertIn("best_updated", event_types)
+
+        failed = _task_request(upload_id, project_name="build-failure-gate")
+        failed["commands"]["build_command"] = "python -c \"import sys; print('BUILD_FAILED'); sys.exit(1)\""
+        failed["commands"]["correctness_command"] = (
+            "python -c \"print('SHOULD_NOT_RUN_CORRECTNESS'); "
+            "print('CORRECTNESS_RESULT status=PASS max_error=0 reason=ok')\""
+        )
+        failed["commands"]["benchmark_command"] = (
+            "python -c \"print('SHOULD_NOT_RUN_BENCHMARK'); "
+            "print('BENCHMARK_RESULT latency_ms=1 tflops=1 bandwidth_gbps=1')\""
+        )
+        failed_task = self._wait(self.client.post("/api/tasks", json=failed).json()["task_id"])
+        failed_events = [
+            event["type"]
+            for event in self.client.get(f"/api/tasks/{failed_task['task_id']}/events").json()["events"]
+        ]
+        self.assertIn("build_started", failed_events)
+        self.assertNotIn("correctness_started", failed_events)
+        self.assertNotIn("benchmark_started", failed_events)
+        self.assertNotIn("best_updated", failed_events)
+        with (Path(failed_task["results_dir"]) / "summary.csv").open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(rows[0]["status"], "build_failed")
+        logs = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (Path(failed_task["results_dir"]) / "logs").glob("*.log")
+        )
+        self.assertNotIn("SHOULD_NOT_RUN_CORRECTNESS", logs)
+        self.assertNotIn("SHOULD_NOT_RUN_BENCHMARK", logs)
+
+    def test_baseline_only_never_executes_legacy_controlled_patch(self) -> None:
+        source = b"""def kernel_score():
+    # BEGIN_AGENT_PATCH: compute
+    value = 7
+    # END_AGENT_PATCH
+    return value
+"""
+        upload = self._upload([("kernel.py", source)])
+        request = _task_request(upload.json()["upload_id"], project_name="baseline-no-patch")
+        request["commands"] = {
+            "build_command": "python -m py_compile kernel.py",
+            "correctness_command": (
+                "python -c \"import kernel; assert kernel.kernel_score() == 7; "
+                "print('CORRECTNESS_RESULT status=PASS max_error=0 reason=ok')\""
+            ),
+            "benchmark_command": (
+                "python -c \"print('BENCHMARK_RESULT latency_ms=1 tflops=1 bandwidth_gbps=1')\""
+            ),
+        }
+        request["patching"] = {"enabled": True, "run_controlled_trial": True}
+        task = self._wait(self.client.post("/api/tasks", json=request).json()["task_id"])
+        self.assertEqual(task["execution_mode"], "baseline_only")
+        patch_trials = (Path(task["results_dir"]) / "patch_trials.jsonl").read_text(encoding="utf-8")
+        self.assertEqual(patch_trials, "")
+        report = (Path(task["results_dir"]) / "report.md").read_text(encoding="utf-8")
+        self.assertIn("No source optimization or parameter search was performed", report)
+        best_kernel = (Path(task["results_dir"]) / "best_kernel.py").read_text(encoding="utf-8")
+        self.assertNotIn("controlled_patch_trial", best_kernel)
 
     def test_timed_out_task_does_not_block_next_uploaded_task(self) -> None:
         upload_id = self._valid_upload()

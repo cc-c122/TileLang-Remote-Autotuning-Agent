@@ -7,46 +7,33 @@ import re
 import shutil
 import stat
 import uuid
+from collections.abc import AsyncGenerator
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from fastapi import UploadFile
+from fastapi import Request
+from starlette.datastructures import FormData, UploadFile
+from starlette.formparsers import MultiPartException, MultiPartParser
+
+from kernel_opt_agent.sample_security import (
+    UnsafeSampleError,
+    ensure_no_link_components,
+    file_contains_private_key,
+    is_link_or_reparse,
+    normalize_sample_path as normalize_safe_sample_path,
+    private_key_marker_in_bytes,
+    validate_sample_file_paths,
+)
 
 
 MAX_UPLOAD_FILES = 100
 MAX_UPLOAD_FILE_BYTES = 2 * 1024 * 1024
 MAX_UPLOAD_TOTAL_BYTES = 10 * 1024 * 1024
+MAX_UPLOAD_REQUEST_OVERHEAD_BYTES = 512 * 1024
+MAX_UPLOAD_REQUEST_BYTES = MAX_UPLOAD_TOTAL_BYTES + MAX_UPLOAD_REQUEST_OVERHEAD_BYTES
 READ_CHUNK_BYTES = 64 * 1024
 
 _UPLOAD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
-_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
-_PRIVATE_KEY_MARKERS = (
-    b"-----BEGIN PRIVATE KEY-----",
-    b"-----BEGIN OPENSSH PRIVATE KEY-----",
-    b"-----BEGIN RSA PRIVATE KEY-----",
-    b"-----BEGIN EC PRIVATE KEY-----",
-    b"-----BEGIN DSA PRIVATE KEY-----",
-    b"PUTTY-USER-KEY-FILE-",
-)
-_SENSITIVE_COMPONENTS = {".git", ".ssh", ".env"}
-_SENSITIVE_FILENAMES = {
-    ".env",
-    ".envrc",
-    "authorized_keys",
-    "id_dsa",
-    "id_ecdsa",
-    "id_ed25519",
-    "id_rsa",
-}
-_SENSITIVE_SUFFIXES = {".key", ".p12", ".pem", ".pfx", ".ppk"}
-_WINDOWS_RESERVED_NAMES = {
-    "aux",
-    "con",
-    "nul",
-    "prn",
-    *(f"com{number}" for number in range(1, 10)),
-    *(f"lpt{number}" for number in range(1, 10)),
-}
 
 
 class SampleUploadError(ValueError):
@@ -56,38 +43,127 @@ class SampleUploadError(ValueError):
 
 
 def normalize_sample_path(raw_path: str, *, label: str = "filename") -> str:
-    value = raw_path or ""
-    if not value:
-        raise SampleUploadError(f"{label} must be a non-empty POSIX relative path")
-    if value != value.strip():
-        raise SampleUploadError(f"{label} must not start or end with whitespace")
-    if "\x00" in value:
-        raise SampleUploadError(f"{label} contains a NUL byte")
-    if "\\" in value:
-        raise SampleUploadError(f"{label} must use POSIX '/' separators only")
-    if value.startswith(("/", "//")) or _WINDOWS_DRIVE_RE.match(value):
-        raise SampleUploadError(f"{label} must be relative to the sample root")
+    try:
+        return normalize_safe_sample_path(raw_path, label=label)
+    except UnsafeSampleError as exc:
+        raise SampleUploadError(str(exc)) from exc
 
-    raw_parts = value.split("/")
-    if any(part in {"", ".", ".."} for part in raw_parts):
-        raise SampleUploadError(f"{label} contains an unsafe path component")
-    if any(":" in part or part.endswith((".", " ")) for part in raw_parts):
-        raise SampleUploadError(f"{label} contains a platform-unsafe path component")
-    if any(part.split(".", 1)[0].casefold() in _WINDOWS_RESERVED_NAMES for part in raw_parts):
-        raise SampleUploadError(f"{label} contains a reserved path component")
-    path = PurePosixPath(value)
-    if path.is_absolute() or any(part == ".." for part in path.parts):
-        raise SampleUploadError(f"{label} must stay inside the sample root")
 
-    lowered_parts = [part.casefold() for part in path.parts]
-    if any(part in _SENSITIVE_COMPONENTS or part.startswith(".env.") for part in lowered_parts):
-        raise SampleUploadError(f"{label} refers to a sensitive directory")
-    basename = lowered_parts[-1]
-    if basename in _SENSITIVE_FILENAMES or basename.startswith(".env."):
-        raise SampleUploadError(f"{label} refers to a sensitive file")
-    if any(basename.endswith(suffix) for suffix in _SENSITIVE_SUFFIXES):
-        raise SampleUploadError(f"{label} appears to contain private key material")
-    return path.as_posix()
+def _normalize_upload_paths(raw_paths: list[str]) -> list[str]:
+    try:
+        return validate_sample_file_paths(raw_paths)
+    except UnsafeSampleError as exc:
+        raise SampleUploadError(str(exc)) from exc
+
+
+def _ensure_no_upload_links(path: Path) -> None:
+    try:
+        ensure_no_link_components(path, label="sample upload path")
+    except UnsafeSampleError as exc:
+        raise SampleUploadError(str(exc)) from exc
+
+
+class _UploadLimitExceeded(MultiPartException):
+    pass
+
+
+class _BoundedMultiPartParser(MultiPartParser):
+    def __init__(self, headers: Any, stream: AsyncGenerator[bytes, None]):
+        super().__init__(
+            headers,
+            stream,
+            max_files=MAX_UPLOAD_FILES,
+            max_fields=1,
+        )
+        self._current_file_bytes = 0
+        self._current_field_bytes = 0
+        self._total_file_bytes = 0
+
+    def on_part_begin(self) -> None:
+        super().on_part_begin()
+        self._current_file_bytes = 0
+        self._current_field_bytes = 0
+
+    def on_part_data(self, data: bytes, start: int, end: int) -> None:
+        if self._current_part.file is not None:
+            size = end - start
+            self._current_file_bytes += size
+            self._total_file_bytes += size
+            if self._current_file_bytes > MAX_UPLOAD_FILE_BYTES:
+                raise _UploadLimitExceeded(f"file exceeds {MAX_UPLOAD_FILE_BYTES} byte limit")
+            if self._total_file_bytes > MAX_UPLOAD_TOTAL_BYTES:
+                raise _UploadLimitExceeded(f"sample exceeds {MAX_UPLOAD_TOTAL_BYTES} byte total limit")
+        else:
+            self._current_field_bytes += end - start
+            if self._current_field_bytes > 4096:
+                raise _UploadLimitExceeded("multipart metadata field exceeds 4096 byte limit")
+        super().on_part_data(data, start, end)
+
+    async def parse(self) -> FormData:
+        try:
+            return await super().parse()
+        except Exception:
+            for file in self._files_to_close_on_error:
+                file.close()
+            raise
+
+
+async def parse_sample_upload_request(request: Request) -> tuple[list[UploadFile], str]:
+    raw_length = request.headers.get("content-length")
+    try:
+        content_length = int(raw_length) if raw_length is not None else None
+    except ValueError:
+        content_length = None
+    if content_length is not None and content_length > MAX_UPLOAD_REQUEST_BYTES:
+        raise SampleUploadError(
+            f"multipart request exceeds {MAX_UPLOAD_REQUEST_BYTES} byte limit",
+            status_code=413,
+        )
+
+    received_bytes = 0
+
+    async def bounded_stream() -> AsyncGenerator[bytes, None]:
+        nonlocal received_bytes
+        async for chunk in request.stream():
+            received_bytes += len(chunk)
+            if received_bytes > MAX_UPLOAD_REQUEST_BYTES:
+                raise _UploadLimitExceeded(
+                    f"multipart request exceeds {MAX_UPLOAD_REQUEST_BYTES} byte limit"
+                )
+            yield chunk
+
+    parser = _BoundedMultiPartParser(request.headers, bounded_stream())
+    try:
+        form = await parser.parse()
+    except _UploadLimitExceeded as exc:
+        raise SampleUploadError(exc.message, status_code=413) from exc
+    except MultiPartException as exc:
+        limit_error = exc.message.startswith(("Too many files.", "Too many fields."))
+        raise SampleUploadError(
+            f"invalid multipart upload: {exc.message}",
+            status_code=413 if limit_error else 422,
+        ) from exc
+    except Exception as exc:
+        raise SampleUploadError("invalid multipart upload") from exc
+
+    uploads: list[UploadFile] = []
+    entry_values: list[str] = []
+    try:
+        for field_name, value in form.multi_items():
+            if field_name == "files" and isinstance(value, UploadFile):
+                uploads.append(value)
+            elif field_name == "entry_file" and isinstance(value, str):
+                entry_values.append(value)
+            else:
+                raise SampleUploadError(f"unexpected multipart field: {field_name}")
+        if len(entry_values) != 1:
+            raise SampleUploadError("exactly one entry_file field is required")
+        if not uploads:
+            raise SampleUploadError("at least one files field is required")
+        return uploads, entry_values[0]
+    except Exception:
+        await form.close()
+        raise
 
 
 def _assert_within(child: Path, parent: Path) -> None:
@@ -134,6 +210,7 @@ class SampleUploadStore:
             raise SampleUploadError(f"sample contains more than {MAX_UPLOAD_FILES} files", status_code=413)
 
         normalized_entry = normalize_sample_path(entry_file, label="entry_file")
+        normalized_paths = _normalize_upload_paths([upload.filename or "" for upload in uploads])
         upload_id = uuid.uuid4().hex
         stage = self.root / f".staging-{upload_id}"
         destination = self.root / upload_id
@@ -141,19 +218,12 @@ class SampleUploadStore:
         _assert_within(destination, self.root)
         sample_root = stage / "sample"
         records: list[dict[str, Any]] = []
-        seen_paths: set[str] = set()
-        uploaded_paths: set[str] = set()
+        uploaded_paths = set(normalized_paths)
         total_size = 0
 
         try:
             sample_root.mkdir(parents=True, exist_ok=False)
-            for upload in uploads:
-                relative_path = normalize_sample_path(upload.filename or "")
-                path_key = relative_path.casefold()
-                if path_key in seen_paths:
-                    raise SampleUploadError(f"duplicate upload path: {relative_path}")
-                seen_paths.add(path_key)
-                uploaded_paths.add(relative_path)
+            for upload, relative_path in zip(uploads, normalized_paths, strict=True):
                 _ensure_regular_upload(upload)
 
                 target = sample_root.joinpath(*PurePosixPath(relative_path).parts)
@@ -179,10 +249,9 @@ class SampleUploadStore:
                                 f"sample exceeds {MAX_UPLOAD_TOTAL_BYTES} byte total limit",
                                 status_code=413,
                             )
-                        scan_window = marker_window + chunk.upper()
-                        if any(marker in scan_window for marker in _PRIVATE_KEY_MARKERS):
+                        found_marker, marker_window = private_key_marker_in_bytes(chunk, marker_window)
+                        if found_marker:
                             raise SampleUploadError(f"private key content is not allowed: {relative_path}")
-                        marker_window = scan_window[-max(map(len, _PRIVATE_KEY_MARKERS)) :]
                         digest.update(chunk)
                         output.write(chunk)
                 records.append({"path": relative_path, "size_bytes": size, "sha256": digest.hexdigest()})
@@ -217,6 +286,7 @@ class SampleUploadStore:
             raise SampleUploadError("unknown sample.upload_id")
         upload_root = self.root / normalized
         _assert_within(upload_root, self.root)
+        _ensure_no_upload_links(upload_root)
         manifest_path = upload_root / "manifest.json"
         if not manifest_path.is_file():
             raise SampleUploadError("unknown sample.upload_id")
@@ -229,16 +299,16 @@ class SampleUploadStore:
         files = manifest.get("files")
         if not isinstance(files, list) or not files or len(files) > MAX_UPLOAD_FILES:
             raise SampleUploadError("sample upload manifest has an invalid file list")
-        seen_paths: set[str] = set()
-        total_size = 0
+        raw_paths: list[str] = []
         for record in files:
-            if not isinstance(record, dict):
+            if not isinstance(record, dict) or not isinstance(record.get("path"), str):
                 raise SampleUploadError("sample upload manifest has an invalid file record")
-            relative_path = normalize_sample_path(str(record.get("path") or ""))
-            path_key = relative_path.casefold()
-            if path_key in seen_paths:
-                raise SampleUploadError(f"duplicate path in upload manifest: {relative_path}")
-            seen_paths.add(path_key)
+            raw_paths.append(record["path"])
+        normalized_paths = _normalize_upload_paths(raw_paths)
+        if normalized_paths != raw_paths:
+            raise SampleUploadError("sample upload manifest contains a non-canonical path")
+        total_size = 0
+        for record, relative_path in zip(files, normalized_paths, strict=True):
             size = record.get("size_bytes")
             digest = record.get("sha256")
             if not isinstance(size, int) or size < 0 or size > MAX_UPLOAD_FILE_BYTES:
@@ -248,7 +318,11 @@ class SampleUploadStore:
             total_size += size
         if total_size > MAX_UPLOAD_TOTAL_BYTES:
             raise SampleUploadError("sample upload manifest exceeds the total size limit")
-        if manifest.get("entry_file") not in {record["path"] for record in files}:
+        try:
+            manifest_entry = normalize_sample_path(str(manifest.get("entry_file") or ""), label="entry_file")
+        except SampleUploadError as exc:
+            raise SampleUploadError("sample upload manifest entry_file is invalid") from exc
+        if manifest_entry != manifest.get("entry_file") or manifest_entry not in set(normalized_paths):
             raise SampleUploadError("sample upload manifest entry_file is missing")
         return manifest
 
@@ -263,6 +337,7 @@ class SampleUploadStore:
         manifest = self.validate_reference(upload_id, entry_file)
         upload_root = self.root / manifest["upload_id"]
         source_root = upload_root / "sample"
+        _ensure_no_upload_links(source_root)
         stage = destination.parent / f".{destination.name}-staging-{uuid.uuid4().hex}"
         audit_path = destination.parent / "sample_manifest.json"
         audit_stage = destination.parent / f".sample-manifest-{uuid.uuid4().hex}.tmp"
@@ -282,12 +357,15 @@ class SampleUploadStore:
                 seen_paths.add(path_key)
                 source = source_root.joinpath(*PurePosixPath(relative_path).parts)
                 _assert_within(source, source_root)
-                if source.is_symlink() or not source.is_file():
+                _ensure_no_upload_links(source)
+                if is_link_or_reparse(source) or not source.is_file():
                     raise SampleUploadError(f"uploaded artifact is not a regular file: {relative_path}")
                 if not stat.S_ISREG(source.stat(follow_symlinks=False).st_mode):
                     raise SampleUploadError(f"uploaded artifact is not a regular file: {relative_path}")
                 if source.stat().st_size != record.get("size_bytes") or _sha256_file(source) != record.get("sha256"):
                     raise SampleUploadError(f"uploaded artifact failed integrity validation: {relative_path}")
+                if file_contains_private_key(source):
+                    raise SampleUploadError(f"uploaded artifact contains private key material: {relative_path}")
                 target = stage.joinpath(*PurePosixPath(relative_path).parts)
                 _assert_within(target, stage)
                 target.parent.mkdir(parents=True, exist_ok=True)
