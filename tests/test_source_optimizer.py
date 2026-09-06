@@ -19,7 +19,7 @@ from kernel_opt_agent.runner.local_runner import CommandResult
 from kernel_opt_agent.source_optimizer.analyzer import analyze_source, rewrite_copy_loop
 from kernel_opt_agent.source_optimizer.engine import run_source_optimization
 from kernel_opt_agent.source_optimizer.planner import choose_plan
-from kernel_opt_agent.server.app import app
+from kernel_opt_agent.server.app import _accepted_source_trial, app
 
 
 PAGED_SOURCE = Path("kernel_opt_agent/samples/paged_attention_decode/_upstream_sparse_gqa_decode_paged.py")
@@ -587,6 +587,34 @@ class SourceEngineTests(unittest.TestCase):
 
 
 class SourceOptimizationApiTests(unittest.TestCase):
+    def test_accepted_source_summary_requires_status_correctness_and_hash_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            results = Path(temporary)
+            best_kernel = results / "best_kernel.py"
+            best_kernel.write_text("accepted source\n", encoding="utf-8")
+            digest = hashlib.sha256(best_kernel.read_bytes()).hexdigest()
+            source_result = {
+                "status": "completed",
+                "baseline_verified": True,
+                "best_source_sha256": digest,
+                "accepted_trial_id": "source-1",
+                "trials": [
+                    {
+                        "trial_id": "source-1",
+                        "status": "accepted",
+                        "correctness": {"passed": True},
+                        "source_after_sha256": digest,
+                        "execution_source_sha256": digest,
+                    }
+                ],
+            }
+            self.assertIsNotNone(_accepted_source_trial(results, source_result))
+            for field, value in [("status", "no_improvement"), ("correctness", {"passed": False}), ("source_after_sha256", "0" * 64)]:
+                invalid = json.loads(json.dumps(source_result))
+                invalid["trials"][0][field] = value
+                with self.subTest(field=field):
+                    self.assertIsNone(_accepted_source_trial(results, invalid))
+
     def test_web_task_runs_controlled_source_optimization_loop(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -669,16 +697,33 @@ class SourceOptimizationApiTests(unittest.TestCase):
             self.assertEqual(source_result["trials"][0]["status"], "accepted")
             accepted = source_result["trials"][0]
             self.assertIsNone(accepted["rollback_verified"])
+            summary_path = Path(task["results_dir"]) / "summary.csv"
+            with summary_path.open(newline="", encoding="utf-8") as handle:
+                summary_rows = list(csv.DictReader(handle))
+                fieldnames = list(summary_rows[0])
+            summary_rows[0]["latency"] = "999.0"
+            summary_rows[0]["objective_value"] = "999.0"
+            with summary_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(summary_rows)
+            task = client.get(f"/api/tasks/{task_id}").json()["task"]
             self.assertEqual(result["best_row"]["config_hash"], accepted["source_after_sha256"])
             self.assertEqual(float(result["best_row"]["latency"]), accepted["candidate_median_latency_ms"])
             self.assertEqual(result["best_config"]["source_optimization_result"]["source_sha256"], accepted["source_after_sha256"])
             self.assertEqual(task["best_latency"], accepted["candidate_median_latency_ms"])
+            self.assertEqual(task["baseline_latency"], accepted["baseline_median_latency_ms"])
+            self.assertNotEqual(task["baseline_latency"], 999.0)
+            self.assertEqual(task["improvement_percent"], accepted["improvement_percent"])
             self.assertGreaterEqual(task["total_trials"], 2)
             event_types = [item["type"] for item in task["events"]]
             self.assertIn("source_trial_started", event_types)
             self.assertIn("source_trial_completed", event_types)
             self.assertIn("TL.copy", result["best_kernel"])
             self.assertIn("## Source Optimization", result["report_markdown"])
+            self.assertIn("## Authoritative Source Result", result["report_markdown"])
+            self.assertIn("## Pre-source Best Seen", result["report_markdown"])
+            self.assertLess(result["report_markdown"].index("## Authoritative Source Result"), result["report_markdown"].index("## Pre-source Best Seen"))
             self.assertIn(accepted["source_after_sha256"], result["report_markdown"])
             self.assertIs(result["summary_table"][0]["correctness"]["passed"], True)
             public_payload = json.dumps({"task": task, "results": result}, ensure_ascii=False)

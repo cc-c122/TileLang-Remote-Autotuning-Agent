@@ -369,9 +369,21 @@ def _update_best_config(results_dir: Path, trial: SourceOptimizationTrial) -> No
 def _append_report(results_dir: Path, result: SourceOptimizationResult) -> None:
     report_path = results_dir / "report.md"
     prior = report_path.read_text(encoding="utf-8") if report_path.is_file() else "# TileLang Autotuning Report\n"
+    accepted = next((item for item in result.trials if item.trial_id == result.accepted_trial_id), None)
     if result.accepted_trial_id:
         prior = prior.replace("## Best Seen", "## Pre-source Best Seen", 1)
-    accepted = next((item for item in result.trials if item.trial_id == result.accepted_trial_id), None)
+    if accepted is not None:
+        authoritative = [
+            "## Authoritative Source Result",
+            f"- Accepted trial: {accepted.trial_id}",
+            f"- Baseline median latency: {accepted.baseline_median_latency_ms} ms",
+            f"- Best median latency: {accepted.candidate_median_latency_ms} ms",
+            f"- Improvement: {accepted.improvement_percent:.3f}%" if accepted.improvement_percent is not None else "- Improvement: unknown",
+            "- The earlier single-trial result is retained below as pre-source context.",
+            "",
+        ]
+        title, separator, body = prior.partition("\n")
+        prior = title + separator + "\n".join(authoritative) + body.lstrip("\n")
     lines = ["", "## Source Optimization", f"- Status: {result.status}", f"- Reason: {result.reason or 'none'}", f"- Baseline source SHA-256: `{result.baseline_source_sha256 or 'unknown'}`", f"- Best source SHA-256: `{result.best_source_sha256 or 'unknown'}`", f"- Accepted trial: {result.accepted_trial_id or 'none'}"]
     if accepted is not None:
         lines += [f"- Authoritative best latency: {accepted.candidate_median_latency_ms} ms", f"- Improvement vs source baseline: {accepted.improvement_percent:.3f}%" if accepted.improvement_percent is not None else "- Improvement vs source baseline: unknown"]
