@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import posixpath
 import shlex
 import stat
@@ -197,6 +198,18 @@ class SSHRunner:
                 self._download_dir(remote, local_results / name)
             else:
                 self.sftp.get(remote, str(local_results / name))
+
+    def file_sha256(self, relative_path: str) -> str:
+        assert self.sftp is not None
+        normalized = posixpath.normpath(relative_path)
+        if normalized.startswith("/") or normalized == ".." or normalized.startswith("../"):
+            raise ValueError(f"execution file must stay inside remote workspace: {relative_path}")
+        remote_path = posixpath.join(self.info.remote_workspace, normalized)
+        digest = hashlib.sha256()
+        with self.sftp.open(remote_path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(64 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def _download_dir(self, remote_dir: str, local_dir: Path) -> None:
         assert self.sftp is not None

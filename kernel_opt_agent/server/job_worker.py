@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 
 import kernel_opt_agent.main as agent_main
 import yaml
+from kernel_opt_agent.agent.llm_client import OpenAICompatibleClient
 from kernel_opt_agent.config_model import safe_config_dict
 from kernel_opt_agent.source_optimizer import (
     SourceOptimizationResult,
     inspect_source_optimization,
     read_source_result,
+    redact_source_text,
     run_source_optimization,
     write_source_result,
 )
@@ -121,6 +124,15 @@ class JobWorker:
             )
             if request.optimization.enabled and source_entry is not None and source_analysis is not None:
                 self.manager.add_event(task_id, "source_optimization_started", "running controlled source optimization trial")
+                planning_client = None
+                if os.environ.get(config.llm.api_key_env):
+                    planning_client = OpenAICompatibleClient(
+                        config.llm.base_url,
+                        config.llm.api_key_env,
+                        config.llm.model,
+                        config.llm.temperature,
+                        config.llm.max_tokens,
+                    )
                 source_result = run_source_optimization(
                     config,
                     workspace,
@@ -129,6 +141,7 @@ class JobWorker:
                     source_entry,
                     should_cancel=lambda: self.manager.is_cancel_requested(task_id),
                     event_callback=lambda event_type, message: self.manager.add_event(task_id, event_type, message),
+                    planning_client=planning_client,
                 )
                 self.manager.add_event(
                     task_id,
@@ -160,16 +173,17 @@ class JobWorker:
                     self.manager.add_event(task_id, "report_generated", "report.md generated")
                 self.manager.set_status(task_id, "completed")
         except Exception as exc:
+            public_error = redact_source_text(config, str(exc)) if "config" in locals() else "task failed before effective configuration was available"
             if request.optimization.enabled:
                 current_status = "cancelled" if self.manager.is_cancel_requested(task_id) else "failed"
                 source_result = SourceOptimizationResult.model_validate(read_source_result(results_dir))
                 source_result.status = current_status  # type: ignore[assignment]
-                source_result.reason = str(exc)
+                source_result.reason = public_error
                 write_source_result(results_dir, source_result)
             if self.manager.is_cancel_requested(task_id):
-                self.manager.set_status(task_id, "cancelled", str(exc))
+                self.manager.set_status(task_id, "cancelled", public_error)
             else:
-                self.manager.set_status(task_id, "failed", str(exc))
+                self.manager.set_status(task_id, "failed", public_error)
         finally:
             agent_main.WORKSPACE_ROOT = original["WORKSPACE_ROOT"]
             agent_main.RESULTS_DIR = original["RESULTS_DIR"]

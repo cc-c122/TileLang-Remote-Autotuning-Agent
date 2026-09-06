@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import time
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +30,13 @@ class LocalRunner:
         self.timeout_seconds = timeout_seconds
         self.denied_commands = denied_commands or []
         self.workspace.mkdir(parents=True, exist_ok=True)
+
+    def file_sha256(self, relative_path: str) -> str:
+        path = (self.workspace / relative_path).resolve()
+        path.relative_to(self.workspace)
+        if not path.is_file():
+            raise ValueError(f"execution file not found: {relative_path}")
+        return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def run(self, name: str, command: str | None) -> CommandResult:
         start = time.time()

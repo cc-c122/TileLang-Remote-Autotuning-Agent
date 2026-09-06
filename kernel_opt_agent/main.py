@@ -30,6 +30,7 @@ from kernel_opt_agent.profiler.base import BaseProfiler, ProfilerResult
 from kernel_opt_agent.profiler.dummy_profiler import DummyProfiler
 from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
 from kernel_opt_agent.profiler.tilelang_log_profiler import TileLangLogProfiler
+from kernel_opt_agent.redaction import redact_data, redact_text
 from kernel_opt_agent.run_request import load_config_from_run_request
 from kernel_opt_agent.runner.local_runner import CommandResult, LocalRunner
 from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
@@ -70,8 +71,15 @@ def build_runner(config: AppConfig, trial_dir: Path):
         remote_workspace=config.remote.remote_workspace,
     )
     runner = SSHRunner(info, config.search.timeout_seconds, config.constraints.denied_commands)
-    runner.connect()
-    runner.upload(trial_dir)
+    try:
+        runner.connect()
+        runner.upload(trial_dir)
+    except Exception:
+        try:
+            runner.close()
+        except Exception:
+            pass
+        raise
     return runner
 
 
@@ -242,7 +250,7 @@ def maybe_run_controlled_patch_trial(
             status="validation_failed",
             metrics_before=trial.metrics_before,
             rollback_available=False,
-            error=str(exc),
+            error=redact_text(config, str(exc)),
         )
     db.append_patch_trial(result)
 
@@ -361,7 +369,7 @@ def run_trial(
             )
         )
     ]
-    stdout_path, stderr_path = db.write_logs(label, "\n".join(stdout_all), "\n".join(stderr_all))
+    stdout_path, stderr_path = db.write_logs(label, redact_text(config, "\n".join(stdout_all)) or "", redact_text(config, "\n".join(stderr_all)) or "")
     record = {
         "run_id": run_id,
         "iteration": iteration,
@@ -388,6 +396,7 @@ def run_trial(
         "error": error,
         "timestamps": {"started": started, "finished": datetime.utcnow().isoformat() + "Z"},
     }
+    record = redact_data(config, record)
     if runner is not None:
         maybe_run_controlled_patch_trial(config, db, record, paths, runner, metrics_data)
     if isinstance(runner, SSHRunner):
@@ -413,7 +422,7 @@ def run(
         return bool(should_cancel and should_cancel())
 
     setup_logging()
-    db = ExperimentDB(RESULTS_DIR)
+    db = ExperimentDB(RESULTS_DIR, redactor=lambda value: redact_data(config, value))
     run_id = time.strftime("%Y%m%d-%H%M%S")
     (RESULTS_DIR / "effective_config.yaml").write_text(__import__("yaml").safe_dump(safe_config_dict(config), sort_keys=True), encoding="utf-8")
     hardware_info = detect_hardware(config, RESULTS_DIR)

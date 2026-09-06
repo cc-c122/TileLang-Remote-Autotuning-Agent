@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from kernel_opt_agent.patcher import PatchTrial
 
@@ -35,7 +35,7 @@ ABLATION_SUMMARY_FIELDS = [
 
 
 class ExperimentDB:
-    def __init__(self, results_dir: Path):
+    def __init__(self, results_dir: Path, redactor: Callable[[Any], Any] | None = None):
         self.results_dir = results_dir
         self.logs_dir = results_dir / "logs"
         self.results_dir.mkdir(parents=True, exist_ok=True)
@@ -50,6 +50,7 @@ class ExperimentDB:
         self.ablation_summary_path = results_dir / "ablation_summary.csv"
         self.summary_path = results_dir / "summary.csv"
         self.records: list[dict[str, Any]] = []
+        self.redactor = redactor or (lambda value: value)
         self._init_run_files()
 
     def _init_run_files(self) -> None:
@@ -70,15 +71,16 @@ class ExperimentDB:
     def write_logs(self, label: str, stdout: str, stderr: str) -> tuple[Path, Path]:
         stdout_path = self.logs_dir / f"{label}.stdout.log"
         stderr_path = self.logs_dir / f"{label}.stderr.log"
-        stdout_path.write_text(stdout or "", encoding="utf-8")
-        stderr_path.write_text(stderr or "", encoding="utf-8")
+        stdout_path.write_text(self.redactor(stdout or ""), encoding="utf-8")
+        stderr_path.write_text(self.redactor(stderr or ""), encoding="utf-8")
         return stdout_path, stderr_path
 
     def append_patch_trial(self, trial: PatchTrial) -> None:
         with self.patch_trials_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(trial.to_dict(), ensure_ascii=False, default=str) + "\n")
+            f.write(json.dumps(self.redactor(trial.to_dict()), ensure_ascii=False, default=str) + "\n")
 
     def append(self, record: dict[str, Any]) -> None:
+        record = self.redactor(record)
         self.records.append(record)
         with self.experiments_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
