@@ -25,6 +25,7 @@ from kernel_opt_agent.server.sample_uploads import (
     MAX_UPLOAD_TOTAL_BYTES,
     SampleUploadError,
     SampleUploadStore,
+    _publish_sample_directory,
 )
 
 
@@ -171,6 +172,56 @@ class WebSampleRuntimeTests(unittest.TestCase):
         missing_api = self.client.get("/api/not-a-real-route")
         self.assertEqual(missing_api.status_code, 404)
         self.assertEqual(missing_api.json(), {"detail": "API route not found"})
+
+    def test_directory_publication_retries_transient_windows_file_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source, destination = Path(tmp) / "stage", Path(tmp) / "sample"
+            source.mkdir()
+            original_rename = Path.rename
+            attempts = []
+
+            def locked_once(path, target):
+                attempts.append((path, target))
+                if len(attempts) == 1:
+                    error = PermissionError("transient file lock")
+                    error.winerror = 32
+                    raise error
+                return original_rename(path, target)
+
+            with patch.object(Path, "rename", locked_once), patch("kernel_opt_agent.server.sample_uploads.time.sleep") as sleep:
+                _publish_sample_directory(source, destination)
+            self.assertEqual(len(attempts), 2)
+            sleep.assert_called_once_with(0.05)
+            self.assertTrue(destination.is_dir())
+            self.assertFalse(source.exists())
+
+    def test_directory_publication_does_not_hide_persistent_or_other_errors(self) -> None:
+        for windows_error, expected_attempts in ((5, 5), (None, 1)):
+            with self.subTest(windows_error=windows_error), tempfile.TemporaryDirectory() as tmp:
+                source, destination = Path(tmp) / "stage", Path(tmp) / "sample"
+                source.mkdir()
+                error = PermissionError("persistent access denied")
+                if windows_error is not None:
+                    error.winerror = windows_error
+                with patch.object(Path, "rename", side_effect=error) as rename, patch("kernel_opt_agent.server.sample_uploads.time.sleep") as sleep:
+                    with self.assertRaises(PermissionError):
+                        _publish_sample_directory(source, destination)
+                self.assertEqual(rename.call_count, expected_attempts)
+                self.assertEqual(sleep.call_count, expected_attempts - 1)
+                self.assertTrue(source.exists())
+                self.assertFalse(destination.exists())
+
+    def test_directory_publication_never_replaces_an_existing_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source, destination = Path(tmp) / "stage", Path(tmp) / "sample"
+            source.mkdir()
+            destination.mkdir()
+            with patch.object(Path, "rename") as rename:
+                with self.assertRaisesRegex(SampleUploadError, "already exists"):
+                    _publish_sample_directory(source, destination)
+            rename.assert_not_called()
+            self.assertTrue(source.is_dir())
+            self.assertTrue(destination.is_dir())
 
     def test_upload_returns_public_manifest_shape_without_server_paths(self) -> None:
         response = self._upload([("kernel.py", KERNEL_SOURCE), ("helper.py", HELPER_SOURCE)])

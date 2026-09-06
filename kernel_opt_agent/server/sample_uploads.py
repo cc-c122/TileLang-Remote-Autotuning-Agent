@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import stat
+import time
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path, PurePosixPath
@@ -179,6 +180,24 @@ def _remove_managed_tree(path: Path, parent: Path) -> None:
         shutil.rmtree(path)
 
 
+def _publish_sample_directory(source: Path, destination: Path) -> None:
+    if source.parent != destination.parent:
+        raise SampleUploadError("sample publication must stay in the same managed directory")
+    for attempt in range(5):
+        _ensure_no_upload_links(source)
+        _ensure_no_upload_links(destination.parent)
+        if destination.exists() or destination.is_symlink():
+            raise SampleUploadError("sample destination already exists")
+        try:
+            source.rename(destination)
+            return
+        except PermissionError as exc:
+            # Windows file watchers may temporarily retain a handle after copying.
+            if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 4:
+                raise
+            time.sleep(0.05 * (2 ** attempt))
+
+
 def _ensure_regular_upload(upload: UploadFile) -> None:
     try:
         mode = os.fstat(upload.file.fileno()).st_mode
@@ -274,7 +293,7 @@ class SampleUploadStore:
                 json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-            stage.rename(destination)
+            _publish_sample_directory(stage, destination)
             return manifest
         except Exception:
             _remove_managed_tree(stage, self.root)
@@ -376,7 +395,7 @@ class SampleUploadStore:
                 json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-            stage.rename(destination)
+            _publish_sample_directory(stage, destination)
             materialized = True
             audit_stage.replace(audit_path)
             return destination
