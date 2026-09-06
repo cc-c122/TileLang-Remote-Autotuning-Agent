@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 TaskStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
-ExecutionMode = Literal["parameter_search", "baseline_only"]
+ExecutionMode = Literal["parameter_search", "baseline_only", "source_optimization"]
 
 
 def utc_now() -> str:
@@ -122,6 +122,15 @@ class RunnerPayload(BaseModel):
     type: Literal["local", "ssh"] = "local"
 
 
+class OptimizationPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    max_candidates: int = Field(default=3, ge=1)
+    benchmark_repeats: int = Field(default=5, ge=1)
+    min_improvement_percent: float = Field(default=1.0, ge=0.0)
+
+
 class HardwareTargetPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -143,6 +152,7 @@ class TaskCreateRequest(BaseModel):
     profiler: ProfilerPayload = Field(default_factory=ProfilerPayload)
     patching: PatchingPayload = Field(default_factory=PatchingPayload)
     runner: RunnerPayload = Field(default_factory=RunnerPayload)
+    optimization: OptimizationPayload = Field(default_factory=OptimizationPayload)
 
 
 class HardwareResolveRequest(BaseModel):
@@ -167,6 +177,7 @@ class TaskRecord(BaseModel):
     workspace: str
     results_dir: str
     execution_mode: ExecutionMode | None = None
+    execution_mode_reason: str | None = None
     error: str | None = None
     events: list[dict[str, Any]] = Field(default_factory=list)
     cancel_requested: bool = False

@@ -36,7 +36,15 @@ class FastApiServerTests(unittest.TestCase):
     def test_health(self) -> None:
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"ok": True, "service": "tilelang-agent", "mode": "local-runner"})
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "service": "tilelang-agent",
+                "mode": "local-runner",
+                "capabilities": {"source_optimization": True},
+            },
+        )
 
     def test_settings_are_redacted_and_plaintext_secrets_rejected(self) -> None:
         old_password = os.environ.get("KERNEL_AGENT_TEST_PASSWORD_EXISTS")
@@ -150,6 +158,7 @@ class FastApiServerTests(unittest.TestCase):
         self.assertIsInstance(payload["diagnoses"], list)
         self.assertEqual(payload["profiler_status"], "benchmark_only")
         self.assertFalse(payload["profiler_available"])
+        self.assertEqual(payload["source_optimization"]["status"], "not_requested")
         self.assertIsInstance(payload["summary_table"], list)
         self.assertIsInstance(payload["failed_cases"], list)
         self.assertIn("def kernel_score", payload["best_kernel"])
@@ -200,6 +209,37 @@ class FastApiServerTests(unittest.TestCase):
         self.assertIn("max_iterations must be >= 1", response.text)
         after = {path.name for path in TASKS_ROOT.iterdir()} if TASKS_ROOT.exists() else set()
         self.assertEqual(after, before)
+
+    def test_unsafe_source_optimization_falls_back_to_baseline_with_reason(self) -> None:
+        request = {
+            "project_name": "source-fallback",
+            "sample": {"source_type": "inline", "inline_text": "VALUE = 1\n", "entry_file": "kernel.py"},
+            "commands": {
+                "build_command": "python -m py_compile kernel.py",
+                "correctness_command": "python -c \"print('CORRECTNESS_RESULT status=PASS max_error=\\\"0\\\" reason=\\\"ok\\\"')\"",
+                "benchmark_command": "python -c \"print('BENCHMARK_RESULT latency_ms=1.0')\"",
+            },
+            "profiler": {"enabled": False, "type": "dummy"},
+            "optimization": {"enabled": True, "max_candidates": 1, "benchmark_repeats": 2, "min_improvement_percent": 1.0},
+        }
+        created = self.client.post("/api/tasks", json=request)
+        self.assertEqual(created.status_code, 200)
+        task_id = created.json()["task_id"]
+        task = None
+        for _ in range(80):
+            task = self.client.get(f"/api/tasks/{task_id}").json()["task"]
+            if task["status"] in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.1)
+        self.assertEqual(task["status"], "completed")
+        self.assertEqual(task["execution_mode"], "baseline_only")
+        self.assertIn("no statically verified", task["execution_mode_reason"])
+        effective = yaml.safe_load((Path(task["workspace"]) / "effective_config.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(effective["execution_mode"], "baseline_only")
+        self.assertEqual(effective["source_optimization"]["benchmark_repeats"], 2)
+        result = self.client.get(f"/api/tasks/{task_id}/results").json()["results"]["source_optimization"]
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["trials"], [])
 
     def test_result_payload_distinguishes_profiler_statuses(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

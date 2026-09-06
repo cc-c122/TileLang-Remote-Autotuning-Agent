@@ -143,6 +143,14 @@ def build_effective_config(
     run_request.settings_ref.use_saved_settings = False
     config = app_config_from_run_request(run_request)
     config.runner.type = request.runner.type
+    config.source_optimization.enabled = request.optimization.enabled
+    config.source_optimization.max_candidates = request.optimization.max_candidates
+    config.source_optimization.benchmark_repeats = request.optimization.benchmark_repeats
+    config.source_optimization.min_improvement_percent = request.optimization.min_improvement_percent
+    if request.optimization.enabled:
+        config.execution_mode = "source_optimization"
+        config.patching.enabled = False
+        config.patching.run_controlled_trial = False
     if request.runner.type == "ssh":
         _apply_server_settings(config, _load_server_settings(settings_path))
         config.hardware_detection.remote_detection = True

@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from kernel_opt_agent.hardware.hardware_info import CANONICAL_FIELDS, HardwareInfo
 from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader, normalize_profile_name
 from kernel_opt_agent.main import WORKSPACE_ROOT
+from kernel_opt_agent.source_optimizer import read_source_result
 
 from .job_worker import JobWorker
 from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest
@@ -88,6 +89,13 @@ def _task_payload(task: Any) -> dict[str, Any]:
     baseline = summary[0] if summary else {}
     iterations = [_numeric(row.get("iteration")) for row in summary]
     latest_event = task.events[-1] if task.events else {}
+    source_optimization = read_source_result(Path(task.results_dir))
+    accepted = next(
+        (item for item in source_optimization.get("trials", []) if item.get("trial_id") == source_optimization.get("accepted_trial_id")),
+        None,
+    )
+    if accepted is not None:
+        improvement = _numeric(accepted.get("improvement_percent"))
     payload.update(
         {
             "current_iteration": int(max([item for item in iterations if item is not None], default=0)),
@@ -107,6 +115,13 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
     best_row, improvement = _best_summary(summary)
     if execution_mode == "baseline_only":
         improvement = None
+    source_optimization = read_source_result(results_dir)
+    accepted = next(
+        (item for item in source_optimization.get("trials", []) if item.get("trial_id") == source_optimization.get("accepted_trial_id")),
+        None,
+    )
+    if accepted is not None:
+        improvement = _numeric(accepted.get("improvement_percent"))
     files = {}
     for name in [
         "experiments.jsonl",
@@ -119,6 +134,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "best_kernel.py",
         "best_config.yaml",
         "report.md",
+        "source_optimization.json",
     ]:
         path = results_dir / name
         files[name] = {"exists": path.exists(), "size": path.stat().st_size if path.exists() else 0}
@@ -142,6 +158,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "diagnoses": diagnoses,
         "profiler_status": status,
         "profiler_available": status == "profiler_metrics_available",
+        "source_optimization": source_optimization,
     }
     payload.update({"files": files, "summary": summary, "best_row": best_row, "report": report})
     return payload
@@ -200,7 +217,12 @@ app = FastAPI(title="TileLang Remote Autotuning Agent API")
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "service": "tilelang-agent", "mode": "local-runner"}
+    return {
+        "ok": True,
+        "service": "tilelang-agent",
+        "mode": "local-runner",
+        "capabilities": {"source_optimization": True},
+    }
 
 
 @app.post("/api/settings")

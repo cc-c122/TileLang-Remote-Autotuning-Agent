@@ -85,7 +85,15 @@ class FastApiHttpSmokeTests(unittest.TestCase):
                 self.fail("FastAPI server did not become ready")
 
             health = _request_json("GET", f"{base}/api/health")
-            self.assertEqual(health, {"ok": True, "service": "tilelang-agent", "mode": "local-runner"})
+            self.assertEqual(
+                health,
+                {
+                    "ok": True,
+                    "service": "tilelang-agent",
+                    "mode": "local-runner",
+                    "capabilities": {"source_optimization": True},
+                },
+            )
             self.assertIn("<title>TileLang", _request_text(f"{base}/"))
 
             saved = _request_json(
