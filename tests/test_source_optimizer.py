@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import csv
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
 from fastapi.testclient import TestClient
 
 from kernel_opt_agent.config_model import AppConfig
@@ -87,6 +90,8 @@ class FakeRunner:
         if name == "build" and changed and self.mode == "build_failed":
             return self._result(name, command, 1, stderr="fixture build failed")
         if name == "correctness":
+            if changed and self.mode == "correctness_reason_secret":
+                return self._result(name, command, stdout=f'CORRECTNESS_RESULT status=PASS max_error=0 reason="{os.environ.get("OPENAI_API_KEY", "")}"\n')
             if changed and self.mode == "correctness_failed":
                 return self._result(name, command, 1, 'CORRECTNESS_RESULT status=FAIL max_error=1 reason="wrong"\n')
             if changed and self.mode == "correctness_fallback":
@@ -97,7 +102,11 @@ class FakeRunner:
                 return self._result(name, command, 1, stderr="fixture benchmark failed")
             if changed and self.mode == "protected_changed":
                 (self.workspace / "correctness.py").write_text("changed", encoding="utf-8")
+            if changed and self.mode == "entry_mutation":
+                entry.write_text("# mutated after correctness\n", encoding="utf-8")
             latency = 12.0 if changed and self.mode == "regressed" else (5.0 if changed else 10.0)
+            if changed and self.mode == "zero_latency":
+                latency = 0.0
             suffix = f" secret={os.environ.get('OPENAI_API_KEY', '')}" if self.mode == "secret_output" else ""
             return self._result(name, command, stdout=f"BENCHMARK_RESULT latency_ms={latency}{suffix}\n")
         return self._result(name, command)
@@ -113,6 +122,16 @@ class InvalidPlanner:
     def chat_json(self, messages):
         self.calls += 1
         return {"target_id": "outside", "template": "arbitrary_code", "hypothesis": "bad", "evidence_ids": []}
+
+
+class RecordingPlanner:
+    def __init__(self, response):
+        self.response = response
+        self.messages = []
+
+    def chat_json(self, messages):
+        self.messages.append(messages)
+        return self.response
 
 
 class SourceAnalyzerTests(unittest.TestCase):
@@ -135,6 +154,40 @@ class SourceAnalyzerTests(unittest.TestCase):
         )
         self.assertFalse(analyze_source(already_bulk_copy).targets)
 
+    def test_rejects_for_else_loop_dependent_prefix_and_rank_mismatch(self) -> None:
+        loop_else = _source().replace(
+            "local[i] = Input[i]",
+            "local[i] = Input[i]\n        else:\n            preserve_side_effect()",
+        )
+        self.assertFalse(analyze_source(loop_else).targets)
+        diagonal = _source().replace("shape = [8]", "shape = [8, 8]").replace("local[i] = Input[i]", "local[i] = Input[i, i]")
+        self.assertFalse(analyze_source(diagonal).targets)
+        rank_mismatch = _source().replace("shape = [8]", "shape = [8, 8]")
+        self.assertFalse(analyze_source(rank_mismatch).targets)
+
+    def test_rejects_dsl_shadowing_and_nested_non_prim_scope(self) -> None:
+        shadowed = _source().replace(
+            "def main(Input: TL.Tensor",
+            "def main(Input: TL.Tensor",
+        ).replace(
+            "        local = TL.alloc_fragment",
+            "        TL = object()\n        local = TL.alloc_fragment",
+        )
+        self.assertFalse(analyze_source(shadowed).targets)
+        nested = _source().replace(
+            "        local = TL.alloc_fragment([8], \"float32\")",
+            "        def helper():\n            local = TL.alloc_fragment([8], \"float32\")\n            for i in TL.Parallel(8):\n                local[i] = Input[i]\n            return local\n        local = helper()",
+        ).replace(
+            "        for i in TL.Parallel(8):\n            local[i] = Input[i]\n",
+            "",
+            1,
+        )
+        self.assertFalse(analyze_source(nested).targets)
+
+    def test_function_parameter_shadows_global_shape_binding(self) -> None:
+        shadowed_shape = _source().replace("def factory():", "def factory(shape):")
+        self.assertFalse(analyze_source(shadowed_shape).targets)
+
     def test_paged_attention_regression_finds_only_output_partial_copy(self) -> None:
         analysis = analyze_source(PAGED_SOURCE.read_text(encoding="utf-8"))
         self.assertEqual(len(analysis.targets), 1)
@@ -150,6 +203,21 @@ class SourceAnalyzerTests(unittest.TestCase):
         self.assertEqual(planner.calls, 2)
         self.assertEqual(source, "rule_based")
         self.assertEqual(plan.target_id, analysis.targets[0].target_id)
+        self.assertEqual(plan.planning_attempts, 2)
+        self.assertIn("ValueError", plan.fallback_reason or "")
+
+    def test_llm_prompt_contains_target_summaries_and_evidence(self) -> None:
+        analysis = analyze_source(_source())
+        evidence = [{"evidence_id": "ev-1", "metric": "l2c_hit_rate", "value": 46.1, "available": True}]
+        planner = RecordingPlanner(
+            {"target_id": analysis.targets[0].target_id, "template": "parallel_copy_to_t_copy", "hypothesis": "bulk copy", "evidence_ids": ["ev-1"]}
+        )
+        plan, source = choose_plan(analysis.targets, evidence, planner)
+        prompt = planner.messages[0][0]["content"]
+        self.assertEqual(source, "llm")
+        self.assertEqual(plan.evidence_ids, ["ev-1"])
+        self.assertIn("l2c_hit_rate", prompt)
+        self.assertIn(analysis.targets[0].source_expr, prompt)
 
 
 class SourceEngineTests(unittest.TestCase):
@@ -208,6 +276,199 @@ class SourceEngineTests(unittest.TestCase):
         self.assertEqual(result.trials[0].status, "validation_failed")
         self.assertTrue(result.trials[0].rollback_verified)
 
+    def test_entry_mutation_after_benchmark_is_rejected_and_best_stays_baseline(self) -> None:
+        root, results, result, original_hash = self._run("entry_mutation")
+        trial = result.trials[0]
+        self.assertEqual(trial.status, "validation_failed")
+        self.assertTrue(trial.rollback_verified)
+        self.assertEqual(result.best_source_sha256, original_hash)
+        self.assertEqual(hashlib.sha256((results / "best_kernel.py").read_bytes()).hexdigest(), original_hash)
+
+    def test_remote_execution_workspace_is_restored_after_correctness_failure(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        sample = root / "sample"
+        sample.mkdir()
+        entry = sample / "kernel.py"
+        entry.write_text(_source(), encoding="utf-8")
+        (sample / "correctness.py").write_text("protected", encoding="utf-8")
+        remote = root / "remote"
+        results = root / "results"
+        results.mkdir()
+        (results / "metric_observations.jsonl").write_text("", encoding="utf-8")
+        original_hash = hashlib.sha256(entry.read_bytes()).hexdigest()
+
+        def factory(config, trial_dir):
+            remote.mkdir(exist_ok=True)
+            shutil.copytree(trial_dir, remote, dirs_exist_ok=True)
+            return FakeRunner(remote, "correctness_failed")
+
+        with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=factory):
+            result = run_source_optimization(_config(sample), root / "workspace", results, analyze_source(_source()), entry)
+        self.assertEqual(result.trials[0].status, "correctness_failed")
+        self.assertTrue(result.trials[0].rollback_verified)
+        self.assertEqual(hashlib.sha256((remote / "kernel.py").read_bytes()).hexdigest(), original_hash)
+
+    def test_rollback_failure_is_explicit_and_never_accepts(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        sample = root / "sample"
+        sample.mkdir()
+        entry = sample / "kernel.py"
+        entry.write_text(_source(), encoding="utf-8")
+        (sample / "correctness.py").write_text("protected", encoding="utf-8")
+        results = root / "results"
+        results.mkdir()
+        (results / "metric_observations.jsonl").write_text("", encoding="utf-8")
+
+        class FailingRestoreRunner(FakeRunner):
+            def upload(self, path):
+                raise RuntimeError("restore fixture failed")
+
+        with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=lambda config, trial_dir: FailingRestoreRunner(trial_dir)):
+            result = run_source_optimization(_config(sample), root / "workspace", results, analyze_source(_source()), entry)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.trials[0].status, "validation_failed")
+        self.assertFalse(result.trials[0].rollback_verified)
+        self.assertIn("rollback failed", result.trials[0].decision_reason or "")
+
+    def test_cancel_after_measurement_restores_baseline_and_does_not_publish(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        sample = root / "sample"
+        sample.mkdir()
+        entry = sample / "kernel.py"
+        entry.write_text(_source(), encoding="utf-8")
+        (sample / "correctness.py").write_text("protected", encoding="utf-8")
+        results = root / "results"
+        results.mkdir()
+        (results / "metric_observations.jsonl").write_text("", encoding="utf-8")
+        state = {"cancel": False}
+
+        class CancelRunner(FakeRunner):
+            def run(self, name, command):
+                result = super().run(name, command)
+                if name.startswith("benchmark") and "TL.copy(" in (self.workspace / "kernel.py").read_text(encoding="utf-8"):
+                    state["cancel"] = True
+                return result
+
+        with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=lambda config, trial_dir: CancelRunner(trial_dir)):
+            result = run_source_optimization(
+                _config(sample, benchmark_repeats=1),
+                root / "workspace",
+                results,
+                analyze_source(_source()),
+                entry,
+                should_cancel=lambda: state["cancel"],
+            )
+        original_hash = hashlib.sha256(entry.read_bytes()).hexdigest()
+        self.assertEqual(result.status, "cancelled")
+        self.assertIsNone(result.accepted_trial_id)
+        self.assertEqual(result.trials[0].status, "cancelled")
+        self.assertTrue(result.trials[0].rollback_verified)
+        self.assertEqual(hashlib.sha256((results / "best_kernel.py").read_bytes()).hexdigest(), original_hash)
+
+    def test_publish_artifact_mutation_restores_baseline(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        sample = root / "sample"
+        sample.mkdir()
+        entry = sample / "kernel.py"
+        entry.write_text(_source(), encoding="utf-8")
+        (sample / "correctness.py").write_text("protected", encoding="utf-8")
+        results = root / "results"
+        results.mkdir()
+        (results / "metric_observations.jsonl").write_text("", encoding="utf-8")
+        workspace = root / "workspace"
+
+        def factory(config, trial_dir):
+            runner = FakeRunner(trial_dir)
+            if trial_dir.parent.name == "accepted":
+                source_after = next((workspace / "source_trials").glob("source-*/source_after.py"))
+                source_after.write_text("# tampered publication artifact\n", encoding="utf-8")
+            return runner
+
+        with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=factory):
+            result = run_source_optimization(_config(sample), workspace, results, analyze_source(_source()), entry)
+        original_hash = hashlib.sha256(entry.read_bytes()).hexdigest()
+        self.assertEqual(result.status, "failed")
+        self.assertIsNone(result.accepted_trial_id)
+        self.assertEqual(result.trials[0].status, "validation_failed")
+        self.assertTrue(result.trials[0].rollback_verified)
+        self.assertEqual(hashlib.sha256((results / "best_kernel.py").read_bytes()).hexdigest(), original_hash)
+
+    def test_partial_publish_runner_failure_reconnects_and_restores(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        sample = root / "sample"
+        sample.mkdir()
+        entry = sample / "kernel.py"
+        entry.write_text(_source(), encoding="utf-8")
+        (sample / "correctness.py").write_text("protected", encoding="utf-8")
+        results = root / "results"
+        results.mkdir()
+        (results / "metric_observations.jsonl").write_text("", encoding="utf-8")
+        remote = root / "remote"
+        calls = {"publish_failed": False}
+
+        def factory(config, trial_dir):
+            if trial_dir.parent.name == "accepted":
+                remote.mkdir(exist_ok=True)
+                shutil.copytree(trial_dir, remote, dirs_exist_ok=True)
+                calls["publish_failed"] = True
+                raise RuntimeError("fixture failed after partial deploy")
+            if trial_dir.name == "rollback_snapshot" and calls["publish_failed"]:
+                shutil.copytree(trial_dir, remote, dirs_exist_ok=True)
+                return FakeRunner(remote)
+            return FakeRunner(trial_dir)
+
+        with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=factory):
+            result = run_source_optimization(_config(sample), root / "workspace", results, analyze_source(_source()), entry)
+        original_hash = hashlib.sha256(entry.read_bytes()).hexdigest()
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.trials[0].status, "validation_failed")
+        self.assertTrue(result.trials[0].rollback_verified)
+        self.assertEqual(hashlib.sha256((remote / "kernel.py").read_bytes()).hexdigest(), original_hash)
+
+    def test_snapshot_and_diff_exist_before_candidate_runner_starts(self) -> None:
+        checks = []
+
+        def factory(config, trial_dir):
+            if trial_dir.parent.name.startswith("source-") and "TL.copy(" in (trial_dir / "kernel.py").read_text(encoding="utf-8"):
+                root = trial_dir.parent
+                checks.append(
+                    (root / "rollback_snapshot" / "kernel.py").is_file()
+                    and "TL.copy(" not in (root / "rollback_snapshot" / "kernel.py").read_text(encoding="utf-8")
+                    and (root / "source_before.py").is_file()
+                    and (root / "source_after.py").is_file()
+                    and (root / "candidate.diff").is_file()
+                )
+            return FakeRunner(trial_dir)
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        sample = root / "sample"
+        sample.mkdir()
+        entry = sample / "kernel.py"
+        entry.write_text(_source(), encoding="utf-8")
+        (sample / "correctness.py").write_text("protected", encoding="utf-8")
+        results = root / "results"
+        results.mkdir()
+        (results / "metric_observations.jsonl").write_text("", encoding="utf-8")
+        with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=factory):
+            run_source_optimization(_config(sample), root / "workspace", results, analyze_source(_source()), entry)
+        self.assertEqual(checks, [True])
+
+    def test_zero_latency_is_rejected(self) -> None:
+        _, _, result, _ = self._run("zero_latency")
+        self.assertEqual(result.trials[0].status, "benchmark_failed")
+
     def test_command_logs_and_serialized_result_redact_configured_secrets(self) -> None:
         secret = "source-optimizer-test-secret-value"
         with patch.dict(os.environ, {"OPENAI_API_KEY": secret}):
@@ -215,6 +476,14 @@ class SourceEngineTests(unittest.TestCase):
         self.assertNotIn(secret, json.dumps(result.model_dump(mode="json")))
         trial_root = root / "workspace" / "source_trials" / result.trials[0].trial_id / "logs"
         self.assertNotIn(secret, "\n".join(path.read_text(encoding="utf-8") for path in trial_root.glob("*.log")))
+
+    def test_correctness_reason_and_all_serialized_outputs_redact_secret(self) -> None:
+        secret = "source-correctness-secret-value"
+        with patch.dict(os.environ, {"OPENAI_API_KEY": secret}):
+            root, results, result, _ = self._run("correctness_reason_secret")
+        self.assertNotIn(secret, json.dumps(result.model_dump(mode="json")))
+        for path in [results / "source_optimization.json", results / "experiments.jsonl", results / "summary.csv", results / "all_results.csv", results / "report.md"]:
+            self.assertNotIn(secret, path.read_text(encoding="utf-8"), str(path))
 
     def test_cancel_stops_before_new_commands(self) -> None:
         calls = iter([False, True])
@@ -278,7 +547,43 @@ class SourceEngineTests(unittest.TestCase):
         self.assertEqual(trial.status, "accepted", trial.model_dump())
         self.assertNotEqual(result.best_source_sha256, original_hash)
         self.assertEqual(trial.execution_source_sha256, trial.source_after_sha256)
+        self.assertIsNone(trial.rollback_verified)
+        self.assertEqual(len(trial.baseline_latency_ms), 3)
+        self.assertEqual(len(trial.candidate_latency_ms), 3)
+        self.assertEqual(trial.baseline_median_latency_ms, sorted(trial.baseline_latency_ms)[1])
+        self.assertEqual(trial.candidate_median_latency_ms, sorted(trial.candidate_latency_ms)[1])
         self.assertEqual(hashlib.sha256((results / "best_kernel.py").read_bytes()).hexdigest(), trial.source_after_sha256)
+        best_config = yaml.safe_load((results / "best_config.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(best_config["source_optimization_result"]["source_sha256"], trial.source_after_sha256)
+        experiments = [json.loads(line) for line in (results / "experiments.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(experiments[-1]["status"], "benchmark_ok")
+        self.assertEqual(experiments[-1]["config_hash"], trial.source_after_sha256)
+        with (results / "summary.csv").open(newline="", encoding="utf-8") as handle:
+            summary = list(csv.DictReader(handle))
+        self.assertEqual(summary[-1]["config_hash"], trial.source_after_sha256)
+        self.assertIn(str(trial.candidate_median_latency_ms), (results / "report.md").read_text(encoding="utf-8"))
+
+    def test_max_candidates_runs_multiple_authorized_targets(self) -> None:
+        source = _source().replace(
+            "        for i in TL.Parallel(8):\n            Output[i] = local[i]",
+            "        local_two = TL.alloc_fragment([8], \"float32\")\n        for i in TL.Parallel(8):\n            local_two[i] = Input[i]\n        for i in TL.Parallel(8):\n            Output[i] = local_two[i]",
+        )
+        analysis = analyze_source(source)
+        self.assertEqual(len(analysis.targets), 2)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        sample = root / "sample"
+        sample.mkdir()
+        entry = sample / "kernel.py"
+        entry.write_text(source, encoding="utf-8")
+        (sample / "correctness.py").write_text("protected", encoding="utf-8")
+        results = root / "results"
+        results.mkdir()
+        (results / "metric_observations.jsonl").write_text("", encoding="utf-8")
+        with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=lambda config, trial_dir: FakeRunner(trial_dir)):
+            result = run_source_optimization(_config(sample, max_candidates=2), root / "workspace", results, analysis, entry)
+        self.assertEqual(len(result.trials), 2)
 
 
 class SourceOptimizationApiTests(unittest.TestCase):
@@ -300,10 +605,12 @@ class SourceOptimizationApiTests(unittest.TestCase):
             source = _source().replace("shape = [8]", "N = 200000\nshape = [N]").replace("[8]", "[N]").replace("TL.Parallel(8)", "TL.Parallel(N)")
             (sample / "kernel.py").write_text(source, encoding="utf-8")
             (sample / "correctness.py").write_text(
+                "import os\n"
                 "from kernel import factory, N\n"
                 "source = list(range(N)); output = [0] * N\n"
                 "factory()(source, output); passed = output == source\n"
-                "print(f'CORRECTNESS_RESULT status={\"PASS\" if passed else \"FAIL\"} max_error={0 if passed else 1} reason=\"fixture comparison\"')\n"
+                "reason = os.environ.get('OPENAI_API_KEY', 'fixture comparison')\n"
+                "print(f'CORRECTNESS_RESULT status={\"PASS\" if passed else \"FAIL\"} max_error={0 if passed else 1} reason=\"{reason}\"')\n"
                 "raise SystemExit(0 if passed else 1)\n",
                 encoding="utf-8",
             )
@@ -317,41 +624,104 @@ class SourceOptimizationApiTests(unittest.TestCase):
                 encoding="utf-8",
             )
             client = TestClient(app)
-            response = client.post(
-                "/api/tasks",
-                json={
-                    "project_name": "source-api-mechanism",
-                    "sample": {"source_type": "path", "path": str(sample), "entry_file": "kernel.py"},
-                    "commands": {
-                        "build_command": "python -m py_compile kernel.py",
-                        "correctness_command": "python correctness.py",
-                        "benchmark_command": "python benchmark.py",
-                    },
-                    "profiler": {"enabled": False, "type": "dummy"},
-                    "optimization": {
-                        "enabled": True,
-                        "max_candidates": 1,
-                        "benchmark_repeats": 3,
-                        "min_improvement_percent": 1.0,
-                    },
-                },
+            target_id = analyze_source(source).targets[0].target_id
+            planner = RecordingPlanner(
+                {"target_id": target_id, "template": "parallel_copy_to_t_copy", "hypothesis": "use verified bulk copy", "evidence_ids": []}
             )
-            self.assertEqual(response.status_code, 200)
-            task_id = response.json()["task_id"]
-            task = None
-            for _ in range(160):
-                task = client.get(f"/api/tasks/{task_id}").json()["task"]
-                if task["status"] in {"completed", "failed", "cancelled"}:
-                    break
-                time.sleep(0.1)
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "fixture-api-key"}), patch(
+                "kernel_opt_agent.server.job_worker.OpenAICompatibleClient",
+                return_value=planner,
+            ) as client_factory:
+                response = client.post(
+                    "/api/tasks",
+                    json={
+                        "project_name": "source-api-mechanism",
+                        "sample": {"source_type": "path", "path": str(sample), "entry_file": "kernel.py"},
+                        "commands": {
+                            "build_command": "python -m py_compile kernel.py",
+                            "correctness_command": "python correctness.py",
+                            "benchmark_command": "python benchmark.py",
+                        },
+                        "profiler": {"enabled": False, "type": "dummy"},
+                        "optimization": {
+                            "enabled": True,
+                            "max_candidates": 1,
+                            "benchmark_repeats": 3,
+                            "min_improvement_percent": 1.0,
+                        },
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+                task_id = response.json()["task_id"]
+                task = None
+                for _ in range(160):
+                    task = client.get(f"/api/tasks/{task_id}").json()["task"]
+                    if task["status"] in {"completed", "failed", "cancelled"}:
+                        break
+                    time.sleep(0.1)
+                self.assertTrue(client_factory.called)
+                self.assertTrue(planner.messages)
             self.assertEqual(task["status"], "completed", task)
             self.assertEqual(task["execution_mode"], "source_optimization")
             result = client.get(f"/api/tasks/{task_id}/results").json()["results"]
             source_result = result["source_optimization"]
             self.assertEqual(source_result["status"], "completed")
             self.assertEqual(source_result["trials"][0]["status"], "accepted")
+            accepted = source_result["trials"][0]
+            self.assertIsNone(accepted["rollback_verified"])
+            self.assertEqual(result["best_row"]["config_hash"], accepted["source_after_sha256"])
+            self.assertEqual(float(result["best_row"]["latency"]), accepted["candidate_median_latency_ms"])
+            self.assertEqual(result["best_config"]["source_optimization_result"]["source_sha256"], accepted["source_after_sha256"])
+            self.assertEqual(task["best_latency"], accepted["candidate_median_latency_ms"])
+            self.assertGreaterEqual(task["total_trials"], 2)
+            event_types = [item["type"] for item in task["events"]]
+            self.assertIn("source_trial_started", event_types)
+            self.assertIn("source_trial_completed", event_types)
             self.assertIn("TL.copy", result["best_kernel"])
             self.assertIn("## Source Optimization", result["report_markdown"])
+            self.assertIn(accepted["source_after_sha256"], result["report_markdown"])
+            self.assertIs(result["summary_table"][0]["correctness"]["passed"], True)
+            public_payload = json.dumps({"task": task, "results": result}, ensure_ascii=False)
+            self.assertNotIn("fixture-api-key", public_payload)
+            for path in Path(task["results_dir"]).rglob("*"):
+                if path.is_file():
+                    self.assertNotIn("fixture-api-key", path.read_text(encoding="utf-8", errors="ignore"), str(path))
+            download = client.get(f"/api/tasks/{task_id}/download/best_kernel")
+            self.assertEqual(download.status_code, 200)
+
+    def test_failed_source_baseline_is_not_downloadable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sample = Path(temporary) / "sample"
+            sample.mkdir()
+            (sample / "kernel.py").write_text(_source(), encoding="utf-8")
+            (sample / "correctness.py").write_text('print("CORRECTNESS_RESULT status=PASS max_error=0 reason=ok")\n', encoding="utf-8")
+            (sample / "benchmark.py").write_text('print("BENCHMARK_RESULT latency_ms=1")\n', encoding="utf-8")
+            client = TestClient(app)
+            response = client.post(
+                "/api/tasks",
+                json={
+                    "project_name": "source-baseline-failure",
+                    "sample": {"source_type": "path", "path": str(sample), "entry_file": "kernel.py"},
+                    "commands": {
+                        "build_command": "python -c \"raise SystemExit(1)\"",
+                        "correctness_command": "python correctness.py",
+                        "benchmark_command": "python benchmark.py",
+                    },
+                    "profiler": {"enabled": False, "type": "dummy"},
+                    "optimization": {"enabled": True, "max_candidates": 1, "benchmark_repeats": 1, "min_improvement_percent": 1.0},
+                },
+            )
+            task_id = response.json()["task_id"]
+            task = None
+            for _ in range(100):
+                task = client.get(f"/api/tasks/{task_id}").json()["task"]
+                if task["status"] in {"completed", "failed", "cancelled"}:
+                    break
+                time.sleep(0.1)
+            result = client.get(f"/api/tasks/{task_id}/results").json()["results"]
+            self.assertFalse(result["source_optimization"]["baseline_verified"])
+            download = client.get(f"/api/tasks/{task_id}/download/best_kernel")
+            self.assertEqual(download.status_code, 409)
 
 
 if __name__ == "__main__":

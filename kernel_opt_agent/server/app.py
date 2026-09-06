@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import os
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,23 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return read_jsonl(path)
 
 
+def _summary_with_correctness(results_dir: Path, summary: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    experiments = _read_jsonl(results_dir / "experiments.jsonl")
+    by_identity = {
+        (str(item.get("run_id")), str(item.get("iteration")), str(item.get("candidate_id")), str(item.get("config_hash"))): item.get("correctness")
+        for item in experiments
+    }
+    return [
+        {
+            **row,
+            "correctness": by_identity.get(
+                (str(row.get("run_id")), str(row.get("iteration")), str(row.get("candidate_id")), str(row.get("config_hash")))
+            ),
+        }
+        for row in summary
+    ]
+
+
 def _numeric(value: Any) -> float | None:
     try:
         if value in (None, ""):
@@ -94,13 +112,15 @@ def _task_payload(task: Any) -> dict[str, Any]:
         (item for item in source_optimization.get("trials", []) if item.get("trial_id") == source_optimization.get("accepted_trial_id")),
         None,
     )
+    accepted_latency = None
     if accepted is not None:
         improvement = _numeric(accepted.get("improvement_percent"))
+        accepted_latency = _numeric(accepted.get("candidate_median_latency_ms"))
     payload.update(
         {
             "current_iteration": int(max([item for item in iterations if item is not None], default=0)),
             "total_trials": len(summary),
-            "best_latency": _numeric((best_row or {}).get("latency")),
+            "best_latency": accepted_latency if accepted is not None else _numeric((best_row or {}).get("latency")),
             "baseline_latency": _numeric(baseline.get("latency")),
             "improvement_percent": improvement,
             "current_stage": latest_event.get("type") or task.status,
@@ -111,7 +131,7 @@ def _task_payload(task: Any) -> dict[str, Any]:
 
 
 def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dict[str, Any]:
-    summary = _read_csv(results_dir / "summary.csv")
+    summary = _summary_with_correctness(results_dir, _read_csv(results_dir / "summary.csv"))
     best_row, improvement = _best_summary(summary)
     if execution_mode == "baseline_only":
         improvement = None
@@ -122,6 +142,8 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
     )
     if accepted is not None:
         improvement = _numeric(accepted.get("improvement_percent"))
+        accepted_hash = accepted.get("source_after_sha256")
+        best_row = next((row for row in summary if row.get("config_hash") == accepted_hash), best_row)
     files = {}
     for name in [
         "experiments.jsonl",
@@ -380,6 +402,14 @@ def _download(task_id: str, filename: str) -> FileResponse:
     path = Path(task.results_dir) / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"{filename} not found")
+    if filename == "best_kernel.py" and task.execution_mode == "source_optimization":
+        source_result = read_source_result(Path(task.results_dir))
+        if source_result.get("baseline_verified") is not True:
+            raise HTTPException(status_code=409, detail="source optimization baseline was not verified")
+        expected_hash = source_result.get("best_source_sha256")
+        actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        if not expected_hash or actual_hash != expected_hash:
+            raise HTTPException(status_code=409, detail="best kernel hash does not match the verified source result")
     return FileResponse(path, filename=filename)
 
 

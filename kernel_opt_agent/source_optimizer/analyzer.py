@@ -53,12 +53,49 @@ def _slice_items(node: ast.Subscript) -> list[ast.AST]:
     return list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
 
 
-def _shape_last_extent(shape: ast.AST, assignments: dict[str, ast.AST]) -> ast.AST | None:
+def _shape_info(shape: ast.AST, assignments: dict[str, ast.AST]) -> tuple[int, ast.AST] | None:
     if isinstance(shape, ast.Name) and shape.id in assignments:
         shape = assignments[shape.id]
     if isinstance(shape, (ast.List, ast.Tuple)) and shape.elts:
-        return shape.elts[-1]
+        return len(shape.elts), shape.elts[-1]
     return None
+
+
+def _bound_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    names = {arg.arg for arg in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]}
+    if node.args.vararg:
+        names.add(node.args.vararg.arg)
+    if node.args.kwarg:
+        names.add(node.args.kwarg.arg)
+
+    class ScopeBindingCollector(ast.NodeVisitor):
+        def visit_FunctionDef(self, child: ast.FunctionDef) -> None:
+            if child is not node:
+                names.add(child.name)
+
+        def visit_AsyncFunctionDef(self, child: ast.AsyncFunctionDef) -> None:
+            if child is not node:
+                names.add(child.name)
+
+        def visit_ClassDef(self, child: ast.ClassDef) -> None:
+            names.add(child.name)
+
+        def visit_Import(self, child: ast.Import) -> None:
+            for alias in child.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+
+        def visit_ImportFrom(self, child: ast.ImportFrom) -> None:
+            for alias in child.names:
+                names.add(alias.asname or alias.name)
+
+        def visit_Name(self, child: ast.Name) -> None:
+            if isinstance(child.ctx, (ast.Store, ast.Del)):
+                names.add(child.id)
+
+    collector = ScopeBindingCollector()
+    for statement in node.body:
+        collector.visit(statement)
+    return names
 
 
 class _Analyzer(ast.NodeVisitor):
@@ -67,12 +104,25 @@ class _Analyzer(ast.NodeVisitor):
         self.lines = source.splitlines(keepends=True)
         self.dsl_aliases: set[str] = set()
         self.prim_func_names: set[str] = set()
-        self.assignments: dict[str, ast.AST] = {}
+        self.assignment_scopes: list[dict[str, ast.AST]] = [{}]
+        self.binding_scopes: list[set[str]] = [set()]
+        self.shadow_scopes: list[set[str]] = [set()]
         self.function_stack: list[str] = []
-        self.prim_depth = 0
-        self.alloc_extents: list[dict[str, ast.AST]] = []
-        self.buffer_extents: list[dict[str, ast.AST]] = []
+        self.prim_stack: list[bool] = []
+        self.alloc_extents: list[dict[str, tuple[int, ast.AST]]] = []
+        self.buffer_extents: list[dict[str, tuple[int, ast.AST]]] = []
         self.targets: list[CopyLoopTarget] = []
+
+    def _visible_assignments(self) -> dict[str, ast.AST]:
+        visible: dict[str, ast.AST] = {}
+        for bindings, assignments in zip(self.binding_scopes, self.assignment_scopes):
+            for name in bindings:
+                visible.pop(name, None)
+            visible.update(assignments)
+        return visible
+
+    def _dsl_active(self, name: str) -> bool:
+        return name in self.dsl_aliases and not any(name in scope for scope in self.shadow_scopes)
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -92,12 +142,14 @@ class _Analyzer(ast.NodeVisitor):
     def visit_Assign(self, node: ast.Assign) -> None:
         for target in node.targets:
             if isinstance(target, ast.Name):
-                self.assignments[target.id] = node.value
-        if self.prim_depth and self.alloc_extents:
+                self.assignment_scopes[-1][target.id] = node.value
+                if target.id in self.dsl_aliases:
+                    self.shadow_scopes[-1].add(target.id)
+        if self.prim_stack and self.prim_stack[-1] and self.alloc_extents:
             call = node.value if isinstance(node.value, ast.Call) else None
             call_name = _call_name(call.func) if call else None
-            if call and call_name and call_name[0] in self.dsl_aliases and call_name[1] in {"alloc_fragment", "alloc_shared"}:
-                extent = _shape_last_extent(call.args[0], self.assignments) if call.args else None
+            if call and call_name and self._dsl_active(call_name[0]) and call_name[1] in {"alloc_fragment", "alloc_shared"}:
+                extent = _shape_info(call.args[0], self._visible_assignments()) if call.args else None
                 for target in node.targets:
                     if isinstance(target, ast.Name) and extent is not None:
                         self.alloc_extents[-1][target.id] = extent
@@ -106,20 +158,20 @@ class _Analyzer(ast.NodeVisitor):
     def _is_prim_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         for decorator in node.decorator_list:
             name = _call_name(decorator.func if isinstance(decorator, ast.Call) else decorator)
-            if name and ((name[0] in self.dsl_aliases and name[1] == "prim_func") or (not name[0] and name[1] in self.prim_func_names)):
+            if name and ((self._dsl_active(name[0]) and name[1] == "prim_func") or (not name[0] and name[1] in self.prim_func_names)):
                 return True
         return False
 
-    def _function_buffers(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.AST]:
-        buffers: dict[str, ast.AST] = {}
+    def _function_buffers(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, tuple[int, ast.AST]]:
+        buffers: dict[str, tuple[int, ast.AST]] = {}
         for arg in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]:
             annotation = arg.annotation
             if not isinstance(annotation, ast.Call):
                 continue
             name = _call_name(annotation.func)
-            if not name or name[0] not in self.dsl_aliases or name[1] not in {"Tensor", "Buffer"} or not annotation.args:
+            if not name or not self._dsl_active(name[0]) or name[1] not in {"Tensor", "Buffer"} or not annotation.args:
                 continue
-            extent = _shape_last_extent(annotation.args[0], self.assignments)
+            extent = _shape_info(annotation.args[0], self._visible_assignments())
             if extent is not None:
                 buffers[arg.arg] = extent
         return buffers
@@ -127,15 +179,22 @@ class _Analyzer(ast.NodeVisitor):
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         self.function_stack.append(node.name)
         is_prim = self._is_prim_func(node)
+        bound_names = _bound_names(node)
+        self.assignment_scopes.append({})
+        self.binding_scopes.append(bound_names)
+        self.shadow_scopes.append(bound_names & self.dsl_aliases)
+        self.prim_stack.append(is_prim)
         if is_prim:
-            self.prim_depth += 1
             self.alloc_extents.append({})
             self.buffer_extents.append(self._function_buffers(node))
         self.generic_visit(node)
         if is_prim:
             self.buffer_extents.pop()
             self.alloc_extents.pop()
-            self.prim_depth -= 1
+        self.prim_stack.pop()
+        self.shadow_scopes.pop()
+        self.binding_scopes.pop()
+        self.assignment_scopes.pop()
         self.function_stack.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -145,17 +204,17 @@ class _Analyzer(ast.NodeVisitor):
         self._visit_function(node)
 
     def visit_For(self, node: ast.For) -> None:
-        if self.prim_depth:
+        if self.prim_stack and self.prim_stack[-1]:
             target = self._copy_target(node)
             if target is not None:
                 self.targets.append(target)
         self.generic_visit(node)
 
     def _copy_target(self, node: ast.For) -> CopyLoopTarget | None:
-        if not isinstance(node.target, ast.Name) or not isinstance(node.iter, ast.Call) or len(node.iter.args) != 1 or node.iter.keywords:
+        if node.orelse or not isinstance(node.target, ast.Name) or not isinstance(node.iter, ast.Call) or len(node.iter.args) != 1 or node.iter.keywords:
             return None
         call_name = _call_name(node.iter.func)
-        if not call_name or call_name[0] not in self.dsl_aliases or call_name[1] != "Parallel":
+        if not call_name or not self._dsl_active(call_name[0]) or call_name[1] != "Parallel":
             return None
         if len(node.body) != 1 or not isinstance(node.body[0], ast.Assign) or len(node.body[0].targets) != 1:
             return None
@@ -177,12 +236,18 @@ class _Analyzer(ast.NodeVisitor):
             return None
         if any(not _is_pure_index(item) for item in source_items[:-1]):
             return None
+        if any(isinstance(item, ast.Name) and item.id == loop_name for item in source_items[:-1]):
+            return None
         extent = node.iter.args[0]
         if not _is_pure_index(extent):
             return None
-        destination_extent = self.alloc_extents[-1].get(destination.value.id)
-        source_extent = self.buffer_extents[-1].get(source.value.id)
-        if destination_extent is None or source_extent is None:
+        destination_info = self.alloc_extents[-1].get(destination.value.id)
+        source_info = self.buffer_extents[-1].get(source.value.id)
+        if destination_info is None or source_info is None:
+            return None
+        destination_rank, destination_extent = destination_info
+        source_rank, source_extent = source_info
+        if destination_rank != len(destination_items) or source_rank != len(source_items):
             return None
         if not (_same_expr(extent, destination_extent) and _same_expr(extent, source_extent)):
             return None

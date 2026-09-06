@@ -50,12 +50,12 @@ class SourceOptimizationTrial(BaseModel):
     decision_reason: str | None = None
     diff: str = ""
     correctness: SourceTrialCorrectness = Field(default_factory=SourceTrialCorrectness)
-    baseline_latency_ms: float | None = None
-    candidate_latency_ms: float | None = None
-    baseline_samples_ms: list[float] = Field(default_factory=list)
-    candidate_samples_ms: list[float] = Field(default_factory=list)
+    baseline_latency_ms: list[float] = Field(default_factory=list)
+    candidate_latency_ms: list[float] = Field(default_factory=list)
+    baseline_median_latency_ms: float | None = None
+    candidate_median_latency_ms: float | None = None
     improvement_percent: float | None = None
-    rollback_verified: bool = False
+    rollback_verified: bool | None = None
     execution_source_sha256: str | None = None
     artifacts: dict[str, Any] = Field(default_factory=dict)
 
@@ -67,6 +67,7 @@ class SourceOptimizationResult(BaseModel):
     status: SourceOptimizationStatus = "not_requested"
     reason: str | None = None
     baseline_source_sha256: str | None = None
+    baseline_verified: bool = False
     best_source_sha256: str | None = None
     accepted_trial_id: str | None = None
     trials: list[SourceOptimizationTrial] = Field(default_factory=list)

@@ -5,7 +5,7 @@ from .models import (
     SourceTrialCorrectness,
 )
 from .analyzer import AnalysisResult, CopyLoopTarget, analyze_source, rewrite_copy_loop
-from .engine import inspect_source_optimization, read_source_result, run_source_optimization, write_source_result
+from .engine import inspect_source_optimization, read_source_result, redact_source_text, run_source_optimization, write_source_result
 
 __all__ = [
     "SOURCE_OPTIMIZATION_SCHEMA_VERSION",
@@ -18,6 +18,7 @@ __all__ = [
     "rewrite_copy_loop",
     "inspect_source_optimization",
     "read_source_result",
+    "redact_source_text",
     "run_source_optimization",
     "write_source_result",
 ]
