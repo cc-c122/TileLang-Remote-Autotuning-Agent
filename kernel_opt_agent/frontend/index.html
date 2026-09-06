@@ -793,18 +793,20 @@
       margin-bottom: 8px;
     }
 
-    .sample-tab-left {
+    .sample-mode-hint {
       display: flex;
-      gap: 22px;
+      align-items: center;
+      min-width: 0;
       color: #667085;
       font-size: 13px;
-      font-weight: 760;
+      font-weight: 650;
     }
 
-    .sample-tab-left span:first-child {
-      border-bottom: 2px solid var(--accent);
-      color: var(--accent);
-      padding-bottom: 8px;
+    .sample-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
     }
 
     .upload-soft {
@@ -833,6 +835,86 @@
       padding: 8px 12px;
       cursor: pointer;
       font-weight: 700;
+    }
+
+    .sample-upload-panel {
+      margin: 10px 0;
+      border: 1px solid #d8e0ea;
+      border-radius: 8px;
+      background: #f8fafc;
+      padding: 12px;
+    }
+
+    .sample-upload-panel[hidden],
+    .sample-actions [hidden] {
+      display: none;
+    }
+
+    .upload-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .sample-file-list {
+      display: grid;
+      gap: 6px;
+      max-height: 220px;
+      margin-top: 10px;
+      overflow: auto;
+    }
+
+    .sample-file-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 10px;
+      min-height: 38px;
+      border: 1px solid #e3e8ef;
+      border-radius: 6px;
+      background: #fff;
+      padding: 4px 5px 4px 10px;
+    }
+
+    .sample-file-path {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+      font-size: 12px;
+      color: #24324a;
+    }
+
+    .sample-file-size {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .sample-file-remove {
+      display: inline-grid;
+      place-items: center;
+      width: 30px;
+      min-width: 30px;
+      height: 30px;
+      padding: 0;
+      border-color: transparent;
+      background: transparent;
+      color: #b42318;
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .sample-file-remove:hover {
+      border-color: #fecdca;
+      background: #fff1f0;
+    }
+
+    .directory-support-note {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
     }
 
     .static-action {
@@ -1037,6 +1119,12 @@
       .view-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .metric-row { grid-template-columns: 1fr; }
       .kv { grid-template-columns: 1fr; }
+      .sample-tabs, .upload-summary { align-items: stretch; flex-direction: column; }
+      .sample-actions { justify-content: stretch; }
+      .sample-actions > * { width: 100%; }
+      .sample-file-row { grid-template-columns: minmax(0, 1fr) auto; }
+      .sample-file-size { grid-column: 1; }
+      .sample-file-remove { grid-column: 2; grid-row: 1 / span 2; }
     }
   </style>
 </head>
@@ -1088,21 +1176,44 @@
                 <label for="v2SampleSourceType">sample 来源</label>
                 <select id="v2SampleSourceType">
                   <option value="inline" selected>粘贴代码</option>
-                  <option value="upload">上传单文件</option>
+                  <option value="upload_single">上传单文件</option>
+                  <option value="upload_directory">上传 sample 目录</option>
                 </select>
               </div>
             </div>
             <div class="sample-tabs" style="margin-top:12px">
-              <div class="sample-tab-left"><span>粘贴代码</span><span>上传单文件</span></div>
-              <label class="upload-soft button-like">
+              <div class="sample-mode-hint" id="sampleModeHint">直接提交编辑器中的源码。</div>
+              <div class="sample-actions">
+              <label id="singleSamplePicker" class="upload-soft button-like" hidden>
                 <input id="v2SampleFile" type="file" accept=".py,.txt,.yaml,.json" hidden>
-                上传 sample 文件
+                选择单文件
               </label>
+              <label id="directorySamplePicker" class="upload-soft button-like" hidden>
+                <input id="v2SampleDirectory" type="file" multiple webkitdirectory directory hidden>
+                选择 sample 目录
+              </label>
+              <label id="fallbackSamplePicker" class="upload-soft button-like" hidden>
+                <input id="v2SampleFilesFallback" type="file" multiple hidden>
+                选择多个文件
+              </label>
+              <button id="clearSampleFilesBtn" class="secondary" type="button" hidden>清空文件</button>
+              </div>
+            </div>
+            <div id="sampleUploadPanel" class="sample-upload-panel" hidden>
+              <div class="upload-summary">
+                <span class="chip" id="sampleUploadStatus">尚未选择文件</span>
+                <span class="muted">最多 100 个文件；单文件 2 MiB；总计 10 MiB</span>
+              </div>
+              <div class="field">
+                <label for="v2UploadEntrySelect">从上传文件中选择 entry_file</label>
+                <select id="v2UploadEntrySelect" disabled><option value="">尚未选择文件</option></select>
+              </div>
+              <div id="directorySupportHint" class="directory-support-note"></div>
+              <div id="sampleFileList" class="sample-file-list"><div class="empty">尚未选择 sample 文件。</div></div>
             </div>
             <div class="code-shell">
               <textarea id="v2SampleText" placeholder="# TileLang sample&#10;@T.kernel&#10;def kernel(...):&#10;    # paste TileLang kernel here"></textarea>
             </div>
-            <input id="v2SamplePath" type="hidden" autocomplete="off">
           </section>
 
           <section class="section">
@@ -1135,8 +1246,12 @@
           <section class="section">
             <div class="step-title">
               <span class="step-num">4.</span>
-              <h2>运行设置</h2>
+              <h2>运行与验证</h2>
             </div>
+            <input id="v2MaxIterations" type="hidden" value="3">
+            <input id="v2CandidatesPerIteration" type="hidden" value="4">
+            <input id="v2ProfilerEnabled" type="hidden" value="false">
+            <input id="v2PatchingEnabled" type="hidden" value="false">
             <div class="form-grid three">
               <div class="field">
                 <label for="v2RunnerType">runner</label>
@@ -1146,34 +1261,12 @@
                 </select>
               </div>
               <div class="field">
-                <label for="v2BudgetMode">优化预算</label>
+                <label for="v2BudgetMode">运行预算</label>
                 <select id="v2BudgetMode">
                   <option value="quick">快速</option>
                   <option value="standard" selected>标准</option>
                   <option value="deep">深入</option>
                 </select>
-              </div>
-              <div class="field">
-                <label for="v2ProfilerEnabled">profiler enabled</label>
-                <select id="v2ProfilerEnabled">
-                  <option value="true" selected>开启</option>
-                  <option value="false">关闭</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="v2PatchingEnabled">patching enabled</label>
-                <select id="v2PatchingEnabled">
-                  <option value="false" selected>关闭</option>
-                  <option value="true">开启</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="v2MaxIterations">最大迭代次数</label>
-                <input id="v2MaxIterations" type="number" min="1" step="1" value="3">
-              </div>
-              <div class="field">
-                <label for="v2CandidatesPerIteration">每轮候选数</label>
-                <input id="v2CandidatesPerIteration" type="number" min="1" step="1" value="4">
               </div>
               <div class="field">
                 <label for="v2TimeoutSeconds">timeout 秒数</label>
@@ -1200,22 +1293,16 @@
                   <label for="v2BenchmarkCommand">benchmark command</label>
                   <input id="v2BenchmarkCommand" value="python benchmark.py" autocomplete="off">
                 </div>
-                <div class="field">
-                  <label for="v2ProfilerType">profiler type</label>
-                  <select id="v2ProfilerType">
-                    <option value="dummy">dummy</option>
-                  </select>
-                </div>
+                <input id="v2ProfilerType" type="hidden" value="dummy">
               </div>
             </details>
           </section>
 
           <section class="section">
             <div class="action-bar">
-              <button id="startOptimizationBtn" class="primary-action" type="button">开始优化</button>
-              <button id="generateRunRequestBtn" class="secondary" type="button">预览内部配置</button>
+              <button id="startOptimizationBtn" class="primary-action" type="button">验证并测量</button>
             </div>
-            <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“预览内部配置”后显示脱敏内部配置。"></textarea>
+            <div id="startValidationMessage" class="empty" style="margin-top:10px" aria-live="polite"></div>
           </section>
         </section>
 
@@ -1349,17 +1436,19 @@
               <span class="muted">低优先级入口</span>
             </div>
             <div class="action-bar">
+              <button id="generateRunRequestBtn" class="secondary" type="button">预览 run_request.yaml</button>
               <button id="downloadRunRequestYamlBtn" class="secondary" type="button">下载 run_request.yaml</button>
               <button id="copyRunCommandBtn" class="secondary" type="button">复制 CLI 命令</button>
               <button id="downloadSettingsBtn" class="secondary" type="button">下载 settings.yaml</button>
               <button id="chooseDirBtn" class="secondary" type="button">选择结果目录</button>
               <button id="reloadBtn" class="secondary" type="button">刷新本地结果</button>
             </div>
-            <div class="developer-note" style="margin-top:12px">上传 sample 目录：未接入。当前普通主流程只支持粘贴代码或上传单文件。</div>
+            <div class="developer-note" style="margin-top:12px">浏览器上传通过同源 API 进入任务隔离 workspace；文件驱动入口仅用于历史兼容和调试。</div>
             <div class="field" style="margin-top:12px">
               <label for="runCommandOutput">CLI 命令</label>
               <input id="runCommandOutput" readonly value="python main.py --run-request run_request.yaml --settings settings.yaml">
             </div>
+            <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="开发者模式 run_request.yaml 预览。"></textarea>
             <textarea id="settingsOutput" readonly style="margin-top:12px" placeholder="settings.yaml 预览；不包含密钥值。"></textarea>
           </section>
           <section class="section">
@@ -1490,10 +1579,18 @@
       bottleneck_diagnosed: "瓶颈诊断完成",
     };
     const FIXED_RESULT_DIR = "../workspace/results/";
+    const SAMPLE_UPLOAD_LIMITS = {
+      maxFiles: 100,
+      maxFileBytes: 2 * 1024 * 1024,
+      maxTotalBytes: 10 * 1024 * 1024,
+    };
+    const SENSITIVE_UPLOAD_SEGMENTS = new Set([".git", ".ssh", ".env"]);
+    const SENSITIVE_UPLOAD_BASENAME_RE = /^(?:\.env(?:\..*)?|\.envrc|authorized_keys|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|credentials?|secrets?)(?:\..*)?$|\.(?:pem|key|p12|pfx|ppk)$/i;
+    const WINDOWS_RESERVED_UPLOAD_NAMES = new Set(["aux", "con", "nul", "prn", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"]);
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
-    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, apiHealthy: false, apiError: "", hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, settingsEnv: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskList: [], taskPollTimer: null, eventPollTimer: null };
+    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, apiHealthy: false, apiError: "", hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, settingsEnv: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskList: [], taskPollTimer: null, eventPollTimer: null, sampleFiles: [], sampleUploadId: null, sampleUploadStage: "empty", sampleUploadError: "", sampleUploadVersion: 0, sampleUploadedVersion: null, sampleUploadedEntryFile: "", sampleSourceMode: "inline", taskSubmitting: false, cancellationPending: false };
     const el = {
       alerts: document.getElementById("alerts"),
       apiHealthStatus: document.getElementById("apiHealthStatus"),
@@ -1530,7 +1627,6 @@
       v2CorrectnessCommand: document.getElementById("v2CorrectnessCommand"),
       v2EntryFile: document.getElementById("v2EntryFile"),
       v2SampleSourceType: document.getElementById("v2SampleSourceType"),
-      v2SamplePath: document.getElementById("v2SamplePath"),
       v2RunnerType: document.getElementById("v2RunnerType"),
       v2BudgetMode: document.getElementById("v2BudgetMode"),
       v2MaxIterations: document.getElementById("v2MaxIterations"),
@@ -1540,10 +1636,23 @@
       v2ProfilerType: document.getElementById("v2ProfilerType"),
       v2PatchingEnabled: document.getElementById("v2PatchingEnabled"),
       v2SampleFile: document.getElementById("v2SampleFile"),
+      v2SampleDirectory: document.getElementById("v2SampleDirectory"),
+      v2SampleFilesFallback: document.getElementById("v2SampleFilesFallback"),
       v2SampleText: document.getElementById("v2SampleText"),
+      v2UploadEntrySelect: document.getElementById("v2UploadEntrySelect"),
+      sampleModeHint: document.getElementById("sampleModeHint"),
+      sampleUploadPanel: document.getElementById("sampleUploadPanel"),
+      sampleUploadStatus: document.getElementById("sampleUploadStatus"),
+      sampleFileList: document.getElementById("sampleFileList"),
+      directorySupportHint: document.getElementById("directorySupportHint"),
+      singleSamplePicker: document.getElementById("singleSamplePicker"),
+      directorySamplePicker: document.getElementById("directorySamplePicker"),
+      fallbackSamplePicker: document.getElementById("fallbackSamplePicker"),
+      clearSampleFilesBtn: document.getElementById("clearSampleFilesBtn"),
       v2HardwareEditor: document.getElementById("v2HardwareEditor"),
       resolveHardwareBtn: document.getElementById("resolveHardwareBtn"),
       startOptimizationBtn: document.getElementById("startOptimizationBtn"),
+      startValidationMessage: document.getElementById("startValidationMessage"),
       cancelTaskBtn: document.getElementById("cancelTaskBtn"),
       taskStatus: document.getElementById("taskStatus"),
       taskDetailPanel: document.getElementById("taskDetailPanel"),
@@ -1587,13 +1696,24 @@
     });
     el.chooseDirBtn.addEventListener("click", chooseDirectory);
     el.reloadBtn.addEventListener("click", loadAndRender);
+    el.v2SampleSourceType.addEventListener("change", handleSampleSourceChange);
     el.v2SampleFile.addEventListener("change", readSampleFile);
+    el.v2SampleDirectory.addEventListener("change", readSampleDirectory);
+    el.v2SampleFilesFallback.addEventListener("change", readFallbackSampleFiles);
+    el.v2UploadEntrySelect.addEventListener("change", chooseUploadEntryFile);
+    el.v2EntryFile.addEventListener("input", handleEntryFileInput);
+    el.v2SampleText.addEventListener("input", updateStartButtonState);
+    el.clearSampleFilesBtn.addEventListener("click", clearSampleFiles);
+    el.sampleFileList.addEventListener("click", removeSelectedSampleFile);
     el.v2GpuModel.addEventListener("input", renderHardwareEditor);
     el.v2Backend.addEventListener("input", renderHardwareEditor);
     el.resolveHardwareBtn.addEventListener("click", resolveHardwareProfile);
     el.startOptimizationBtn.addEventListener("click", startOptimization);
     el.v2BudgetMode.addEventListener("change", applyBudgetPreset);
     [el.v2MaxIterations, el.v2CandidatesPerIteration, el.v2TimeoutSeconds].forEach((input) => {
+      input.addEventListener("input", updateStartButtonState);
+    });
+    [el.v2BuildCommand, el.v2CorrectnessCommand, el.v2BenchmarkCommand].forEach((input) => {
       input.addEventListener("input", updateStartButtonState);
     });
     el.cancelTaskBtn.addEventListener("click", cancelActiveTask);
@@ -1614,9 +1734,10 @@
     });
     loadSettings();
     applyBudgetPreset();
+    updateSampleSourceUi();
     renderHardwareEditor();
     updateStartButtonState();
-    renderTaskWaiting("暂无任务，点击开始优化后这里会显示进度。");
+    renderTaskWaiting("暂无任务，提交验证任务后这里会显示进度。");
     renderTaskList();
     checkApiHealth();
 
@@ -1635,20 +1756,288 @@
       await loadAndRender();
     }
 
-    async function readSampleFile() {
+    function sampleSourceMode() {
+      const value = el.v2SampleSourceType.value || "inline";
+      return value === "upload" ? "upload_single" : value;
+    }
+
+    function isUploadSourceMode(value = sampleSourceMode()) {
+      return value === "upload_single" || value === "upload_directory";
+    }
+
+    function directoryPickerSupported() {
+      return "webkitdirectory" in el.v2SampleDirectory;
+    }
+
+    function formatBytes(value) {
+      const bytes = Number(value) || 0;
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`;
+    }
+
+    function uploadPath(rawPath) {
+      const raw = String(rawPath || "");
+      if (!raw || raw !== raw.trim() || /[\u0000-\u001f\u007f]/.test(raw) || raw.includes("\\") || raw.startsWith("/") || raw.startsWith("//") || /^[A-Za-z]:/.test(raw)) {
+        throw new Error(`文件路径不是安全的 POSIX 相对路径：${raw || "(empty)"}`);
+      }
+      const segments = raw.split("/");
+      if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+        throw new Error(`文件路径包含空段或目录穿越：${raw}`);
+      }
+      if (segments.some((segment) => segment.includes(":") || segment.endsWith(".") || segment.endsWith(" "))) {
+        throw new Error(`文件路径包含跨平台不安全字符：${raw}`);
+      }
+      if (segments.some((segment) => WINDOWS_RESERVED_UPLOAD_NAMES.has(segment.split(".", 1)[0].toLowerCase()))) {
+        throw new Error(`文件路径包含 Windows 保留名称：${raw}`);
+      }
+      if (segments.some((segment) => SENSITIVE_UPLOAD_SEGMENTS.has(segment.toLowerCase()) || segment.toLowerCase().startsWith(".env."))) {
+        throw new Error(`拒绝上传敏感目录中的文件：${raw}`);
+      }
+      if (SENSITIVE_UPLOAD_BASENAME_RE.test(segments[segments.length - 1])) {
+        throw new Error(`拒绝上传疑似环境变量或私钥文件：${raw}`);
+      }
+      return segments.join("/");
+    }
+
+    function normalizeSelectedSampleFiles(fileList, mode) {
+      const files = Array.from(fileList || []);
+      if (!files.length) throw new Error("尚未选择 sample 文件。");
+      if (files.length > SAMPLE_UPLOAD_LIMITS.maxFiles) {
+        throw new Error(`文件数量超过限制：最多 ${SAMPLE_UPLOAD_LIMITS.maxFiles} 个，当前 ${files.length} 个。`);
+      }
+      let rawPaths = files.map((file) => mode === "directory" && file.webkitRelativePath ? file.webkitRelativePath : file.name);
+      let rootName = "";
+      if (mode === "directory" && rawPaths.every((path) => String(path).includes("/"))) {
+        const firstSegments = rawPaths.map((path) => String(path).split("/")[0]);
+        if (firstSegments.every((segment) => segment === firstSegments[0])) {
+          rootName = firstSegments[0];
+          rawPaths = rawPaths.map((path) => String(path).split("/").slice(1).join("/"));
+        }
+      }
+      const seen = new Set();
+      let totalBytes = 0;
+      const items = files.map((file, index) => {
+        const path = uploadPath(rawPaths[index]);
+        const duplicateKey = path.normalize("NFC").toLowerCase();
+        if (seen.has(duplicateKey)) throw new Error(`存在重复路径或大小写冲突：${path}`);
+        seen.add(duplicateKey);
+        if (file.size > SAMPLE_UPLOAD_LIMITS.maxFileBytes) {
+          throw new Error(`文件超过 2 MiB 限制：${path}（${formatBytes(file.size)}）。`);
+        }
+        totalBytes += file.size;
+        return { file, path, sizeBytes: file.size };
+      });
+      if (totalBytes > SAMPLE_UPLOAD_LIMITS.maxTotalBytes) {
+        throw new Error(`文件总大小超过 10 MiB 限制：当前 ${formatBytes(totalBytes)}。`);
+      }
+      return { items, rootName, totalBytes };
+    }
+
+    function invalidateSampleUpload() {
+      state.sampleUploadVersion += 1;
+      state.sampleUploadId = null;
+      state.sampleUploadedVersion = null;
+      state.sampleUploadedEntryFile = "";
+      if (state.sampleFiles.length) state.sampleUploadStage = "selected";
+    }
+
+    function preferredEntryFile(items, currentValue = "") {
+      const paths = items.map((item) => item.path);
+      if (paths.includes(currentValue)) return currentValue;
+      if (paths.includes("kernel.py")) return "kernel.py";
+      return paths.find((path) => path.toLowerCase().endsWith(".py")) || paths[0] || "";
+    }
+
+    async function previewSelectedEntry(version = state.sampleUploadVersion) {
+      const entryFile = el.v2EntryFile.value.trim();
+      const item = state.sampleFiles.find((candidate) => candidate.path === entryFile);
+      if (!item) return;
       try {
-        const file = el.v2SampleFile.files?.[0];
-        if (!file) return;
-        el.v2SampleText.value = sanitizeText(await file.text());
-        el.v2SampleSourceType.value = "upload";
-        el.v2EntryFile.value = sanitizeText(file.name || "kernel.py");
-        if (!el.v2ProjectName.value || el.v2ProjectName.value === "tilelang-v2-run") {
-          el.v2ProjectName.value = file.name.replace(/\.[^.]+$/, "") || "tilelang-v2-run";
+        const text = sanitizeText(await item.file.text());
+        if (version === state.sampleUploadVersion && entryFile === el.v2EntryFile.value.trim()) {
+          el.v2SampleText.value = text;
         }
       } catch (error) {
-        addOneShotWarning(`读取 sample 文件失败：${error.message || "无法读取文件内容"}`);
+        if (version !== state.sampleUploadVersion) return;
+        state.sampleUploadStage = "error";
+        state.sampleUploadError = `读取入口文件失败：${error.message || "无法读取文件内容"}`;
+        renderSampleUploadPanel();
+      }
+    }
+
+    async function selectSampleFiles(fileList, mode) {
+      invalidateSampleUpload();
+      state.sampleFiles = [];
+      state.sampleUploadError = "";
+      state.sampleUploadStage = "reading";
+      renderSampleUploadPanel();
+      try {
+        const selection = normalizeSelectedSampleFiles(fileList, mode);
+        state.sampleFiles = selection.items;
+        const entryFile = preferredEntryFile(selection.items, el.v2EntryFile.value.trim());
+        el.v2EntryFile.value = entryFile;
+        state.sampleUploadStage = "reading";
+        renderSampleUploadPanel();
+        const version = state.sampleUploadVersion;
+        await previewSelectedEntry(version);
+        if (version !== state.sampleUploadVersion) return;
+        state.sampleUploadStage = "selected";
+        if (!el.v2ProjectName.value || el.v2ProjectName.value === "tilelang-v2-run") {
+          const sourceName = selection.rootName || entryFile.split("/").pop() || "tilelang-v2-run";
+          el.v2ProjectName.value = sourceName.replace(/\.[^.]+$/, "") || "tilelang-v2-run";
+        }
+      } catch (error) {
+        state.sampleFiles = [];
+        state.sampleUploadStage = "error";
+        state.sampleUploadError = error.message || "读取 sample 文件失败。";
+        el.v2SampleText.value = "";
+        addOneShotWarning(state.sampleUploadError);
         renderAlerts();
       }
+      renderSampleUploadPanel();
+      updateStartButtonState();
+    }
+
+    async function readSampleFile() {
+      const file = el.v2SampleFile.files?.[0];
+      if (!file) return;
+      el.v2SampleSourceType.value = "upload_single";
+      await selectSampleFiles([file], "single");
+    }
+
+    async function readSampleDirectory() {
+      if (!el.v2SampleDirectory.files?.length) return;
+      el.v2SampleSourceType.value = "upload_directory";
+      await selectSampleFiles(el.v2SampleDirectory.files, "directory");
+    }
+
+    async function readFallbackSampleFiles() {
+      if (!el.v2SampleFilesFallback.files?.length) return;
+      el.v2SampleSourceType.value = "upload_directory";
+      await selectSampleFiles(el.v2SampleFilesFallback.files, "fallback");
+    }
+
+    function handleSampleSourceChange() {
+      const nextMode = sampleSourceMode();
+      if (nextMode !== state.sampleSourceMode) {
+        invalidateSampleUpload();
+        state.sampleUploadError = "";
+        state.sampleSourceMode = nextMode;
+      }
+      updateSampleSourceUi();
+    }
+
+    function updateSampleSourceUi() {
+      const mode = sampleSourceMode();
+      state.sampleSourceMode = mode;
+      const uploadMode = isUploadSourceMode(mode);
+      const supportsDirectory = directoryPickerSupported();
+      el.v2SampleText.readOnly = uploadMode;
+      el.sampleUploadPanel.hidden = !uploadMode;
+      el.singleSamplePicker.hidden = mode !== "upload_single";
+      el.directorySamplePicker.hidden = mode !== "upload_directory" || !supportsDirectory;
+      el.fallbackSamplePicker.hidden = mode !== "upload_directory" || supportsDirectory;
+      el.clearSampleFilesBtn.hidden = !uploadMode || !state.sampleFiles.length;
+      el.sampleModeHint.textContent = mode === "inline"
+        ? "直接提交编辑器中的源码。"
+        : mode === "upload_single"
+          ? "单文件会先安全上传，再创建隔离任务。"
+          : supportsDirectory
+            ? "选择目录后保留内部结构，并剥离共同的最外层目录名。"
+            : "当前浏览器不能保留目录结构；可回退选择多个文件。";
+      renderSampleUploadPanel();
+      updateStartButtonState();
+    }
+
+    function uploadStageView() {
+      if (state.sampleUploadStage === "reading") return { text: "正在读取文件", className: "chip warn" };
+      if (state.sampleUploadStage === "uploading") return { text: "正在上传到后端", className: "chip warn" };
+      if (state.sampleUploadStage === "uploaded") return { text: "上传完成", className: "chip ok" };
+      if (state.sampleUploadStage === "error") return { text: "上传未就绪", className: "chip bad" };
+      if (state.sampleFiles.length) return { text: `已选择 ${state.sampleFiles.length} 个文件，尚未上传`, className: "chip warn" };
+      return { text: "尚未选择文件", className: "chip" };
+    }
+
+    function renderSampleUploadPanel() {
+      if (!el.sampleUploadPanel) return;
+      const stage = uploadStageView();
+      el.sampleUploadStatus.className = stage.className;
+      el.sampleUploadStatus.textContent = stage.text;
+      const entryFile = el.v2EntryFile.value.trim();
+      el.v2UploadEntrySelect.disabled = !state.sampleFiles.length;
+      el.v2UploadEntrySelect.innerHTML = state.sampleFiles.length
+        ? state.sampleFiles.map((item) => `<option value="${escapeHtml(item.path)}" ${item.path === entryFile ? "selected" : ""}>${escapeHtml(item.path)}</option>`).join("")
+        : `<option value="">尚未选择文件</option>`;
+      const totalBytes = state.sampleFiles.reduce((sum, item) => sum + item.sizeBytes, 0);
+      el.sampleFileList.innerHTML = state.sampleFiles.length
+        ? `${state.sampleFiles.map((item, index) => `<div class="sample-file-row"><span class="sample-file-path">${escapeHtml(item.path)}</span><span class="sample-file-size">${formatBytes(item.sizeBytes)}</span><button class="sample-file-remove" type="button" data-remove-sample-index="${index}" title="移除文件" aria-label="移除 ${escapeHtml(item.path)}">×</button></div>`).join("")}<div class="muted">共 ${state.sampleFiles.length} 个文件，${formatBytes(totalBytes)}</div>`
+        : `<div class="empty">尚未选择 sample 文件。</div>`;
+      const supportsDirectory = directoryPickerSupported();
+      el.directorySupportHint.textContent = sampleSourceMode() === "upload_directory"
+        ? supportsDirectory
+          ? "服务端还会再次检查路径、文件类型和敏感内容边界。"
+          : "多文件回退无法获得本机目录路径；文件会按文件名上传，同名文件会被拒绝。"
+        : "";
+      if (state.sampleUploadError) {
+        el.sampleFileList.insertAdjacentHTML("afterbegin", `<div class="alert bad">${escapeHtml(state.sampleUploadError)}</div>`);
+      }
+      el.clearSampleFilesBtn.hidden = !isUploadSourceMode() || !state.sampleFiles.length;
+    }
+
+    function handleEntryFileInput() {
+      if (!isUploadSourceMode()) {
+        updateStartButtonState();
+        return;
+      }
+      invalidateSampleUpload();
+      state.sampleUploadError = "";
+      renderSampleUploadPanel();
+      previewSelectedEntry(state.sampleUploadVersion);
+      updateStartButtonState();
+    }
+
+    async function chooseUploadEntryFile() {
+      if (!el.v2UploadEntrySelect.value) return;
+      invalidateSampleUpload();
+      state.sampleUploadError = "";
+      el.v2EntryFile.value = el.v2UploadEntrySelect.value;
+      renderSampleUploadPanel();
+      await previewSelectedEntry(state.sampleUploadVersion);
+      updateStartButtonState();
+    }
+
+    async function removeSelectedSampleFile(event) {
+      const button = event.target.closest("[data-remove-sample-index]");
+      if (!button) return;
+      const index = Number(button.dataset.removeSampleIndex);
+      if (!Number.isInteger(index) || !state.sampleFiles[index]) return;
+      invalidateSampleUpload();
+      state.sampleFiles.splice(index, 1);
+      state.sampleUploadError = "";
+      el.v2EntryFile.value = preferredEntryFile(state.sampleFiles, el.v2EntryFile.value.trim());
+      if (!state.sampleFiles.length) {
+        state.sampleUploadStage = "empty";
+        el.v2SampleText.value = "";
+      } else {
+        state.sampleUploadStage = "selected";
+        await previewSelectedEntry(state.sampleUploadVersion);
+      }
+      renderSampleUploadPanel();
+      updateStartButtonState();
+    }
+
+    function clearSampleFiles() {
+      invalidateSampleUpload();
+      state.sampleFiles = [];
+      state.sampleUploadStage = "empty";
+      state.sampleUploadError = "";
+      el.v2SampleFile.value = "";
+      el.v2SampleDirectory.value = "";
+      el.v2SampleFilesFallback.value = "";
+      el.v2SampleText.value = "";
+      renderSampleUploadPanel();
+      updateStartButtonState();
     }
 
     function loadSettings() {
@@ -2230,15 +2619,68 @@
       return message && (!Number.isInteger(value) || value < 1) ? message : "";
     }
 
+    function uploadSelectionValidationError() {
+      if (!state.sampleFiles.length) return "请先选择要上传的 sample 文件。";
+      const entryFile = el.v2EntryFile.value.trim();
+      if (!entryFile) return "entry_file 不能为空。";
+      if (!state.sampleFiles.some((item) => item.path === entryFile)) {
+        return `entry_file 必须与上传文件列表中的路径完全一致：${entryFile}`;
+      }
+      if (state.sampleUploadStage === "reading" || state.sampleUploadStage === "uploading") {
+        return "sample 文件仍在读取或上传，请稍候。";
+      }
+      return "";
+    }
+
+    function sampleValidationError() {
+      if (isUploadSourceMode()) return uploadSelectionValidationError();
+      if (!sanitizeText(el.v2SampleText.value).trim()) return "请先粘贴算子源码。";
+      if (!el.v2EntryFile.value.trim()) return "entry_file 不能为空。";
+      try {
+        uploadPath(el.v2EntryFile.value.trim());
+      } catch (error) {
+        return error.message;
+      }
+      return "";
+    }
+
+    function commandValidationError() {
+      const entryFile = el.v2EntryFile.value.trim() || "kernel.py";
+      const paths = isUploadSourceMode()
+        ? new Set(state.sampleFiles.map((item) => item.path))
+        : new Set([entryFile]);
+      const buildCommand = el.v2BuildCommand.value.trim();
+      const correctnessCommand = el.v2CorrectnessCommand.value.trim();
+      const benchmarkCommand = el.v2BenchmarkCommand.value.trim();
+      if (buildCommand === "python -m py_compile kernel.py" && entryFile !== "kernel.py") {
+        return `默认 build 命令指向 kernel.py，但当前 entry_file 是 ${entryFile}；请在高级命令设置中填写实际命令。`;
+      }
+      if (correctnessCommand === "python correctness.py" && !paths.has("correctness.py")) {
+        return "当前 sample 不包含 correctness.py，默认 correctness 命令无法运行；请上传依赖文件或填写实际命令。";
+      }
+      if (benchmarkCommand === "python benchmark.py" && !paths.has("benchmark.py")) {
+        return "当前 sample 不包含 benchmark.py，默认 benchmark 命令无法运行；请上传依赖文件或填写实际命令。";
+      }
+      return "";
+    }
+
+    function startFormValidationError() {
+      return budgetValidationError() || sampleValidationError() || commandValidationError();
+    }
+
     function updateStartButtonState() {
-      const error = budgetValidationError();
-      el.v2MaxIterations.setCustomValidity(budgetFieldError(el.v2MaxIterations, error));
-      el.v2CandidatesPerIteration.setCustomValidity(budgetFieldError(el.v2CandidatesPerIteration, error));
-      el.v2TimeoutSeconds.setCustomValidity(budgetFieldError(el.v2TimeoutSeconds, error));
-      el.startOptimizationBtn.disabled = !!error;
-      if (error) {
+      const budgetError = budgetValidationError();
+      const error = startFormValidationError();
+      el.v2MaxIterations.setCustomValidity(budgetFieldError(el.v2MaxIterations, budgetError));
+      el.v2CandidatesPerIteration.setCustomValidity(budgetFieldError(el.v2CandidatesPerIteration, budgetError));
+      el.v2TimeoutSeconds.setCustomValidity(budgetFieldError(el.v2TimeoutSeconds, budgetError));
+      el.startOptimizationBtn.disabled = state.taskSubmitting || !!error;
+      el.startValidationMessage.textContent = state.taskSubmitting
+        ? "正在准备并提交真实后端任务，请勿重复操作。"
+        : error || "输入已就绪；提交后由后端执行 correctness、build 和 benchmark。";
+      if (budgetError) {
         el.taskStatus.textContent = "暂无任务";
-        el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(error)}</div>`;
+        el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(budgetError)}</div>`;
       }
     }
 
@@ -2249,16 +2691,22 @@
         renderAlerts();
         return;
       }
+      if (isUploadSourceMode()) {
+        state.runRequest = null;
+        el.runRequestOutput.value = "浏览器上传由同源 API 物化到任务 workspace，不能导出为客户端本地路径。请切换到“粘贴代码”后再生成开发者模式任务文件。";
+        addOneShotWarning("上传 sample 不会被写成客户端本地路径；开发者 YAML 仅支持当前的 inline 内容。");
+        renderAlerts();
+        return;
+      }
       const budget = readBudgetInputs();
       const sampleText = sanitizeText(el.v2SampleText.value);
-      const sourceType = el.v2SampleSourceType.value || "inline";
       const request = {
         schema_version: "v2.run_request.v1",
         project_name: sanitizeText(el.v2ProjectName.value.trim() || "tilelang-v2-run"),
         sample: {
-          source_type: sourceType,
-          inline_text: sourceType === "path" ? null : (sampleText || null),
-          path: sourceType === "path" ? (sanitizeText(el.v2SamplePath.value.trim()) || null) : null,
+          source_type: "inline",
+          inline_text: sampleText || null,
+          path: null,
           entry_file: sanitizeText(el.v2EntryFile.value.trim() || "kernel.py"),
         },
         commands: {
@@ -2299,6 +2747,7 @@
 
     function downloadRunRequest() {
       if (!state.runRequest) generateRunRequest();
+      if (!state.runRequest) return;
       downloadTextFile("run_request.yaml", toYaml(state.runRequest), "text/yaml");
     }
 
@@ -2315,10 +2764,11 @@
     async function apiFetch(path, options = {}) {
       let response;
       try {
+        const isFormData = options.body instanceof FormData;
         response = await fetch(path, {
           method: options.method || "GET",
-          headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-          body: options.body ? JSON.stringify(options.body) : undefined,
+          headers: isFormData ? (options.headers || {}) : { "Content-Type": "application/json", ...(options.headers || {}) },
+          body: options.body ? (isFormData ? options.body : JSON.stringify(options.body)) : undefined,
           cache: "no-store",
         });
       } catch (error) {
@@ -2327,8 +2777,9 @@
       const contentType = response.headers.get("content-type") || "";
       const payload = contentType.includes("application/json") ? await response.json() : await response.text();
       if (!response.ok) {
-        const detail = typeof payload === "object" ? (payload.detail || payload.error || JSON.stringify(payload)) : payload;
-        if (response.status === 404 && path.startsWith("/api/")) throw new Error("后端服务未启动，请确认本地服务已开启。");
+        const rawDetail = typeof payload === "object" ? (payload.detail || payload.error || payload) : payload;
+        const detail = typeof rawDetail === "string" ? rawDetail : JSON.stringify(rawDetail);
+        if (response.status === 404 && path === "/api/health") throw new Error("后端服务未启动，请确认本地服务已开启。");
         if (response.status === 502 && String(detail).includes("backend API unavailable")) throw new Error("后端服务未启动，请确认本地服务已开启。");
         throw new Error(detail || `${response.status} ${response.statusText}`);
       }
@@ -2388,17 +2839,69 @@
       }
     }
 
-    function buildApiTaskRequest() {
+    async function uploadSelectedSample() {
+      const validationError = uploadSelectionValidationError();
+      if (validationError) throw new Error(validationError);
+      const entryFile = el.v2EntryFile.value.trim();
+      const version = state.sampleUploadVersion;
+      if (state.sampleUploadId && state.sampleUploadedVersion === version && state.sampleUploadedEntryFile === entryFile) {
+        return state.sampleUploadId;
+      }
+      state.sampleUploadStage = "uploading";
+      state.sampleUploadError = "";
+      renderSampleUploadPanel();
+      updateStartButtonState();
+      const body = new FormData();
+      state.sampleFiles.forEach((item) => body.append("files", item.file, item.path));
+      body.append("entry_file", entryFile);
+      try {
+        const payload = await apiFetch("/api/samples/upload", { method: "POST", body });
+        if (version !== state.sampleUploadVersion || entryFile !== el.v2EntryFile.value.trim()) {
+          throw new Error("sample 在上传期间发生变化，旧上传结果已作废，请重新提交。");
+        }
+        const uploadId = typeof payload.upload_id === "string" ? payload.upload_id.trim() : "";
+        if (payload.ok !== true || !uploadId) throw new Error("后端没有返回有效的 upload_id。");
+        if (Array.isArray(payload.files)) {
+          payload.files.forEach((item) => uploadPath(item?.path));
+        }
+        if (payload.entry_file && payload.entry_file !== entryFile) {
+          throw new Error("后端返回的 entry_file 与本次上传不一致。");
+        }
+        state.sampleUploadId = uploadId;
+        state.sampleUploadedVersion = version;
+        state.sampleUploadedEntryFile = entryFile;
+        state.sampleUploadStage = "uploaded";
+        state.sampleUploadError = "";
+        renderSampleUploadPanel();
+        return uploadId;
+      } catch (error) {
+        state.sampleUploadId = null;
+        state.sampleUploadedVersion = null;
+        state.sampleUploadedEntryFile = "";
+        state.sampleUploadStage = "error";
+        const rawMessage = error.message || "上传失败";
+        state.sampleUploadError = /not found/i.test(rawMessage)
+          ? "当前后端尚未提供 sample 上传接口，请更新并完全重启同源 FastAPI 服务。"
+          : rawMessage;
+        renderSampleUploadPanel();
+        throw new Error(state.sampleUploadError);
+      }
+    }
+
+    function buildApiTaskRequest(uploadId = null) {
       const budget = readBudgetInputs();
       const sampleText = sanitizeText(el.v2SampleText.value);
-      const sourceType = el.v2SampleSourceType.value || "inline";
-      const usePath = sourceType === "path" || (sourceType === "upload" && inputValue("v2SamplePath"));
-      const sample = {
-        source_type: usePath ? sourceType : "inline",
-        inline_text: usePath ? null : sampleText,
-        path: usePath ? inputValue("v2SamplePath") : null,
-        entry_file: inputValue("v2EntryFile") || "kernel.py",
-      };
+      const sample = isUploadSourceMode()
+        ? {
+            source_type: "upload",
+            upload_id: uploadId,
+            entry_file: inputValue("v2EntryFile") || "kernel.py",
+          }
+        : {
+            source_type: "inline",
+            inline_text: sampleText,
+            entry_file: inputValue("v2EntryFile") || "kernel.py",
+          };
       return {
         project_name: inputValue("v2ProjectName") || "web-task",
         sample,
@@ -2441,43 +2944,39 @@
     }
 
     async function startOptimization() {
-      if (!state.apiHealthy) {
-        await checkApiHealth();
-        if (!state.apiHealthy) return;
-      }
-      const budgetError = budgetValidationError();
-      if (budgetError) {
+      if (state.taskSubmitting) return;
+      const validationError = startFormValidationError();
+      if (validationError) {
         el.taskStatus.textContent = "暂无任务";
-        el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(budgetError)}</div>`;
-        addOneShotWarning(budgetError);
+        el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(validationError)}</div>`;
+        addOneShotWarning(validationError);
         renderAlerts();
         updateStartButtonState();
         return;
       }
-      const request = buildApiTaskRequest();
-      const remoteBlocker = remoteRunnerBlocker(request.runner.type);
-      if (remoteBlocker) {
-        el.taskStatus.textContent = "暂无任务";
-        el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(remoteBlocker)}</div>`;
-        addOneShotWarning(remoteBlocker);
-        renderAlerts();
-        return;
-      }
-      if (request.sample.source_type === "inline" && !request.sample.inline_text) {
-        addOneShotWarning("请先输入或上传 sample；不会提交空任务。");
-        renderAlerts();
-        return;
-      }
-      el.startOptimizationBtn.disabled = true;
-      el.startOptimizationBtn.textContent = "提交中";
-      renderTaskWaiting("正在调用 POST /api/tasks，等待后端返回 task_id。");
-      activateView("taskView");
+      state.taskSubmitting = true;
+      el.startOptimizationBtn.textContent = isUploadSourceMode() ? "准备上传" : "提交中";
+      updateStartButtonState();
       try {
+        if (!state.apiHealthy) {
+          await checkApiHealth();
+          if (!state.apiHealthy) return;
+        }
+        const runnerType = el.v2RunnerType.value === "ssh" ? "ssh" : "local";
+        const remoteBlocker = remoteRunnerBlocker(runnerType);
+        if (remoteBlocker) throw new Error(remoteBlocker);
+        const uploadId = isUploadSourceMode() ? await uploadSelectedSample() : null;
+        const request = buildApiTaskRequest(uploadId);
+        el.startOptimizationBtn.textContent = "提交任务";
+        renderTaskWaiting("正在创建真实运行任务，等待后端返回 task_id。");
+        activateView("taskView");
         const payload = await apiFetch("/api/tasks", { method: "POST", body: request });
         state.task = unwrapTaskPayload(payload);
         state.activeTaskId = pick(payload.task_id, state.task?.task_id);
+        if (!state.activeTaskId) throw new Error("后端没有返回 task_id，任务状态未知。");
         state.taskEvents = state.task?.events || [];
         state.taskResults = null;
+        state.cancellationPending = false;
         el.cancelTaskBtn.disabled = false;
         renderTaskDetail();
         loadTaskList();
@@ -2485,8 +2984,11 @@
       } catch (error) {
         el.taskStatus.textContent = "failed";
         el.taskDetailPanel.innerHTML = `<div class="empty">任务启动失败：${escapeHtml(error.message)}</div>`;
+        addOneShotWarning(`任务启动失败：${error.message}`);
+        renderAlerts();
       } finally {
-        el.startOptimizationBtn.textContent = "开始优化";
+        state.taskSubmitting = false;
+        el.startOptimizationBtn.textContent = "验证并测量";
         updateStartButtonState();
       }
     }
@@ -2511,9 +3013,16 @@
       try {
         const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}`);
         state.task = unwrapTaskPayload(payload);
+        if (state.task?.cancel_requested === true && !["completed", "failed", "cancelled"].includes(state.task.status)) {
+          state.cancellationPending = true;
+          el.cancelTaskBtn.disabled = true;
+          el.cancelTaskBtn.textContent = "等待后端确认取消";
+        }
         renderTaskDetail();
         if (["completed", "failed", "cancelled"].includes(state.task.status)) {
           stopTaskPolling();
+          state.cancellationPending = false;
+          el.cancelTaskBtn.textContent = "取消任务";
           el.cancelTaskBtn.disabled = true;
           await refreshTaskResults();
           await loadTaskList();
@@ -2538,14 +3047,22 @@
 
     async function cancelActiveTask() {
       if (!state.activeTaskId) return;
+      state.cancellationPending = true;
       el.cancelTaskBtn.disabled = true;
+      el.cancelTaskBtn.textContent = "正在请求取消";
       try {
         const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/cancel`, { method: "POST" });
         state.task = unwrapTaskPayload(payload);
+        const terminal = ["completed", "failed", "cancelled"].includes(state.task?.status);
+        state.cancellationPending = !terminal;
+        el.cancelTaskBtn.textContent = terminal ? "取消任务" : "等待后端确认取消";
         renderTaskDetail();
+        if (!terminal) startTaskPolling();
       } catch (error) {
+        state.cancellationPending = false;
         addOneShotWarning(`取消任务失败：${error.message}`);
         el.cancelTaskBtn.disabled = false;
+        el.cancelTaskBtn.textContent = "取消任务";
         renderAlerts();
       }
     }
@@ -2553,7 +3070,7 @@
     async function refreshTaskResults() {
       if (!state.activeTaskId) {
         el.apiResultsStatus.textContent = "暂无结果";
-        el.apiResultsPanel.innerHTML = `<div class="empty">等待任务结果：请先开始优化。</div>`;
+        el.apiResultsPanel.innerHTML = `<div class="empty">暂无结果，任务完成后展示验证产物和 report。</div>`;
         return;
       }
       el.apiResultsStatus.textContent = "读取中";
@@ -2606,13 +3123,13 @@
         return;
       }
       if (!state.taskList.length) {
-        el.taskListPanel.innerHTML = `<div class="empty">暂无任务。点击“开始优化”后会出现在这里。</div>`;
+        el.taskListPanel.innerHTML = `<div class="empty">暂无任务。提交验证任务后会出现在这里。</div>`;
         return;
       }
       el.taskListPanel.innerHTML = `<table>
-        <thead><tr><th>task_id</th><th>项目</th><th>状态</th><th>提升比例</th><th>最新消息</th></tr></thead>
+        <thead><tr><th>task_id</th><th>项目</th><th>状态</th><th>结果</th><th>最新消息</th></tr></thead>
         <tbody>
-          ${state.taskList.map((task) => `<tr class="click-row" data-task-id="${escapeHtml(task.task_id)}"><td>${escapeHtml(shortId(task.task_id))}</td><td>${escapeHtml(display(task.project_name))}</td><td>${taskStatusBadge(task.status)}</td><td>${task.improvement_percent === null || task.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(task.improvement_percent)}%`}</td><td>${escapeHtml(display(task.latest_message))}</td></tr>`).join("")}
+          ${state.taskList.map((task) => `<tr class="click-row" data-task-id="${escapeHtml(task.task_id)}"><td>${escapeHtml(shortId(task.task_id))}</td><td>${escapeHtml(display(task.project_name))}</td><td>${taskStatusBadge(task.status)}</td><td>${task.improvement_percent === null || task.improvement_percent === undefined ? "未返回提升数据" : `${formatNumber(task.improvement_percent)}%`}</td><td>${escapeHtml(display(task.latest_message))}</td></tr>`).join("")}
         </tbody>
       </table>`;
       el.taskListPanel.querySelectorAll("[data-task-id]").forEach((row) => {
@@ -2631,10 +3148,12 @@
         ]);
         state.task = unwrapTaskPayload(taskPayload);
         state.taskEvents = eventPayload.events || [];
+        state.cancellationPending = state.task?.cancel_requested === true && !["completed", "failed", "cancelled"].includes(state.task?.status);
+        el.cancelTaskBtn.textContent = state.cancellationPending ? "等待后端确认取消" : "取消任务";
         renderTaskDetail();
         await refreshTaskResults();
         if (state.task && !["completed", "failed", "cancelled"].includes(state.task.status)) {
-          el.cancelTaskBtn.disabled = false;
+          el.cancelTaskBtn.disabled = state.cancellationPending;
           startTaskPolling();
         } else {
           el.cancelTaskBtn.disabled = true;
@@ -2672,7 +3191,7 @@
     function renderTaskDetail() {
       const task = state.task;
       if (!task) {
-        renderTaskWaiting("暂无任务，点击开始优化后这里会显示进度。");
+        renderTaskWaiting("暂无任务，提交验证任务后这里会显示进度。");
         return;
       }
       const events = state.taskEvents || task.events || [];
@@ -2681,15 +3200,19 @@
       const best = state.taskResults?.best_row || state.task?.best_row || null;
       const baseline = summary[0] || null;
       const improvement = pick(state.task?.improvement_percent, state.taskResults?.improvement_percent);
+      const executionMode = task.execution_mode;
+      const baselineOnly = executionMode === "baseline_only";
       const currentStage = eventLabel(task.current_stage || latestEvent?.type || task.status);
       const latestEventText = pick(task.latest_message, eventMessage(latestEvent), latestEventLabel(latestEvent));
       el.taskStatus.textContent = task.status || "暂无任务";
       el.taskDetailPanel.innerHTML = `
         <div class="compare-grid">
-          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
-          <article class="result-card"><div class="metric-label">当前 trial 数</div><div class="metric-main">${display(pick(task.total_trials, summary.length || null))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>current best latency</div><div>${escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
-          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>执行模式</div><div>${executionModeBadge(executionMode)}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
+          <article class="result-card"><div class="metric-label">已验证 trial</div><div class="metric-main">${display(pick(task.total_trials, summary.length || null))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>${baselineOnly ? "源码优化" : "current best latency"}</div><div>${baselineOnly ? "未执行" : escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${!baselineOnly && numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${baselineOnly ? "仅基线测量" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
         </div>
+        ${executionModeNotice(executionMode)}
+        ${state.cancellationPending ? `<div class="alert warn">取消请求已提交，仍在等待后端确认终态。</div>` : ""}
         ${task.error ? `<div class="empty">失败原因：${escapeHtml(task.error)}</div>` : ""}
         <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${events.slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(latestEventLabel(event)))}</td><td>${escapeHtml(display(eventMessage(event)))}</td></tr>`).join("") || `<tr><td colspan="3">暂无任务事件</td></tr>`}</tbody></table></div>
       `;
@@ -2952,20 +3475,23 @@
       const baseline = summary[0] || {};
       const best = results.best_row || summary.find((row) => row.status === "benchmark_ok") || {};
       const bestTrialId = pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
+      const executionMode = state.task?.execution_mode;
+      const baselineOnly = executionMode === "baseline_only";
       const evidenceSummary = evidenceSummaryFromResults(results);
       const diagnosisRows = diagnosisRowsFromResults(results);
       const profilerAvailable = pick(results.profiler_available, results.profilerAvailable, evidenceSummary?.profiler_available);
       const shapeResultsHtml = renderShapeResults(results);
       el.apiResultsPanel.innerHTML = `
+        ${executionModeNotice(executionMode)}
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(pick(baseline.latency, baseline.objective_value, state.task?.baseline_latency)))}</div></article>
-          <article class="result-card best-card"><div class="metric-label">best latency</div><div class="metric-main best">${escapeHtml(display(pick(best.latency, best.objective_value, state.task?.best_latency)))}</div><div class="kv"><div>best trial id</div><div>${escapeHtml(display(bestTrialId))}</div></div></article>
-          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
+          <article class="result-card ${baselineOnly ? "" : "best-card"}"><div class="metric-label">${baselineOnly ? "源码优化结果" : "best latency"}</div><div class="metric-main ${baselineOnly ? "" : "best"}">${baselineOnly ? "未执行" : escapeHtml(display(pick(best.latency, best.objective_value, state.task?.best_latency)))}</div>${baselineOnly ? "" : `<div class="kv"><div>best trial id</div><div>${escapeHtml(display(bestTrialId))}</div></div>`}</article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${!baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${baselineOnly ? "仅基线测量" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
         </div>
         ${shapeResultsHtml || renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable)}
-        <h3>best kernel</h3>
+        <h3>${baselineOnly ? "基线 kernel 产物" : "best kernel"}</h3>
         <pre>${escapeHtml(results.best_kernel || "等待结果文件：best_kernel.py")}</pre>
-        <h3>best_config.yaml</h3>
+        <h3>${baselineOnly ? "基线配置产物" : "best_config.yaml"}</h3>
         <pre>${escapeHtml(results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "等待结果文件：best_config.yaml")}</pre>
         <h3>report.md</h3>
         <pre>${escapeHtml(reportMarkdown || "等待结果文件：report.md")}</pre>
@@ -3495,6 +4021,22 @@
       const ok = ["completed", "success", "done"].includes(normalized);
       const warn = ["pending", "running", "waiting", "cancelled"].includes(normalized);
       return `<span class="badge ${ok ? "ok" : warn ? "warn" : "bad"}">${escapeHtml(text)}</span>`;
+    }
+
+    function executionModeBadge(mode) {
+      if (mode === "baseline_only") return `<span class="badge warn">仅基线测量</span>`;
+      if (mode === "parameter_search") return `<span class="badge warn">历史参数搜索</span>`;
+      return `<span class="badge warn">后端未提供</span>`;
+    }
+
+    function executionModeNotice(mode) {
+      if (mode === "baseline_only") {
+        return `<div class="alert warn">仅基线测量，未执行源码优化。此结果不能表示目标架构适配已完成。</div>`;
+      }
+      if (mode === "parameter_search") {
+        return `<div class="alert warn">本任务使用历史参数搜索兼容模式，不代表已完成算子源码优化或新架构适配。</div>`;
+      }
+      return `<div class="alert warn">后端未提供 execution_mode；前端不会推断本次任务是否执行了源码优化。</div>`;
     }
 
     function displayStatus(status) {
