@@ -1785,7 +1785,7 @@
       if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
         throw new Error(`文件路径包含空段或目录穿越：${raw}`);
       }
-      if (segments.some((segment) => segment.includes(":") || segment.endsWith(".") || segment.endsWith(" "))) {
+      if (segments.some((segment) => /[<>:"|?*]/.test(segment) || segment.endsWith(".") || segment.endsWith(" "))) {
         throw new Error(`文件路径包含跨平台不安全字符：${raw}`);
       }
       if (segments.some((segment) => WINDOWS_RESERVED_UPLOAD_NAMES.has(segment.split(".", 1)[0].toLowerCase()))) {
@@ -1815,13 +1815,15 @@
           rawPaths = rawPaths.map((path) => String(path).split("/").slice(1).join("/"));
         }
       }
-      const seen = new Set();
+      const seen = new Map();
       let totalBytes = 0;
       const items = files.map((file, index) => {
         const path = uploadPath(rawPaths[index]);
         const duplicateKey = path.normalize("NFC").toLowerCase();
         if (seen.has(duplicateKey)) throw new Error(`存在重复路径或大小写冲突：${path}`);
-        seen.add(duplicateKey);
+        const prefixConflict = Array.from(seen.keys()).find((existing) => duplicateKey.startsWith(`${existing}/`) || existing.startsWith(`${duplicateKey}/`));
+        if (prefixConflict) throw new Error(`文件与目录路径冲突：${seen.get(prefixConflict)} 与 ${path}`);
+        seen.set(duplicateKey, path);
         if (file.size > SAMPLE_UPLOAD_LIMITS.maxFileBytes) {
           throw new Error(`文件超过 2 MiB 限制：${path}（${formatBytes(file.size)}）。`);
         }
@@ -2652,6 +2654,9 @@
       const buildCommand = el.v2BuildCommand.value.trim();
       const correctnessCommand = el.v2CorrectnessCommand.value.trim();
       const benchmarkCommand = el.v2BenchmarkCommand.value.trim();
+      if (!buildCommand) return "build 命令不能为空。";
+      if (!correctnessCommand) return "correctness 命令不能为空。";
+      if (!benchmarkCommand) return "benchmark 命令不能为空。";
       if (buildCommand === "python -m py_compile kernel.py" && entryFile !== "kernel.py") {
         return `默认 build 命令指向 kernel.py，但当前 entry_file 是 ${entryFile}；请在高级命令设置中填写实际命令。`;
       }
@@ -2677,7 +2682,7 @@
       el.startOptimizationBtn.disabled = state.taskSubmitting || !!error;
       el.startValidationMessage.textContent = state.taskSubmitting
         ? "正在准备并提交真实后端任务，请勿重复操作。"
-        : error || "输入已就绪；提交后由后端执行 correctness、build 和 benchmark。";
+        : error || "输入已就绪；提交后由后端依次执行 build、correctness 和 benchmark。";
       if (budgetError) {
         el.taskStatus.textContent = "暂无任务";
         el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(budgetError)}</div>`;
@@ -2685,9 +2690,9 @@
     }
 
     function generateRunRequest() {
-      const budgetError = budgetValidationError();
-      if (budgetError) {
-        addOneShotWarning(budgetError);
+      const validationError = startFormValidationError();
+      if (validationError) {
+        addOneShotWarning(validationError);
         renderAlerts();
         return;
       }
@@ -2710,9 +2715,9 @@
           entry_file: sanitizeText(el.v2EntryFile.value.trim() || "kernel.py"),
         },
         commands: {
-          build_command: sanitizeText(el.v2BuildCommand.value.trim() || "python -m py_compile kernel.py"),
-          correctness_command: sanitizeText(el.v2CorrectnessCommand.value.trim() || "python correctness.py"),
-          benchmark_command: sanitizeText(el.v2BenchmarkCommand.value.trim() || "python benchmark.py"),
+          build_command: sanitizeText(el.v2BuildCommand.value.trim()),
+          correctness_command: sanitizeText(el.v2CorrectnessCommand.value.trim()),
+          benchmark_command: sanitizeText(el.v2BenchmarkCommand.value.trim()),
         },
         target: {
           gpu_model: sanitizeText(el.v2GpuModel.value.trim()),
@@ -2895,12 +2900,12 @@
         ? {
             source_type: "upload",
             upload_id: uploadId,
-            entry_file: inputValue("v2EntryFile") || "kernel.py",
+            entry_file: inputValue("v2EntryFile"),
           }
         : {
             source_type: "inline",
             inline_text: sampleText,
-            entry_file: inputValue("v2EntryFile") || "kernel.py",
+            entry_file: inputValue("v2EntryFile"),
           };
       return {
         project_name: inputValue("v2ProjectName") || "web-task",
@@ -2913,9 +2918,9 @@
           allow_web_lookup: false,
         },
         commands: {
-          build_command: inputValue("v2BuildCommand") || "python -m py_compile kernel.py",
-          correctness_command: inputValue("v2CorrectnessCommand") || "python correctness.py",
-          benchmark_command: inputValue("v2BenchmarkCommand") || "python benchmark.py",
+          build_command: inputValue("v2BuildCommand"),
+          correctness_command: inputValue("v2CorrectnessCommand"),
+          benchmark_command: inputValue("v2BenchmarkCommand"),
         },
         budget: {
           strategy: "rule_based",
@@ -3208,7 +3213,7 @@
       el.taskDetailPanel.innerHTML = `
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>执行模式</div><div>${executionModeBadge(executionMode)}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
-          <article class="result-card"><div class="metric-label">已验证 trial</div><div class="metric-main">${display(pick(task.total_trials, summary.length || null))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>${baselineOnly ? "源码优化" : "current best latency"}</div><div>${baselineOnly ? "未执行" : escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">已尝试 trial</div><div class="metric-main">${display(pick(task.total_trials, summary.length || null))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>${baselineOnly ? "源码优化" : "current best latency"}</div><div>${baselineOnly ? "未执行" : escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
           <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${!baselineOnly && numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${baselineOnly ? "仅基线测量" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
         </div>
         ${executionModeNotice(executionMode)}
@@ -3468,31 +3473,34 @@
       }
       el.apiResultsStatus.textContent = state.task?.status || "已读取";
       const reportMarkdown = pick(results.report_markdown, results.report);
-      el.downloadBestKernelBtn.disabled = !results.best_kernel;
       el.downloadReportBtn.disabled = !reportMarkdown;
       const summary = Array.isArray(results.summary_table) ? results.summary_table : (Array.isArray(results.summary) ? results.summary : []);
       const failedCases = Array.isArray(results.failed_cases) ? results.failed_cases : [];
       const baseline = summary[0] || {};
-      const best = results.best_row || summary.find((row) => row.status === "benchmark_ok") || {};
+      const benchmarkBest = [results.best_row, ...summary].find((row) => row && typeof row === "object" && String(row.status || "").trim().toLowerCase() === "benchmark_ok") || null;
+      const best = benchmarkBest || {};
       const bestTrialId = pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
       const executionMode = state.task?.execution_mode;
       const baselineOnly = executionMode === "baseline_only";
+      const baselineSucceeded = baselineOnly && !!benchmarkBest;
+      el.downloadBestKernelBtn.disabled = !results.best_kernel || !benchmarkBest;
       const evidenceSummary = evidenceSummaryFromResults(results);
       const diagnosisRows = diagnosisRowsFromResults(results);
       const profilerAvailable = pick(results.profiler_available, results.profilerAvailable, evidenceSummary?.profiler_available);
       const shapeResultsHtml = renderShapeResults(results);
       el.apiResultsPanel.innerHTML = `
         ${executionModeNotice(executionMode)}
+        ${baselineOnly && !baselineSucceeded ? `<div class="alert bad">correctness 或 benchmark 未通过，本次没有已验证的基线性能结果。</div>` : ""}
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(pick(baseline.latency, baseline.objective_value, state.task?.baseline_latency)))}</div></article>
           <article class="result-card ${baselineOnly ? "" : "best-card"}"><div class="metric-label">${baselineOnly ? "源码优化结果" : "best latency"}</div><div class="metric-main ${baselineOnly ? "" : "best"}">${baselineOnly ? "未执行" : escapeHtml(display(pick(best.latency, best.objective_value, state.task?.best_latency)))}</div>${baselineOnly ? "" : `<div class="kv"><div>best trial id</div><div>${escapeHtml(display(bestTrialId))}</div></div>`}</article>
-          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${!baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${baselineOnly ? "仅基线测量" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${baselineSucceeded || (!baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0) ? "good" : ""}">${baselineOnly ? baselineSucceeded ? "基线验证完成" : "基线验证未通过" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
         </div>
         ${shapeResultsHtml || renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable)}
-        <h3>${baselineOnly ? "基线 kernel 产物" : "best kernel"}</h3>
-        <pre>${escapeHtml(results.best_kernel || "等待结果文件：best_kernel.py")}</pre>
-        <h3>${baselineOnly ? "基线配置产物" : "best_config.yaml"}</h3>
-        <pre>${escapeHtml(results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "等待结果文件：best_config.yaml")}</pre>
+        <h3>${baselineOnly ? baselineSucceeded ? "已验证基线 kernel" : "基线 kernel 未通过验证" : benchmarkBest ? "best kernel" : "尚无 best kernel"}</h3>
+        <pre>${escapeHtml(benchmarkBest ? results.best_kernel || "等待结果文件：best_kernel.py" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
+        <h3>${baselineOnly ? baselineSucceeded ? "基线配置产物" : "基线配置未通过验证" : "best_config.yaml"}</h3>
+        <pre>${escapeHtml(benchmarkBest && results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "没有可作为 best 的已验证配置。")}</pre>
         <h3>report.md</h3>
         <pre>${escapeHtml(reportMarkdown || "等待结果文件：report.md")}</pre>
         <details style="margin-top:12px">

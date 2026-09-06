@@ -164,8 +164,12 @@ async (page) => {
     return {
       traversal: rejected([fake("kernel.py", 1, "sample/../kernel.py")], "directory"),
       mixedSeparator: rejected([fake("kernel.py", 1, "sample\\kernel.py")], "directory"),
+      controlCharacter: rejected([fake("kernel.py", 1, "sample/bad\u0001.py")], "directory"),
+      windowsInvalidCharacter: rejected([fake("bad?.py")], "single"),
       sensitive: rejected([fake("id_rsa")], "single") && rejected([fake("token", 1, "sample/.ssh/token")], "directory"),
       duplicateCase: rejected([fake("Kernel.py"), fake("kernel.py")], "fallback"),
+      fileDirectoryPrefix: rejected([fake("a", 1, "sample/a"), fake("kernel.py", 1, "sample/a/kernel.py")], "directory"),
+      reverseFileDirectoryPrefix: rejected([fake("kernel.py", 1, "sample/A/kernel.py"), fake("a", 1, "sample/a")], "directory"),
       tooMany: rejected(Array.from({length: 101}, (_, index) => fake(`file-${index}.py`)), "fallback"),
       totalTooLarge: rejected(Array.from({length: 6}, (_, index) => fake(`file-${index}.py`, 2 * 1024 * 1024)), "fallback"),
       reservedName: rejected([fake("con.py")], "single"),
@@ -192,6 +196,24 @@ async (page) => {
   await page.locator("#v2SampleText").fill("print('inline sample')");
   await setRunnableCommands();
   check(await page.locator("#startOptimizationBtn").isEnabled(), "Inline source becomes runnable with explicit verification commands");
+  check((await page.locator("#startValidationMessage").innerText()).includes("build、correctness 和 benchmark"), "Ready message follows the backend stage order");
+  const emptyCommandTasksBefore = taskRequests.length;
+  await page.locator("#v2BuildCommand").fill("");
+  check(await page.locator("#startOptimizationBtn").isDisabled(), "Empty build command disables submission");
+  check((await page.locator("#startValidationMessage").innerText()).includes("build 命令不能为空"), "Empty build command shows a Chinese error");
+  await page.evaluate(() => startOptimization());
+  check(taskRequests.length === emptyCommandTasksBefore, "Empty build command cannot bypass validation through JavaScript");
+  await page.locator("#v2BuildCommand").fill("python -m py_compile kernel.py");
+  await page.locator("#v2CorrectnessCommand").fill("");
+  check(await page.locator("#startOptimizationBtn").isDisabled(), "Empty correctness command disables submission");
+  check((await page.locator("#startValidationMessage").innerText()).includes("correctness 命令不能为空"), "Empty correctness command shows a Chinese error");
+  await page.evaluate(() => startOptimization());
+  check(taskRequests.length === emptyCommandTasksBefore, "Empty correctness command cannot bypass validation through JavaScript");
+  await page.locator("#v2CorrectnessCommand").fill("python correctness.py");
+  await page.locator("#v2BenchmarkCommand").fill("");
+  check(await page.locator("#startOptimizationBtn").isDisabled(), "Empty benchmark command disables submission");
+  check((await page.locator("#startValidationMessage").innerText()).includes("benchmark 命令不能为空"), "Empty benchmark command shows a Chinese error");
+  await setRunnableCommands();
   const inlineTasksBefore = taskRequests.length;
   await page.locator("#startOptimizationBtn").click();
   await page.waitForFunction(() => state.activeTaskId && state.task);
@@ -269,10 +291,17 @@ async (page) => {
   check(firstUploadId !== secondUploadId && uploads.length === staleUploadsBefore + 1, "Editing entry_file invalidates and replaces the old upload_id");
 
   const doubleTasksBefore = taskRequests.length;
+  const expectedTaskId = `fixture-task-${doubleTasksBefore + 1}`;
   await page.evaluate(() => { startOptimization(); startOptimization(); });
-  await page.waitForFunction((count) => state.activeTaskId && !state.taskSubmitting, doubleTasksBefore);
+  await page.waitForFunction((taskId) => (
+    state.activeTaskId === taskId
+    && state.task?.task_id === taskId
+    && !state.taskSubmitting
+    && document.getElementById("taskDetailPanel").textContent.includes("已尝试 trial")
+  ), expectedTaskId);
   check(taskRequests.length === doubleTasksBefore + 1, "Double submission creates only one task");
   check((await page.locator("#taskDetailPanel").innerText()).includes("仅基线测量，未执行源码优化"), "baseline_only is presented as measurement, not source optimization");
+  check((await page.locator("#taskDetailPanel").textContent()).includes("已尝试 trial"), "Task detail does not label failed attempts as verified trials");
 
   await page.locator("#cancelTaskBtn").click();
   await page.waitForFunction(() => state.cancellationPending === true && document.getElementById("taskDetailPanel").innerText.includes("等待后端确认终态"));

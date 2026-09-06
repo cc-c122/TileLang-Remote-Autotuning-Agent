@@ -21,7 +21,7 @@ async (page) => {
   await page.evaluate(() => {
     const entries = [
       ["live-sample/kernel.py", "from lib.helper import VALUE\n"],
-      ["live-sample/correctness.py", "from kernel import VALUE\nprint(f'CORRECTNESS_RESULT status=PASS max_error=0 reason=ok value={VALUE}')\n"],
+      ["live-sample/correctness.py", "from kernel import VALUE\nassert VALUE == 7, f'unexpected VALUE: {VALUE}'\nprint(f'CORRECTNESS_RESULT status=PASS max_error=0 reason=ok value={VALUE}')\n"],
       ["live-sample/benchmark.py", "from kernel import VALUE\nprint(f'BENCHMARK_RESULT latency_ms=1.25 tflops=2.5 bandwidth_gbps=3.75 value={VALUE}')\n"],
       ["live-sample/lib/__init__.py", ""],
       ["live-sample/lib/helper.py", "VALUE = 7\n"],
@@ -54,7 +54,7 @@ async (page) => {
 
   await page.waitForFunction(() => state.taskResults && document.getElementById("apiResultsPanel").innerText.includes("仅基线测量，未执行源码优化"), null, {timeout: 30000});
   const resultsText = await page.locator("#apiResultsPanel").innerText();
-  check(resultsText.includes("1.25"), "Real parsed baseline latency is rendered");
+  check(resultsText.includes("1.25"), "Fixed latency is rendered as a transport/parser fixture, not GPU performance evidence");
   check(resultsText.includes("Baseline") || resultsText.includes("基线"), "Baseline report and artifacts are rendered");
   check(!resultsText.includes("0.00%"), "baseline_only does not show a fabricated zero-percent improvement");
 
@@ -81,6 +81,42 @@ async (page) => {
     page.locator("#downloadBestKernelBtn").click(),
   ]);
   check(bestDownload.suggestedFilename() === "best_kernel.py", "Live best kernel download returns the expected filename");
+
+  await page.evaluate(() => activateView("startView"));
+  await page.locator("#v2ProjectName").fill("frontend-live-correctness-failure");
+  await page.evaluate(() => {
+    const entries = [
+      ["failure-sample/kernel.py", "from lib.helper import VALUE\n"],
+      ["failure-sample/correctness.py", "from kernel import VALUE\nassert VALUE == 999, f'expected 999, got {VALUE}'\n"],
+      ["failure-sample/benchmark.py", "raise SystemExit('BENCHMARK_SHOULD_NOT_RUN')\n"],
+      ["failure-sample/lib/__init__.py", ""],
+      ["failure-sample/lib/helper.py", "VALUE = 7\n"],
+    ];
+    const transfer = new DataTransfer();
+    entries.forEach(([path, body]) => {
+      const file = new File([body], path.split("/").pop(), {type: "text/x-python"});
+      Object.defineProperty(file, "webkitRelativePath", {value: path});
+      transfer.items.add(file);
+    });
+    const input = document.getElementById("v2SampleDirectory");
+    Object.defineProperty(input, "files", {value: transfer.files, configurable: true});
+    input.dispatchEvent(new Event("change", {bubbles: true}));
+  });
+  await page.waitForFunction(() => state.sampleUploadStage === "selected" && state.sampleFiles.length === 5);
+  const successfulTaskId = taskId;
+  await page.locator("#startOptimizationBtn").click();
+  await page.waitForFunction((previousTaskId) => state.activeTaskId && state.activeTaskId !== previousTaskId, successfulTaskId, {timeout: 30000});
+  await page.waitForFunction(() => ["completed", "failed", "cancelled"].includes(state.task?.status), null, {timeout: 60000});
+  await page.waitForFunction(() => state.taskResults, null, {timeout: 30000});
+  const failedTaskId = await page.evaluate(() => state.activeTaskId);
+  const failedResponse = await page.request.get(`${origin}/api/tasks/${encodeURIComponent(failedTaskId)}/results`);
+  const failedPayload = await failedResponse.json();
+  const failedSummary = failedPayload.results.summary_table || [];
+  check(failedResponse.ok() && failedSummary.some((row) => row.status === "correctness_failed"), "A real failing assertion is recorded as correctness_failed");
+  check(!failedSummary.some((row) => row.status === "benchmark_ok" || row.latency), "Correctness failure does not run or rank the benchmark fixture");
+  const failedResultsText = await page.locator("#apiResultsPanel").innerText();
+  check(failedResultsText.includes("没有通过 correctness 和 benchmark 的 kernel"), "Failed correctness shows no verified best kernel");
+  check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Failed correctness disables best kernel download");
   check(consoleErrors.length === 0, `Live browser console stays clean: ${consoleErrors.join(" | ")}`);
 
   return {
