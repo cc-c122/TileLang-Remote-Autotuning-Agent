@@ -19,6 +19,7 @@ from kernel_opt_agent.kernel.template_manager import TemplateManager
 from kernel_opt_agent.runner.command_guard import validate
 from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
 from kernel_opt_agent.storage.experiment_db import ExperimentDB
+from kernel_opt_agent.storage.report_writer import write_final_report
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -191,16 +192,68 @@ class V1HardeningTests(unittest.TestCase):
                     "candidate_id": 0,
                     "status": "benchmark_ok",
                     "metrics": {},
+                    "profiler": {"enabled": True, "type": "dummy", "result": {"latency": None}},
+                    "bottleneck_diagnosis": [{"bottleneck_type": "memory_bound", "confidence": "low"}],
                     "objective": {},
                     "paths": {},
                 }
             )
             self.assertEqual(len((results / "experiments.jsonl").read_text(encoding="utf-8").splitlines()), 1)
+            self.assertEqual(len((results / "profiler_results.jsonl").read_text(encoding="utf-8").splitlines()), 1)
+            self.assertEqual(len((results / "diagnosis.jsonl").read_text(encoding="utf-8").splitlines()), 1)
+            self.assertEqual((results / "patch_trials.jsonl").read_text(encoding="utf-8"), "")
+            with (results / "ablation_summary.csv").open(newline="", encoding="utf-8") as f:
+                self.assertEqual(list(csv.DictReader(f)), [])
             ExperimentDB(results)
             self.assertEqual((results / "experiments.jsonl").read_text(encoding="utf-8"), "")
             self.assertEqual((results / "failed_cases.jsonl").read_text(encoding="utf-8"), "")
+            self.assertEqual((results / "profiler_results.jsonl").read_text(encoding="utf-8"), "")
+            self.assertEqual((results / "diagnosis.jsonl").read_text(encoding="utf-8"), "")
+            self.assertEqual((results / "patch_trials.jsonl").read_text(encoding="utf-8"), "")
             with (results / "summary.csv").open(newline="", encoding="utf-8") as f:
                 self.assertEqual(list(csv.DictReader(f)), [])
+            with (results / "ablation_summary.csv").open(newline="", encoding="utf-8") as f:
+                self.assertEqual(list(csv.DictReader(f)), [])
+
+    def test_report_prefers_evidence_diagnoses_over_legacy_bottlenecks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            kernel_path = results / "kernel.py"
+            kernel_path.write_text("# kernel\n", encoding="utf-8")
+            record = {
+                "iteration": 0,
+                "candidate_id": 0,
+                "trial_id": "trial-evidence",
+                "status": "benchmark_ok",
+                "config": {"BM": 16},
+                "metrics": {"latency": 1.0, "tflops": 1.0, "bandwidth": 1.0},
+                "objective": {"name": "latency", "value": 1.0},
+                "paths": {"kernel": str(kernel_path)},
+                "profiler": {"enabled": True, "type": "dummy", "result": {"available_metrics": {}}},
+                "diagnoses": [
+                    {
+                        "bottleneck_type": "insufficient_evidence",
+                        "confidence": "low",
+                        "evidence_ids": ["ev_123"],
+                        "counter_evidence": [],
+                        "uncertainty": ["MetaX thresholds unavailable"],
+                        "recommended_actions": ["collect mcProfiler evidence"],
+                    }
+                ],
+                "bottleneck_diagnosis": [
+                    {"bottleneck_type": "memory_bound", "confidence": "low"},
+                    {"bottleneck_type": "private_memory_spill", "confidence": "low"},
+                    {"bottleneck_type": "shared_bank_conflict", "confidence": "low"},
+                ],
+            }
+            write_final_report(results, [record], "latency")
+            report = (results / "report.md").read_text(encoding="utf-8")
+            self.assertIn("insufficient_evidence", report)
+            self.assertIn("ev_123", report)
+            self.assertNotIn("memory_bound", report)
+            self.assertNotIn("| trial-evidence | private_memory_spill |", report)
+            self.assertNotIn("| trial-evidence | shared_bank_conflict |", report)
+            self.assertNotIn("Legacy Diagnosis", report)
 
     def test_password_auth_runner_reads_env_password(self) -> None:
         env_name = "KERNEL_AGENT_TEST_PASSWORD"

@@ -1,518 +1,309 @@
 # TileLang Remote Autotuning Agent
 
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-3DA639)](LICENSE)
 
-## 版本与技术文档
+TileLang Remote Autotuning Agent 是一个面向 TileLang kernel 的远程自动调优系统。它把 sample 物化到隔离 workspace，在本地或 SSH 容器中执行 correctness、build 和 benchmark，记录失败与性能证据，并在给定搜索预算内返回实际运行过且通过正确性检查的 **best-seen kernel**。
 
-**V2 的中文 README、技术架构和 HTTP API 文档已更新，项目采用 Apache License 2.0。**
+本项目不承诺全局最优，也不会把合成 fixture、缺失的 profiler 指标或推测值包装成真实硬件证据。
 
-GitHub 默认显示的 `main` 分支保留 V1。V2 在 `v2/evidence-guided-agent` 分支持续开发；之前仅在 V2 分支更新的文档，现在也可以从这个首页访问。
+## 项目状态
 
-| 入口 | 内容 |
+**默认 `main` 分支现已升级为 V2，包含代码、中文使用说明和技术文档，不再仅展示 V1。** 后续开发与 PR 以 `main` 为基线；原 `v2/evidence-guided-agent` 的已验收改动已合入主线。
+
+当前包含两类入口：
+
+- **Web API 主流程**：FastAPI 已支持设置、硬件解析、任务创建、进度查询、结果读取、下载和取消任务。
+- **CLI 高级模式**：保留 V2 run request 和传统 V1 config，适合开发、调试与回归测试。
+
+当前仍需注意：
+
+- `python -m kernel_opt_agent.server.app` 只启动 API，尚未同源托管 `frontend/index.html`。
+- 单文件前端调用相对路径 `/api/*`，需要同源代理或同源托管才能完成浏览器闭环。
+- Web 请求当前只开放 `rule_based`、`latency` 和 `dummy` profiler；底层 CLI 支持更完整的搜索与 profiler 类型。
+- C500 Paged Attention 目前只有采集/导入脚手架；真实采集仍受远端 SSH session channel 阻断，不能当作真实性能基线。
+
+## 能做什么
+
+| 能力 | 当前实现 |
 | --- | --- |
-| [V2 最新 README](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/blob/v2/evidence-guided-agent/README.md) | 当前能力、安装、运行方式和限制 |
-| [技术架构](docs/technical-architecture.md) | V2 模块边界、任务生命周期、搜索、证据与安全模型 |
-| [HTTP API 参考](docs/http-api.md) | V2 设置、硬件解析、任务、进度、结果、取消和下载接口 |
-| [V2 源码](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/tree/v2/evidence-guided-agent) | Web API、profiler 解析、诊断和受控 patch 开发主线 |
-| [Apache License 2.0](LICENSE) / [NOTICE](NOTICE) | 许可证全文和版权声明 |
+| Sample 输入 | inline、后端可访问的 path；浏览器目录上传尚未接通 |
+| Runner | local mock/test、SSH password、SSH key 兼容路径 |
+| 参数模板 | `{{BM}}`、`{{BN}}` 等占位符，只渲染 entry 文件 |
+| 搜索策略 | 核心支持 grid、random、rule-based、LLM、hybrid；Web 当前固定 rule-based |
+| 正确性门禁 | 每个候选都必须通过 correctness，失败候选不参与排名 |
+| Benchmark | 解析 latency、TFLOPS、bandwidth，保存原始 stdout/stderr |
+| 硬件信息 | 用户覆盖、远程探测、内置 profile、安全 probe、保守未知模式 |
+| Profiler | dummy、TileLang 日志、MXMACA/mcProfiler 解析接口 |
+| 证据诊断 | 输出瓶颈类型、置信度、证据、不确定性和建议动作 |
+| 受控 Patch | 仅修改标记区域，执行验证并回滚；Web 默认未启用 |
+| 结果产物 | best kernel/config、CSV、JSONL、报告、失败记录和日志 |
 
-要运行 V2，请在工作区修改已保存的前提下切换分支：
+## 用户需要提供什么
+
+最小任务输入包括：
+
+1. TileLang sample 和 entry 文件。
+2. GPU 型号；不确定的硬件字段允许保持 `null`。
+3. `build_command`、`correctness_command`、`benchmark_command`。
+4. 搜索预算和目标。
+5. 远程模式下的 SSH host、port、username、workspace，以及通过环境变量提供的密码。
+
+LLM 是可选能力。API key 只能通过 `llm.api_key_env` 指向的环境变量读取，不能写入配置或日志。
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    UI["Web UI / CLI"] --> API["FastAPI / Run Request Builder"]
+    API --> TM["Task Manager + Job Worker"]
+    TM --> HW["Hardware Detection / Profiles / Safe Probe"]
+    TM --> VG["Variant Generator"]
+    VG --> GUARD["Command Guard"]
+    GUARD --> RUNNER["Local Runner / SSH Runner"]
+    RUNNER --> CHECK["Correctness -> Build -> Benchmark"]
+    CHECK --> PROF["Profiler + Evidence Normalization"]
+    PROF --> DIAG["Bottleneck Diagnosis"]
+    DIAG --> POLICY["Search Policy / Controlled Patch"]
+    POLICY --> VG
+    CHECK --> DB["Experiment DB"]
+    DB --> REPORT["best-seen Kernel + Report"]
+```
+
+当前 trial 的实际执行顺序是 **correctness -> build -> benchmark**。correctness、build、运行或解析失败都会形成结构化记录；单个候选失败不会终止整个搜索。
+
+更详细的模块、数据流和扩展点见：
+
+- [技术架构](docs/technical-architecture.md)
+- [HTTP API 参考](docs/http-api.md)
+- [开发说明书](instruction.md)
+
+## 安装
+
+要求 Python 3.10+。
 
 ```bash
-git fetch origin
-git switch v2/evidence-guided-agent
-git pull --ff-only origin v2/evidence-guided-agent
-pip install -e .
-```
-
-V2 当前提供 FastAPI，但 API 服务尚未直接托管前端页面；真实 C500 Paged Attention 基线采集仍受 SSH session channel 阻断。具体边界见上方 V2 README。
-
-**以下使用说明对应 `main` 分支的 V1 CLI 与只读结果查看器。**
-
-## V1 简介
-
-TileLang Remote Autotuning Agent 是一个面向 TileLang kernel sample 的自动调参工具。它读取用户提供的算子样例、正确性检查命令、benchmark 命令和参数搜索空间，在本地 mock 环境或远程 SSH 容器中批量生成候选 kernel，逐个执行 correctness、build、benchmark，并把当前搜索预算内表现最好的版本保存下来。
-
-这个项目的核心目标不是承诺找到全局最优解，而是提供一个安全、可复现、可审计的调参闭环：每个候选怎么生成、跑了什么命令、为什么失败、性能指标是多少、最终 best-seen kernel 来自哪组参数，都能在结果文件里复查。
-
-## 项目能做什么
-
-- 从 `config.yaml` 读取 kernel、runner、搜索策略、指标解析规则和安全约束。
-- 支持 `local` runner，用 mock sample 在没有 GPU 和 SSH 的机器上跑通完整流程。
-- 支持 `ssh` runner，通过 SSH password auth 或可选 SSH key auth 把 sample 上传到远程 workspace 执行。
-- 用 `{{BM}}`、`{{BN}}`、`{{NUM_THREADS}}` 这类模板占位符生成候选 kernel。
-- 每个候选先跑 correctness，失败的候选不会进入性能排名。
-- benchmark 通过后解析 latency、TFLOPS、bandwidth。
-- 支持 `grid`、`random`、`rule_based`、`llm`、`hybrid` 搜索策略。
-- LLM 只负责建议参数组合，不能执行命令，也不能自由改写整个 kernel 文件。
-- 保存 JSONL、CSV、日志、patch、best kernel、best config 和 Markdown 报告。
-- 支持硬件探测和 safe probe，并在报告和前端中标注来源与置信度。
-- 提供只读前端查看器，用于浏览 `workspace/results/` 下的运行产物。
-
-## 不做什么
-
-- 不保证全局最优，只返回当前搜索预算内实际测到的 best-seen 结果。
-- 不让 LLM 生成或执行 shell command。
-- 不让 LLM 自由重写完整 kernel 文件，只允许模板参数替换。
-- 不安装系统包，不修改远程系统环境，不执行高风险系统命令。
-- 不允许在配置文件、日志或结果文件中保存明文 SSH 密码；远程运行默认使用 password auth，密码必须通过环境变量传入。
-- 前端 V1 不提供 HTTP API，也不会触发后端命令执行。
-
-## 快速开始：本地 mock 流程
-
-本地 mock 模式不需要 GPU，也不需要 SSH。它适合先验证主流程、配置格式、结果生成和前端展示。
-
-```bash
-pip install -r kernel_opt_agent/requirements.txt
-python main.py --config kernel_opt_agent/config.example.yaml
-```
-
-运行测试：
-
-```bash
-python -m unittest discover -s tests
-python -m compileall -q kernel_opt_agent tests
-```
-
-运行完成后，结果会写入：
-
-```text
-kernel_opt_agent/workspace/results/
-```
-
-## 安装包使用方式
-
-V1.0.0-rc1 预发布安装包：
-
-- [点击下载 wheel 安装包](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/releases/download/v1.0.0-rc1/tilelang_remote_autotuning_agent-1.0.0rc1-py3-none-any.whl)
-- [点击下载源码包](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/releases/download/v1.0.0-rc1/tilelang_remote_autotuning_agent-1.0.0rc1.tar.gz)
-- [查看 GitHub Release 页面](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/releases/tag/v1.0.0-rc1)
-
-下载 wheel 后安装：
-
-```bash
-pip install tilelang_remote_autotuning_agent-1.0.0rc1-py3-none-any.whl
-```
-
-也可以直接从 GitHub Release URL 安装：
-
-```bash
-pip install https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/releases/download/v1.0.0-rc1/tilelang_remote_autotuning_agent-1.0.0rc1-py3-none-any.whl
-```
-
-本地开发安装：
-
-```bash
-pip install -e .
-```
-
-wheel 安装：
-
-```bash
-pip install dist/*.whl
-```
-
-CLI 使用：
-
-```bash
-tilelang-agent --config config.yaml
-```
-
-## 配置文件怎么写
-
-可以从示例配置开始：
-
-- `kernel_opt_agent/config.example.yaml`：本地 mock 示例。
-- `kernel_opt_agent/config.ssh.example.yaml`：SSH 远程运行示例。
-
-最小配置需要包含这些部分：
-
-```yaml
-runner:
-  type: local
-
-kernel:
-  sample_path: ./samples/mock
-  entry_file: kernel.py
-  build_command: python -m py_compile kernel.py
-  correctness_command: python correctness.py
-  run_command: python benchmark.py
-
-search:
-  strategy: hybrid
-  max_iterations: 2
-  candidates_per_iteration: 3
-  timeout_seconds: 60
-  objective: latency
-
-search_space:
-  BM: [16, 32, 64]
-  BN: [32, 64]
-  BK: [32, 64]
-  NUM_THREADS: [128, 256]
-  NUM_STAGES: [2, 3]
-  VECTOR_WIDTH: [1, 2, 4]
-  UNROLL_FACTOR: [1, 2]
-  USE_SHARED: [true, false]
-  USE_DOUBLE_BUFFER: [true, false]
-```
-
-注意：`kernel.sample_path` 如果是相对路径，会按 `kernel_opt_agent/` 目录解析。示例里的 `./samples/mock` 实际指向 `kernel_opt_agent/samples/mock`。
-
-关键规则：
-
-- `runner.type` 只能是 `local` 或 `ssh`。
-- `search.strategy` 只能是 `grid`、`random`、`rule_based`、`llm`、`hybrid`。
-- `search.objective` 只能是 `latency` 或 `tflops`。
-- `search_space` 必填，且每个 key 都必须有非空候选值列表。
-- 模板占位符必须和 `search_space` key 完全一致，包括大小写。
-- boolean 参数渲染到 Python 文件时会变成 `True` / `False`。
-- 配置文件不能直接写 API key、password、token。
-
-## 模板参数怎么工作
-
-V1 只渲染 `kernel.entry_file` 指向的入口文件。如果 sample 是目录，目录里的其他文件会原样复制和上传。
-
-入口文件中写模板占位符：
-
-```python
-BM = {{BM}}
-BN = {{BN}}
-BK = {{BK}}
-num_threads = {{NUM_THREADS}}
-num_stages = {{NUM_STAGES}}
-vector_width = {{VECTOR_WIDTH}}
-unroll_factor = {{UNROLL_FACTOR}}
-use_shared = {{USE_SHARED}}
-use_double_buffer = {{USE_DOUBLE_BUFFER}}
-```
-
-配置文件中必须声明同名搜索空间：
-
-```yaml
-search_space:
-  BM: [16, 32, 64]
-  BN: [32, 64]
-  BK: [32, 64]
-  NUM_THREADS: [128, 256]
-  NUM_STAGES: [2, 3]
-  VECTOR_WIDTH: [1, 2, 4]
-  UNROLL_FACTOR: [1, 2]
-  USE_SHARED: [true, false]
-  USE_DOUBLE_BUFFER: [true, false]
-```
-
-如果模板里出现了未声明的占位符，或者 `search_space` 里有模板没有用到的参数，程序会直接报错，避免跑出不可复现的实验。
-
-## correctness 和 benchmark 输出格式
-
-推荐让 correctness 命令输出强约定格式：
-
-```text
-CORRECTNESS_RESULT status=<PASS|FAIL> max_error=<float> reason="<text>"
-```
-
-示例：
-
-```text
-CORRECTNESS_RESULT status=PASS max_error=0.00001 reason="ok"
-```
-
-推荐让 benchmark 命令输出强约定格式：
-
-```text
-BENCHMARK_RESULT latency_ms=<float> tflops=<float> bandwidth_gbps=<float>
-```
-
-示例：
-
-```text
-BENCHMARK_RESULT latency_ms=1.23 tflops=120.5 bandwidth_gbps=850.0
-```
-
-如果 benchmark 没有强格式，程序会尝试使用 `metrics.latency_regex`、`metrics.tflops_regex`、`metrics.bandwidth_regex` 做兼容解析。解析失败会记录为失败 case，不会中断整个搜索流程。
-
-## 搜索策略
-
-- `grid`：按 `search_space` 确定性枚举。
-- `random`：使用固定 seed 从 `search_space` 采样。
-- `rule_based`：用保守启发式选择小、中、大配置。
-- `llm`：调用 OpenAI-compatible Chat Completions API 生成候选，但输出必须是严格 JSON，且必须通过 `search_space` 校验。
-- `hybrid`：默认推荐。先尝试 LLM，失败时回退到 rule-based，再用 grid/random 补足候选数。
-
-无论使用哪种策略，候选参数都只能来自 `search_space`。
-
-## SSH 远程运行
-
-复制 SSH 示例配置，不要提交真实配置：
-
-```bash
-cp kernel_opt_agent/config.ssh.example.yaml ssh.config.yaml
-```
-
-填写这些字段：
-
-- `remote.host`
-- `remote.port`
-- `remote.username`
-- `remote.auth_type: password`
-- `remote.password_env`
-- `remote.remote_workspace`
-
-密码必须通过环境变量传入，不允许写入 `ssh.config.yaml`：
-
-```bash
-export KERNEL_AGENT_SSH_PASSWORD='your-password'
+git clone https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent.git
+cd TileLang-Remote-Autotuning-Agent
+python -m venv .venv
 ```
 
 PowerShell：
 
 ```powershell
-$env:KERNEL_AGENT_SSH_PASSWORD = 'your-password'
+.venv\Scripts\Activate.ps1
+pip install -e .
 ```
 
-推荐的远程认证配置：
+bash：
+
+```bash
+source .venv/bin/activate
+pip install -e .
+```
+
+历史 V1.0.0-rc1 wheel 仍可下载，作为兼容与回溯入口：
+
+- [Release 页面](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/releases/tag/v1.0.0-rc1)
+- [直接下载 wheel](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/releases/download/v1.0.0-rc1/tilelang_remote_autotuning_agent-1.0.0rc1-py3-none-any.whl)
+
+该预发布包定位为 V1 MVP，不包含当前 `main` 的 V2 Web 能力。使用 V2 请按上面的源码安装步骤操作。当前源码包版本标记为 `2.0.0.dev0`；本次主线升级没有发布新的安装包或冻结标签。
+
+## 启动 Web API
+
+```bash
+python -m kernel_opt_agent.server.app
+```
+
+默认监听 `http://127.0.0.1:8765`。健康检查：
+
+```bash
+curl http://127.0.0.1:8765/api/health
+```
+
+主要端点：
+
+```text
+GET  /api/health
+GET  /api/settings
+POST /api/settings
+POST /api/settings/test-connection
+POST /api/hardware/resolve
+POST /api/tasks
+GET  /api/tasks
+GET  /api/tasks/{task_id}
+GET  /api/tasks/{task_id}/events
+GET  /api/tasks/{task_id}/results
+POST /api/tasks/{task_id}/cancel
+GET  /api/tasks/{task_id}/download/best_kernel
+GET  /api/tasks/{task_id}/download/report
+```
+
+请求模型、示例和状态码见 [HTTP API 参考](docs/http-api.md)。
+
+## 本地可复现 Demo
+
+不需要 GPU 或 SSH：
+
+```bash
+python main.py --config kernel_opt_agent/config.example.yaml
+```
+
+或者使用 V2 文件驱动高级模式：
+
+```bash
+cp examples/settings.yaml.example settings.yaml
+python main.py --run-request examples/run_request.yaml --settings settings.yaml
+```
+
+配置文件是 CLI 的高级/调试入口，不是 V2 普通用户产品入口。
+
+## 远程 SSH 设置
+
+SSH 密码和 LLM API key 不保存明文，只保存环境变量名。
+
+PowerShell：
+
+```powershell
+$env:KERNEL_AGENT_SSH_PASSWORD = "your-ssh-password"
+$env:OPENAI_API_KEY = "your-api-key"
+```
+
+bash：
+
+```bash
+export KERNEL_AGENT_SSH_PASSWORD="your-ssh-password"
+export OPENAI_API_KEY="your-api-key"
+```
+
+SSH password 配置示例：
 
 ```yaml
-runner:
-  type: ssh
-
 remote:
-  host: your-ssh-host
+  host: example.com
   port: 22
-  username: your-user
+  username: root
   auth_type: password
   password_env: KERNEL_AGENT_SSH_PASSWORD
   remote_workspace: /tmp/kernel_opt_workspace
 ```
 
-运行：
+所有远程命令默认等价于：
 
 ```bash
-python main.py --config ssh.config.yaml
+cd <remote_workspace> && <user_command>
 ```
 
-SSH runner 会把 sample 上传到远程 workspace，只渲染 `kernel.entry_file`，并在 `remote.remote_workspace` 下执行 correctness、build、benchmark。远程产物会拉回到本地结果目录中。
+需要在子目录运行时，应在命令中显式写安全的相对路径，例如 `cd samples/moe_gemm && python benchmark.py`。
 
-V1 必须支持 SSH password authentication。SSH key authentication 可作为兼容方式保留；如果使用 key auth，配置 `auth_type: key` 和 `remote.key_path`，但不要把私钥内容写入配置文件。
+## 模板与搜索空间
 
-## 模力方舟容器连接说明
+V1/CLI 模板使用双花括号：
 
-在模力方舟容器中运行远程调参时，先在控制台创建或启动带 TileLang/mcTileLang 运行环境的容器，并确认容器提供 SSH 连接信息。通常需要记录：
-
-- SSH host
-- SSH port
-- username
-- 登录密码
-- 容器内用于调参的绝对路径，例如 `/root/kernel_opt_workspace` 或 `/tmp/kernel_opt_workspace`
-
-本项目推荐使用 password auth 连接模力方舟容器，但密码只能放在本机环境变量中：
-
-```bash
-export KERNEL_AGENT_SSH_PASSWORD='your-model-ark-container-password'
+```python
+BM = {{BM}}
+BN = {{BN}}
+NUM_THREADS = {{NUM_THREADS}}
 ```
 
-PowerShell：
-
-```powershell
-$env:KERNEL_AGENT_SSH_PASSWORD = 'your-model-ark-container-password'
-```
-
-配置示例：
+对应搜索空间必须显式、有边界且非空：
 
 ```yaml
-runner:
-  type: ssh
-
-remote:
-  host: <模力方舟 SSH Host>
-  port: <模力方舟 SSH Port>
-  username: <容器用户名>
-  auth_type: password
-  password_env: KERNEL_AGENT_SSH_PASSWORD
-  remote_workspace: /root/kernel_opt_workspace
+search_space:
+  BM: [16, 32, 64]
+  BN: [32, 64, 128]
+  NUM_THREADS: [128, 256]
 ```
 
-确认 `remote.remote_workspace` 是容器内绝对路径，并且当前用户有写权限。`build_command`、`correctness_command` 和 `run_command` 会默认在这个 workspace 下执行；如果 sample 的 benchmark 需要进入子目录，请在命令中显式 `cd`，但仍会经过 command guard 检查。
-
-## 硬件探测与 safe probe
-
-V1 支持硬件自动探测和 safe probe，用于给搜索策略提供保守边界。相关结果会写入：
-
-```text
-kernel_opt_agent/workspace/results/hardware_detected.yaml
-kernel_opt_agent/workspace/results/hardware_detection.log
-kernel_opt_agent/workspace/results/hardware_probe.jsonl
-```
-
-需要特别注意：safe probe 是低/中置信度的可用性试探，不是官方硬件上限。`local_mock` 不验证真实 GPU 能力；`skipped` 只表示 probe 没有执行或没有得到真实结论，不表示硬件不支持。
-
-`hardware_probe.jsonl` 当前字段包括：
-
-- `probe_name`
-- `param_name`
-- `candidate_value`
-- `status`
-- `inference`
-- `source`
-- `confidence`
-- `stdout_path`
-- `stderr_path`
-
-`status` 允许值：
-
-- `pass`
-- `failed`
-- `timeout`
-- `guard_denied`
-- `exception`
-- `skipped`
-
-报告和前端会展示这些状态、置信度和日志路径，方便复查。
+LLM、random 和规则 fallback 都不能选择搜索空间外的值。若模板仍有未替换占位符，任务会失败并记录原因。
 
 ## 输出文件
 
-主结果目录：
+Web 任务写入独立目录：
 
 ```text
-kernel_opt_agent/workspace/results/
+kernel_opt_agent/workspace/tasks/{task_id}/
+  run_request.yaml
+  effective_config.yaml
+  sample/
+  generated/
+  patches/
+  results/
 ```
 
-常见产物：
+常用结果：
 
-- `experiments.jsonl`：每个 trial 的完整结构化记录。
-- `summary.csv`：简化摘要，便于浏览。
-- `failed_cases.jsonl`：失败候选记录。
-- `all_results.csv`：最终结果表。
-- `best_kernel.py`：当前搜索预算内的 best-seen kernel。
-- `best_config.yaml`：best-seen 参数配置。
-- `report.md`：最终 Markdown 报告。
-- `logs/`：每个 trial 的 stdout/stderr。
-- `agent.log`：agent 运行日志。
-- `effective_config.yaml`：脱敏后的实际配置。
-- `hardware_detected.yaml`：硬件字段、来源和置信度。
-- `hardware_probe.jsonl`：safe probe 记录。
+| 文件 | 含义 |
+| --- | --- |
+| `best_kernel.py` | 当前预算内 best-seen kernel |
+| `best_config.yaml` | best-seen 完整参数 |
+| `report.md` | 基线、最佳结果、诊断、patch 与不确定性 |
+| `summary.csv` / `all_results.csv` | 全部候选汇总 |
+| `experiments.jsonl` | trial 级结构化记录与完整参数 |
+| `failed_cases.jsonl` | correctness/build/run/parse/guard 失败 |
+| `profiler_results.jsonl` | profiler 结果或采集失败信息 |
+| `metric_observations.jsonl` | 标准化性能证据 |
+| `diagnosis.jsonl` / `diagnoses.jsonl` | 诊断记录 |
+| `patch_trials.jsonl` | 受控 patch 验证记录 |
+| `logs/` | 原始 stdout/stderr |
 
-这些运行产物默认不应提交到 Git。
+缺失指标保持 `null`；`available_metrics`、source 和 confidence 用来说明证据是否可用以及来自哪里。
 
-## 前端结果查看器
+## 安全模型
 
-前端文件：
+- 用户命令必须经过 `runner/command_guard.py`。
+- runner 的 cwd 必须位于指定 workspace 内。
+- 禁止 `rm -rf`、`mkfs`、`dd if=`、系统包移除、关机重启、`curl | sh`、`chmod 777 /` 等危险命令。
+- SSH runner 只清理带 `.kernel_opt_agent_workspace` 标记的受管目录。
+- 每条命令有 timeout，并捕获 stdout、stderr、return code 和失败类别。
+- 明文 password、API key、token、私钥内容会被拒绝或脱敏。
+- LLM 只能输出经 schema 校验的参数或受控 patch，不能直接执行 shell。
+- patch 只能修改显式标记区域；失败或性能下降不会替换 best kernel。
 
-```text
-kernel_opt_agent/frontend/index.html
-```
+command guard 是纵深防御的一层，不应替代低权限容器、网络隔离和最小权限 SSH 账户。
 
-它是只读查看器，不调用后端 HTTP API，不执行 shell 命令，不读取 SSH key 或 API key，也不修改结果文件。
-
-使用方式：
-
-1. 在 Chromium 浏览器中打开 `kernel_opt_agent/frontend/index.html`，选择 `kernel_opt_agent/workspace/results/`。
-2. 或用任意静态服务器服务 `kernel_opt_agent/`，打开 `/frontend/index.html`，页面会读取 `../workspace/results/`。
-
-前端会展示 baseline、best-seen、提升比例、trial 状态、失败原因、日志路径、patch 路径、报告内容，以及硬件探测和 safe probe 摘要。后端还在运行时，缺失文件会显示为 waiting。
-
-## 安全约束
-
-命令安全：
-
-- 用户配置的 correctness、build、benchmark 命令默认都在 workspace 根目录执行。
-- V1 不支持给每条命令单独配置 working directory。
-- 所有命令都会经过 `runner/command_guard.py` 检查。
-- 默认禁止 `rm -rf`、`mkfs`、`dd if=`、`shutdown`、`reboot`、`apt remove`、`apt purge`、`yum remove`、`curl | sh`、`wget | sh` 等高风险片段。
-- 禁止明显跳出 workspace 的破坏性操作。
-
-敏感信息安全：
-
-- LLM API key 只能通过 `llm.api_key_env` 指定的环境变量读取。
-- SSH key 路径在脱敏配置中会被隐藏。
-- API key、SSH password、token 不允许写入配置、日志、JSONL、CSV 或报告。
-
-LLM 安全：
-
-- LLM 输出必须是严格 JSON。
-- LLM 推荐参数必须来自 `search_space`。
-- LLM 不允许生成 shell command。
-- LLM 调用失败时会 fallback，不会中断整个调参流程。
-
-## 代码结构
+## 目录结构
 
 ```text
 .
-  README.md
-  instruction.md
-  main.py
-  tests/
-  kernel_opt_agent/
-    config_model.py
-    main.py
-    agent/
-    benchmark/
-    frontend/
-    hardware/
-    hardware_profiles/
-    kernel/
-    profiler/
-    runner/
-    samples/mock/
-    storage/
-    workspace/results/
+├── README.md
+├── LICENSE
+├── NOTICE
+├── instruction.md
+├── docs/
+│   ├── technical-architecture.md
+│   └── http-api.md
+├── examples/
+├── tests/
+└── kernel_opt_agent/
+    ├── agent/          # LLM planner 与搜索策略
+    ├── benchmark/      # correctness/benchmark 解析
+    ├── diagnosis/      # 证据模型与瓶颈规则
+    ├── frontend/       # 当前单文件 Web UI
+    ├── hardware/       # 探测、profile 与 safe probe
+    ├── kernel/         # 模板渲染与参数候选
+    ├── patcher/        # 受控 patch、校验和回滚
+    ├── profiler/       # profiler 接口与 mcProfiler 导入
+    ├── runner/         # local/SSH runner 与 command guard
+    ├── server/         # FastAPI、任务管理和 worker
+    ├── storage/        # JSONL/CSV/报告
+    └── workspace/      # 运行产物，不应提交
 ```
 
-主要模块：
-
-- `kernel_opt_agent/config_model.py`：读取和校验 YAML 配置。
-- `kernel_opt_agent/main.py`：调度完整搜索流程。
-- `kernel_opt_agent/runner/local_runner.py`：本地 mock/demo/test runner。
-- `kernel_opt_agent/runner/ssh_runner.py`：SSH/SFTP 远程 runner。
-- `kernel_opt_agent/runner/command_guard.py`：命令安全检查。
-- `kernel_opt_agent/kernel/template_manager.py`：模板占位符解析与替换。
-- `kernel_opt_agent/kernel/variant_generator.py`：候选 kernel 生成。
-- `kernel_opt_agent/kernel/patch_manager.py`：保存候选 patch。
-- `kernel_opt_agent/benchmark/correctness.py`：解析 correctness 输出。
-- `kernel_opt_agent/benchmark/parser.py`：解析 benchmark 指标。
-- `kernel_opt_agent/agent/optimizer_policy.py`：搜索策略。
-- `kernel_opt_agent/agent/planner.py`：LLM 候选规划。
-- `kernel_opt_agent/hardware/`：硬件探测、profile 合并和 safe probe。
-- `kernel_opt_agent/storage/experiment_db.py`：写 JSONL、CSV 和日志。
-- `kernel_opt_agent/storage/report_writer.py`：生成报告和 best kernel。
-- `kernel_opt_agent/frontend/index.html`：只读结果查看器。
-
-## 开发和 PR 检查
-
-提交 PR 前至少运行：
+## 开发与验证
 
 ```bash
-python -m unittest discover -s tests
 python -m compileall -q kernel_opt_agent tests
-python main.py --config kernel_opt_agent/config.example.yaml
+python -m unittest discover -s tests
+git diff --check
 ```
 
-不要提交：
-
-- 真实 `config.yaml`
-- SSH key
-- API key
-- token
-- password
-- 本地实验日志
-- `kernel_opt_agent/workspace/generated/`
-- `kernel_opt_agent/workspace/patches/`
-- `kernel_opt_agent/workspace/results/` 中的运行产物
-
-## 当前状态和下一步
-
-当前 V1 已具备 local/mock 主流程、SSH key-auth 路径、硬件探测与 safe probe 结果展示、LLM fallback、安全命令检查、结构化结果记录和只读前端查看器。
-
-仍需要继续推进：
-
-1. 在真实 SSH 容器上完成更多 smoke test。
-2. 用真实远程结果继续验证前端展示。
-3. 完善 V1 release checklist 和 troubleshooting。
-4. 后续实现更完整的 mxmaca/metax 真实 probe。
+提交前不要加入真实 settings、SSH key、password、API key、token、本地 workspace 或未脱敏的远程日志。
 
 ## 开源许可
 
 Copyright 2026 cc-c122.
 
-本项目采用 [Apache License 2.0](LICENSE)。使用、修改和分发须遵守许可证条款，保留适用的版权、许可证和 NOTICE 声明，并标明修改。第三方组件保留各自的许可证与版权声明。软件按原样提供，不作担保；完整条款以许可证正文为准。
+本项目以 [Apache License 2.0](LICENSE) 开源。你可以在许可证条款允许的范围内使用、复制、修改和分发本项目。分发修改版本时需保留许可证和版权声明，并明确标注修改；许可证不提供商标授权，也不对软件作任何担保。
+
+第三方源码仍遵循其各自许可证。例如 vendored TileLang Paged Attention sample 的 MIT 声明见 `kernel_opt_agent/samples/paged_attention_decode/THIRD_PARTY_NOTICES.md`。

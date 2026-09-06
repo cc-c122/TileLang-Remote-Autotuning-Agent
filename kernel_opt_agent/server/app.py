@@ -1,0 +1,352 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import os
+from pathlib import Path
+from typing import Any
+
+import uvicorn
+import yaml
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+
+from kernel_opt_agent.hardware.hardware_info import CANONICAL_FIELDS, HardwareInfo
+from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader, normalize_profile_name
+from kernel_opt_agent.main import WORKSPACE_ROOT
+
+from .job_worker import JobWorker
+from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest
+from .profiler_status import profiler_status
+from .settings_store import SettingsStore
+from .task_manager import TaskManager
+
+
+SERVER_WORKSPACE = WORKSPACE_ROOT / "server"
+TASKS_ROOT = WORKSPACE_ROOT / "tasks"
+SETTINGS_PATH = WORKSPACE_ROOT / "server_settings.yaml"
+
+
+def _read_text(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def _read_yaml(path: Path) -> Any:
+    if not path.exists() or not path.is_file():
+        return None
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _read_csv(path: Path) -> list[dict[str, Any]]:
+    if not path.exists() or not path.is_file():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    from .profiler_status import read_jsonl
+
+    return read_jsonl(path)
+
+
+def _numeric(value: Any) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _best_summary(summary_rows: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, float | None]:
+    ok = [row for row in summary_rows if row.get("status") == "benchmark_ok" and _numeric(row.get("objective_value")) is not None]
+    if not ok:
+        return None, None
+    best = min(ok, key=lambda row: _numeric(row.get("objective_value")) or float("inf"))
+    baseline = summary_rows[0] if summary_rows else None
+    baseline_value = _numeric((baseline or {}).get("objective_value"))
+    best_value = _numeric(best.get("objective_value"))
+    improvement = None
+    if baseline_value and best_value is not None:
+        improvement = (baseline_value - best_value) / baseline_value * 100.0
+    return best, improvement
+
+
+def _task_payload(task: Any) -> dict[str, Any]:
+    payload = task.model_dump()
+    summary = _read_csv(Path(task.results_dir) / "summary.csv")
+    best_row, improvement = _best_summary(summary)
+    baseline = summary[0] if summary else {}
+    iterations = [_numeric(row.get("iteration")) for row in summary]
+    latest_event = task.events[-1] if task.events else {}
+    payload.update(
+        {
+            "current_iteration": int(max([item for item in iterations if item is not None], default=0)),
+            "total_trials": len(summary),
+            "best_latency": _numeric((best_row or {}).get("latency")),
+            "baseline_latency": _numeric(baseline.get("latency")),
+            "improvement_percent": improvement,
+            "current_stage": latest_event.get("type") or task.status,
+            "latest_message": latest_event.get("message") or task.status,
+        }
+    )
+    return payload
+
+
+def _result_payload(results_dir: Path) -> dict[str, Any]:
+    summary = _read_csv(results_dir / "summary.csv")
+    best_row, improvement = _best_summary(summary)
+    files = {}
+    for name in [
+        "experiments.jsonl",
+        "summary.csv",
+        "profiler_results.jsonl",
+        "metric_observations.jsonl",
+        "diagnosis.jsonl",
+        "diagnoses.jsonl",
+        "patch_trials.jsonl",
+        "best_kernel.py",
+        "best_config.yaml",
+        "report.md",
+    ]:
+        path = results_dir / name
+        files[name] = {"exists": path.exists(), "size": path.stat().st_size if path.exists() else 0}
+    best_kernel = _read_text(results_dir / "best_kernel.py")
+    best_config = _read_yaml(results_dir / "best_config.yaml")
+    report = _read_text(results_dir / "report.md")
+    evidence_summary = _read_jsonl(results_dir / "metric_observations.jsonl")
+    diagnoses = _read_jsonl(results_dir / "diagnoses.jsonl")
+    profiler_rows = _read_jsonl(results_dir / "profiler_results.jsonl")
+    status = profiler_status(profiler_rows, evidence_summary)
+    payload = {
+        "results_dir": str(results_dir),
+        "best_kernel": best_kernel,
+        "best_config": best_config,
+        "report_markdown": report,
+        "summary_table": summary,
+        "improvement_percent": improvement,
+        "failed_cases": _read_jsonl(results_dir / "failed_cases.jsonl"),
+        "generated_files": files,
+        "evidence_summary": evidence_summary,
+        "diagnoses": diagnoses,
+        "profiler_status": status,
+        "profiler_available": status == "profiler_metrics_available",
+    }
+    payload.update({"files": files, "summary": summary, "best_row": best_row, "report": report})
+    return payload
+
+
+def _profile_field_values(profile: dict[str, Any]) -> dict[str, Any]:
+    values = {name: profile.get(name) for name in CANONICAL_FIELDS if name in profile}
+    mma = profile.get("mma")
+    if isinstance(mma, dict) and "supported_dtypes" in mma:
+        values.setdefault("supported_dtypes", mma["supported_dtypes"])
+    return values
+
+
+def resolve_hardware(request: HardwareResolveRequest) -> dict[str, Any]:
+    loader = HardwareProfileLoader()
+    info = HardwareInfo.unknown()
+    profile_name, profile = loader.load(request.gpu_model or "unknown_gpu")
+    info.profile_used = profile_name
+    for field_name, value in _profile_field_values(profile).items():
+        if value is not None:
+            info.set_field(field_name, value, "builtin_profile", "medium", f"from built-in {profile_name} profile")
+        else:
+            info.set_field(field_name, None, "unknown", "unknown", f"not specified by built-in {profile_name} profile")
+    if request.gpu_model:
+        info.set_field("target_name", request.gpu_model, "user_override", "high", "from web request target.gpu_model")
+    if request.backend and request.backend != "unknown":
+        info.set_field("backend", request.backend, "user_override", "high", "from web request target.backend")
+    for name, value in request.user_overrides.items():
+        info.set_field(name, value, "user_override", "high", f"from web request user_overrides.{name}")
+    if request.allow_llm_lookup:
+        info.warnings.append("LLM hardware lookup is reserved for a later phase and was not used")
+    if request.allow_web_lookup:
+        info.warnings.append("Web hardware lookup is disabled by default and was not used")
+    return info.to_dict()
+
+
+def _redact_connection_error(message: str, settings: SettingsPayload) -> str:
+    redacted = message
+    for env_name in (settings.ssh.password_env, settings.llm.api_key_env):
+        if env_name:
+            value = os.environ.get(env_name)
+            if value:
+                redacted = redacted.replace(value, "<redacted:secret>")
+    if settings.ssh.key_path:
+        redacted = redacted.replace(settings.ssh.key_path, "<redacted:key_path>")
+        redacted = redacted.replace(os.path.expanduser(settings.ssh.key_path), "<redacted:key_path>")
+    return redacted
+
+
+manager = TaskManager(TASKS_ROOT)
+worker = JobWorker(manager, SETTINGS_PATH)
+settings_store = SettingsStore(SETTINGS_PATH)
+app = FastAPI(title="TileLang Remote Autotuning Agent API")
+
+
+@app.get("/api/health")
+def health() -> dict[str, Any]:
+    return {"ok": True, "service": "tilelang-agent", "mode": "local-runner"}
+
+
+@app.post("/api/settings")
+def save_settings(payload: SettingsPayload) -> dict[str, Any]:
+    return {"ok": True, "settings": settings_store.save(payload)}
+
+
+@app.get("/api/settings")
+def get_settings() -> dict[str, Any]:
+    return {"ok": True, "settings": settings_store.load()}
+
+
+@app.post("/api/settings/test-connection")
+def test_connection() -> dict[str, Any]:
+    settings = settings_store.load_raw()
+    ssh = settings.ssh
+    try:
+        if not ssh.host.strip() or not ssh.username.strip():
+            raise ValueError("SSH host and username are required")
+        if ssh.auth_type == "password":
+            if not ssh.password_env:
+                raise ValueError("password_env is required for SSH password auth")
+            if not os.environ.get(ssh.password_env):
+                raise ValueError(f"SSH password env var is not set: {ssh.password_env}")
+        if ssh.auth_type == "key" and not ssh.key_path:
+            raise ValueError("key_path is required for SSH key auth")
+        try:
+            import paramiko
+        except ImportError as exc:
+            raise RuntimeError("SSH test requires optional dependency 'paramiko'") from exc
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            if ssh.auth_type == "password":
+                client.connect(
+                    hostname=ssh.host,
+                    port=ssh.port,
+                    username=ssh.username,
+                    password=os.environ[ssh.password_env or ""],
+                    timeout=10,
+                    look_for_keys=False,
+                    allow_agent=False,
+                )
+            else:
+                client.connect(
+                    hostname=ssh.host,
+                    port=ssh.port,
+                    username=ssh.username,
+                    key_filename=os.path.expanduser(ssh.key_path or ""),
+                    timeout=10,
+                    look_for_keys=True,
+                    allow_agent=True,
+                )
+        finally:
+            client.close()
+        return {"ok": True, "success": True, "failure": False, "error_message": None, "settings": settings_store.load()}
+    except Exception as exc:
+        return {"ok": True, "success": False, "failure": True, "error_message": _redact_connection_error(str(exc), settings), "settings": settings_store.load()}
+
+
+@app.post("/api/hardware/resolve")
+def hardware_resolve(payload: HardwareResolveRequest) -> dict[str, Any]:
+    return {"ok": True, "hardware": resolve_hardware(payload)}
+
+
+@app.post("/api/tasks")
+def create_task(payload: TaskCreateRequest) -> dict[str, Any]:
+    task = manager.create(payload)
+    worker.submit(task.task_id, payload)
+    return {"ok": True, "task_id": task.task_id, "task": _task_payload(task)}
+
+
+@app.get("/api/tasks")
+def list_tasks() -> dict[str, Any]:
+    tasks = []
+    for task in manager.list_recent():
+        payload = _task_payload(task)
+        tasks.append(
+            {
+                "task_id": payload["task_id"],
+                "project_name": payload["project_name"],
+                "status": payload["status"],
+                "created_at": payload["created_at"],
+                "started_at": payload["started_at"],
+                "finished_at": payload["finished_at"],
+                "improvement_percent": payload["improvement_percent"],
+                "latest_message": payload["latest_message"],
+            }
+        )
+    return {"ok": True, "tasks": tasks}
+
+
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: str) -> dict[str, Any]:
+    try:
+        return {"ok": True, "task": _task_payload(manager.get(task_id))}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="task not found") from exc
+
+
+@app.get("/api/tasks/{task_id}/events")
+def get_task_events(task_id: str) -> dict[str, Any]:
+    try:
+        task = manager.get(task_id)
+        return {"ok": True, "task_id": task_id, "status": task.status, "events": task.events}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="task not found") from exc
+
+
+@app.get("/api/tasks/{task_id}/results")
+def get_task_results(task_id: str) -> dict[str, Any]:
+    try:
+        task = manager.get(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="task not found") from exc
+    return {"ok": True, "task": _task_payload(task), "results": _result_payload(Path(task.results_dir))}
+
+
+def _download(task_id: str, filename: str) -> FileResponse:
+    try:
+        task = manager.get(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="task not found") from exc
+    path = Path(task.results_dir) / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"{filename} not found")
+    return FileResponse(path, filename=filename)
+
+
+@app.get("/api/tasks/{task_id}/download/best_kernel")
+def download_best_kernel(task_id: str) -> FileResponse:
+    return _download(task_id, "best_kernel.py")
+
+
+@app.get("/api/tasks/{task_id}/download/report")
+def download_report(task_id: str) -> FileResponse:
+    return _download(task_id, "report.md")
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+def cancel_task(task_id: str) -> dict[str, Any]:
+    try:
+        task = manager.request_cancel(task_id)
+        return {"ok": True, "task": _task_payload(task)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="task not found") from exc
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    args = parser.parse_args()
+    uvicorn.run("kernel_opt_agent.server.app:app", host=args.host, port=args.port, reload=False)
+
+
+if __name__ == "__main__":
+    main()

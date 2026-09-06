@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TileLang 结果查看器</title>
+  <title>TileLang 算子优化 Agent</title>
   <link rel="icon" href="data:,">
   <style>
     :root {
@@ -57,8 +57,23 @@
     }
 
     button:disabled {
-      cursor: wait;
+      cursor: not-allowed;
       opacity: 0.65;
+    }
+
+    label[for="v2ProfilerEnabled"],
+    #v2ProfilerEnabled,
+    label[for="v2PatchingEnabled"],
+    #v2PatchingEnabled,
+    label[for="v2ProfilerType"],
+    #v2ProfilerType,
+    .field:has(#v2ProfilerEnabled),
+    .field:has(#v2PatchingEnabled),
+    .field:has(#v2ProfilerType),
+    section:has(#profilerPanel),
+    section:has(#diagnosisPanel),
+    section:has(#patchTrialsPanel) {
+      display: none;
     }
 
     h1, h2, h3, p { margin: 0; }
@@ -120,6 +135,34 @@
       flex-wrap: wrap;
       justify-content: flex-end;
     }
+
+    .view-tabs {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 14px;
+      overflow-x: auto;
+    }
+
+    .tab-button {
+      border-color: var(--line);
+      background: #fff;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+
+    .tab-button.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: #1d4ed8;
+    }
+
+    .developer-tab {
+      margin-top: 28px;
+      color: var(--muted);
+    }
+
+    .view-panel { display: none; }
+    .view-panel.active { display: block; }
 
     .notice, .howto {
       margin-bottom: 14px;
@@ -208,6 +251,89 @@
 
     .muted {
       color: var(--muted);
+      font-size: 13px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(260px, 1fr));
+      gap: 12px;
+    }
+
+    .form-grid.three {
+      grid-template-columns: repeat(3, minmax(180px, 1fr));
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .field label {
+      color: #344054;
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      padding: 9px 10px;
+    }
+
+    textarea {
+      min-height: 140px;
+      resize: vertical;
+      font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+      font-size: 12px;
+    }
+
+    .inline-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .diagnosis-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(260px, 1fr));
+      gap: 12px;
+    }
+
+    .diagnosis-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+    }
+
+    .diagnosis-card h3 {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .list-plain {
+      margin: 6px 0 10px;
+      padding-left: 18px;
+      color: #344054;
       font-size: 13px;
     }
 
@@ -349,6 +475,18 @@
 
     .failed-table { min-width: 1180px; }
 
+    .hardware-table {
+      min-width: 1120px;
+      table-layout: fixed;
+    }
+
+    .hardware-table th:nth-child(1), .hardware-table td:nth-child(1) { width: 220px; }
+    .hardware-table th:nth-child(2), .hardware-table td:nth-child(2) { width: 280px; }
+    .hardware-table th:nth-child(3), .hardware-table td:nth-child(3) { width: 120px; }
+    .hardware-table th:nth-child(4), .hardware-table td:nth-child(4) { width: 160px; }
+    .hardware-table th:nth-child(5), .hardware-table td:nth-child(5) { width: 140px; }
+    .hardware-table th:nth-child(6), .hardware-table td:nth-child(6) { width: 160px; }
+
     th, td {
       border-bottom: 1px solid var(--line);
       padding: 9px 10px;
@@ -455,14 +593,448 @@
       unicode-bidi: plaintext;
     }
 
+    .app {
+      max-width: none;
+      min-height: 100vh;
+      margin: 0;
+      padding: 0;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      height: 58px;
+      margin: 0;
+      border-bottom: 1px solid #e5eaf1;
+      background: rgba(255, 255, 255, 0.94);
+      padding: 0 22px;
+      backdrop-filter: blur(14px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      display: grid;
+      grid-template-columns: repeat(2, 13px);
+      gap: 4px;
+      flex: 0 0 auto;
+    }
+
+    .brand-mark span {
+      width: 13px;
+      height: 13px;
+      border-radius: 3px;
+      background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    }
+
+    .brand h1 {
+      font-size: 22px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .version-pill {
+      border-radius: 999px;
+      background: #e8f0ff;
+      color: #1d4ed8;
+      padding: 4px 10px;
+      font-size: 13px;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+
+    .user-menu {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #111827;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .icon-chip {
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #344054;
+      font-weight: 800;
+    }
+
+    .avatar {
+      border-color: #1d4ed8;
+      background: #1d4ed8;
+      color: #fff;
+    }
+
+    .product-shell {
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr);
+      min-height: calc(100vh - 58px);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 58px;
+      align-self: start;
+      height: calc(100vh - 58px);
+      border-right: 1px solid #e5eaf1;
+      background: #fbfcff;
+      padding: 22px 16px;
+    }
+
+    .view-tabs {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      overflow: visible;
+    }
+
+    .tab-button {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      align-items: center;
+      gap: 11px;
+      width: 100%;
+      border-color: transparent;
+      background: transparent;
+      color: #475467;
+      padding: 11px 12px;
+      text-align: left;
+    }
+
+    .tab-button.active {
+      border-color: #1d5ceb;
+      background: linear-gradient(135deg, #1763f7, #0f55d8);
+      color: #fff;
+      box-shadow: 0 10px 22px rgba(37, 99, 235, 0.23);
+    }
+
+    .tab-button.is-disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+    }
+
+    .nav-ico {
+      display: inline-grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .workspace {
+      min-width: 0;
+      padding: 20px 20px 30px;
+    }
+
+    #startView .section {
+      margin-bottom: 18px;
+    }
+
+    .breadcrumb {
+      margin: 0 0 12px;
+      color: #475467;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .task-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 22px;
+      align-items: start;
+    }
+
+    .task-main,
+    .right-rail {
+      display: grid;
+      gap: 12px;
+    }
+
+    .section {
+      margin-bottom: 0;
+      border-color: #e3e8ef;
+      border-radius: 8px;
+      box-shadow: 0 14px 32px rgba(15, 23, 42, 0.05);
+    }
+
+    .step-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .step-num {
+      color: #111827;
+      font-weight: 850;
+    }
+
+    .sample-tabs {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .sample-tab-left {
+      display: flex;
+      gap: 22px;
+      color: #667085;
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .sample-tab-left span:first-child {
+      border-bottom: 2px solid var(--accent);
+      color: var(--accent);
+      padding-bottom: 8px;
+    }
+
+    .upload-soft {
+      border-style: dashed;
+      background: #fff;
+      color: #0f55d8;
+    }
+
+    .developer-note {
+      border: 1px dashed #d0d5dd;
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--muted);
+      background: #fbfdff;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .button-like {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      border: 1px dashed var(--accent);
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .static-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      border: 1px solid #c7d7fe;
+      border-radius: 6px;
+      background: #f5f8ff;
+      color: #1d4ed8;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+
+    .code-shell {
+      border: 1px solid #cfd8e3;
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .code-shell textarea {
+      min-height: 232px;
+      border: 0;
+      border-radius: 0;
+      font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+      font-size: 13px;
+      line-height: 1.55;
+      color: #0f172a;
+    }
+
+    .hint-line {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 9px;
+      color: #667085;
+      font-size: 12px;
+    }
+
+    .gpu-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .hardware-card .table-wrap { width: 100%; }
+
+    .action-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 22px;
+      align-items: center;
+    }
+
+    .primary-action {
+      min-height: 52px;
+      font-size: 16px;
+      background: linear-gradient(135deg, #1763f7, #0f55d8);
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.26);
+    }
+
+    .right-rail {
+      position: sticky;
+      top: 78px;
+    }
+
+    .rail-card {
+      border: 1px solid #e3e8ef;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 14px 32px rgba(15, 23, 42, 0.05);
+      padding: 16px;
+    }
+
+    .rail-card h2 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+      font-size: 16px;
+    }
+
+    .settings-group {
+      border: 1px solid #eef2f7;
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 10px;
+    }
+
+    .settings-group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      font-weight: 780;
+    }
+
+    .settings-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .settings-grid .field {
+      grid-template-columns: 76px minmax(0, 1fr);
+      display: grid;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .settings-grid label {
+      margin: 0;
+      color: #111827;
+      font-weight: 560;
+    }
+
+    .save-row {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 12px;
+    }
+
+    .flow-steps {
+      display: grid;
+      gap: 16px;
+      margin-top: 6px;
+    }
+
+    .flow-step {
+      display: grid;
+      grid-template-columns: 30px 38px 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .flow-index {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .flow-icon {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      background: #eaf2ff;
+      color: #1d4ed8;
+      font-size: 20px;
+    }
+
+    .flow-step strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 2px;
+    }
+
+    .flow-step span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .settings-note {
+      border: 1px solid #e5eaf1;
+      border-radius: 8px;
+      background: #fbfdff;
+      color: #2563eb;
+      padding: 12px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
     @media (max-width: 980px) {
-      .topbar, .grid-2, .compare-grid, .hardware-grid, .howto { grid-template-columns: 1fr; }
+      .topbar, .grid-2, .compare-grid, .hardware-grid, .howto, .form-grid, .form-grid.three, .status-grid, .diagnosis-grid, .product-shell, .task-layout, .gpu-row, .action-bar { grid-template-columns: 1fr; }
+      .topbar { flex-wrap: wrap; height: auto; min-height: 58px; padding: 12px 16px; }
+      .brand { flex: 1 1 340px; }
+      .brand h1 { white-space: normal; line-height: 1.3; min-width: 0; }
+      .user-menu { margin-left: auto; }
       .toolbar { justify-content: flex-start; }
+      .sidebar, .right-rail { position: static; height: auto; }
+      .sidebar { border-right: 0; border-bottom: 1px solid #e5eaf1; }
+      .view-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
 
     @media (max-width: 560px) {
       .app { padding: 14px; }
       h1 { font-size: 23px; }
+      .brand { gap: 8px; }
+      .brand h1 { font-size: 18px; }
+      .view-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .metric-row { grid-template-columns: 1fr; }
       .kv { grid-template-columns: 1fr; }
     }
@@ -471,117 +1043,392 @@
 <body>
   <main class="app">
     <header class="topbar">
-      <div>
-        <h1>TileLang 结果查看器</h1>
-        <p class="subtitle">V1 前端只读结果文件，不执行命令；适合快速验收调参结果、硬件探测和失败案例。</p>
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <h1>TileLang 算子优化 Agent</h1>
+        <span class="version-pill">V2 / MVP</span>
       </div>
-      <div class="toolbar">
-        <button id="chooseDirBtn" type="button">选择结果目录</button>
-        <button id="reloadBtn" class="secondary" type="button">刷新</button>
+      <div class="user-menu">
+        <span class="chip warn" id="apiHealthStatus">API：checking</span>
+        <span class="icon-chip avatar">U</span>
+        <span>user</span>
       </div>
     </header>
 
-    <div class="notice">当前结果是搜索预算内 best-seen，不代表全局最优。</div>
+    <div class="product-shell">
+      <aside class="sidebar">
+        <nav class="view-tabs" aria-label="页面入口">
+          <button class="tab-button active" type="button" data-view-target="startView"><span class="nav-ico">＋</span><span>新建任务</span></button>
+          <button class="tab-button" type="button" data-view-target="taskView"><span class="nav-ico">▤</span><span>任务详情</span></button>
+          <button class="tab-button" type="button" data-view-target="resultsView"><span class="nav-ico">▣</span><span>实验结果</span></button>
+          <button class="tab-button" type="button" data-view-target="hardwareView"><span class="nav-ico">◎</span><span>硬件画像</span></button>
+          <button class="tab-button" type="button" data-view-target="settingsView"><span class="nav-ico">⚙</span><span>设置</span></button>
+          <button class="tab-button developer-tab" type="button" data-view-target="developerView"><span class="nav-ico">⌘</span><span>开发者模式</span></button>
+        </nav>
+      </aside>
 
-    <section class="howto" aria-label="本地查看说明">
-      <div>
-        <h3>本地查看说明</h3>
-        <p>推荐点击“选择结果目录”，直接选择后端生成的 <code>kernel_opt_agent/workspace/results/</code>。</p>
-        <div class="read-only-list">
-          <span class="chip ok">前端只读结果文件，不执行命令</span>
-          <span class="chip">不读取密钥</span>
-          <span class="chip">不修改结果</span>
-          <span class="chip warn">safe_probe 不是官方硬件上限</span>
-          <span class="chip warn">local_mock 不代表真实硬件验证</span>
-        </div>
-      </div>
-      <div>
-        <h3>静态服务器方式</h3>
-        <p>也可以在 <code>kernel_opt_agent</code> 目录启动静态服务器，然后打开 <code>/frontend/index.html</code>；页面会读取 <code>../workspace/results/</code>。</p>
-      </div>
-    </section>
+      <div class="workspace">
+        <section id="startView" class="view-panel active">
+          <div class="breadcrumb">首页 / 新建任务</div>
+          <section class="section">
+            <div class="step-title">
+              <span class="step-num">1.</span>
+              <h2>输入 sample</h2>
+            </div>
+            <div class="form-grid three">
+              <div class="field">
+                <label for="v2ProjectName">项目名称</label>
+                <input id="v2ProjectName" value="tilelang-v2-run" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="v2EntryFile">entry_file</label>
+                <input id="v2EntryFile" value="kernel.py" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="v2SampleSourceType">sample 来源</label>
+                <select id="v2SampleSourceType">
+                  <option value="inline" selected>粘贴代码</option>
+                  <option value="upload">上传单文件</option>
+                </select>
+              </div>
+            </div>
+            <div class="sample-tabs" style="margin-top:12px">
+              <div class="sample-tab-left"><span>粘贴代码</span><span>上传单文件</span></div>
+              <label class="upload-soft button-like">
+                <input id="v2SampleFile" type="file" accept=".py,.txt,.yaml,.json" hidden>
+                上传 sample 文件
+              </label>
+            </div>
+            <div class="code-shell">
+              <textarea id="v2SampleText" placeholder="# TileLang sample&#10;@T.kernel&#10;def kernel(...):&#10;    # paste TileLang kernel here"></textarea>
+            </div>
+            <input id="v2SamplePath" type="hidden" autocomplete="off">
+          </section>
 
-    <div id="alerts" class="alerts"></div>
+          <section class="section">
+            <div class="step-title">
+              <span class="step-num">2.</span>
+              <h2>选择 GPU</h2>
+            </div>
+            <div class="gpu-row">
+              <div class="field">
+                <label for="v2GpuModel">GPU 型号</label>
+                <input id="v2GpuModel" value="Metax C500" placeholder="例如 Metax C500 / 沐曦 C500 / NVIDIA H100" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="v2Backend">backend</label>
+                <input id="v2Backend" value="unknown" placeholder="unknown / cuda / tilelang" autocomplete="off">
+              </div>
+              <button id="resolveHardwareBtn" class="secondary" type="button">解析硬件参数</button>
+            </div>
+            <p class="section-kicker">系统会优先使用用户输入、内置 profile 和后端可用探测结果；未知字段会保持为空，用户可手动修改。</p>
+          </section>
 
-    <section class="section">
-      <div class="section-head">
-        <h2>硬件识别</h2>
-        <span class="muted" id="hardwareStatus">waiting</span>
-      </div>
-      <p class="section-kicker">读取 <code>hardware_detected.yaml</code>，展示 hardware name、backend、source、confidence 和 unknown 字段。</p>
-      <div id="hardwarePanel"></div>
-    </section>
+          <section class="section hardware-card">
+            <div class="step-title">
+              <span class="step-num">3.</span>
+              <h2>硬件参数表</h2>
+            </div>
+            <div id="v2HardwareEditor" class="table-wrap"></div>
+          </section>
 
-    <section class="section">
-      <div class="section-head">
-        <h2>硬件 Probe</h2>
-        <span class="muted" id="probeStatus">waiting</span>
-      </div>
-      <p class="section-kicker">读取 <code>hardware_probe.jsonl</code>。safe_probe 不是官方硬件上限；local_mock 不代表真实硬件验证。</p>
-      <div id="probePanel"></div>
-    </section>
+          <section class="section">
+            <div class="step-title">
+              <span class="step-num">4.</span>
+              <h2>运行设置</h2>
+            </div>
+            <div class="form-grid three">
+              <div class="field">
+                <label for="v2RunnerType">runner</label>
+                <select id="v2RunnerType">
+                  <option value="local" selected>local demo</option>
+                  <option value="ssh">remote SSH</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="v2BudgetMode">优化预算</label>
+                <select id="v2BudgetMode">
+                  <option value="quick">快速</option>
+                  <option value="standard" selected>标准</option>
+                  <option value="deep">深入</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="v2ProfilerEnabled">profiler enabled</label>
+                <select id="v2ProfilerEnabled">
+                  <option value="true" selected>开启</option>
+                  <option value="false">关闭</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="v2PatchingEnabled">patching enabled</label>
+                <select id="v2PatchingEnabled">
+                  <option value="false" selected>关闭</option>
+                  <option value="true">开启</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="v2MaxIterations">最大迭代次数</label>
+                <input id="v2MaxIterations" type="number" min="1" step="1" value="3">
+              </div>
+              <div class="field">
+                <label for="v2CandidatesPerIteration">每轮候选数</label>
+                <input id="v2CandidatesPerIteration" type="number" min="1" step="1" value="4">
+              </div>
+              <div class="field">
+                <label for="v2TimeoutSeconds">timeout 秒数</label>
+                <input id="v2TimeoutSeconds" type="number" min="1" step="1" value="60">
+              </div>
+            </div>
+            <div class="status-grid" style="margin-top:12px">
+              <span class="chip" id="startSshStatus">SSH：未配置</span>
+              <span class="chip" id="startLlmStatus">LLM：未配置</span>
+              <button class="secondary" type="button" data-view-target="settingsView">去设置</button>
+            </div>
+            <details style="margin-top:12px">
+              <summary>高级命令设置</summary>
+              <div class="form-grid three" style="margin-top:12px">
+                <div class="field">
+                  <label for="v2BuildCommand">build command</label>
+                  <input id="v2BuildCommand" value="python -m py_compile kernel.py" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label for="v2CorrectnessCommand">correctness command</label>
+                  <input id="v2CorrectnessCommand" value="python correctness.py" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label for="v2BenchmarkCommand">benchmark command</label>
+                  <input id="v2BenchmarkCommand" value="python benchmark.py" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label for="v2ProfilerType">profiler type</label>
+                  <select id="v2ProfilerType">
+                    <option value="dummy">dummy</option>
+                  </select>
+                </div>
+              </div>
+            </details>
+          </section>
 
-    <section class="section">
-      <div class="section-head">
-        <h2>Baseline vs Best 对比</h2>
-        <span class="muted" id="sourceNote">waiting</span>
-      </div>
-      <p class="section-kicker">对比 baseline 与预算内 best-seen，默认以 latency 越低越好计算提升。</p>
-      <div class="compare-grid" id="compareGrid"></div>
-    </section>
+          <section class="section">
+            <div class="action-bar">
+              <button id="startOptimizationBtn" class="primary-action" type="button">开始优化</button>
+              <button id="generateRunRequestBtn" class="secondary" type="button">预览内部配置</button>
+            </div>
+            <textarea id="runRequestOutput" readonly style="margin-top:12px" placeholder="点击“预览内部配置”后显示脱敏内部配置。"></textarea>
+          </section>
+        </section>
 
-    <section class="section grid-2">
-      <div>
-        <div class="section-head">
-          <h2>Latency / TFLOPS / Bandwidth 趋势</h2>
-          <span class="muted">成功候选按轮次 / 候选序号排序</span>
-        </div>
-        <div class="chart" id="trendChart"></div>
-      </div>
-      <div>
-        <div class="section-head">
-          <h2>最佳配置 Best Config</h2>
-          <span class="muted" id="bestIdentity">waiting</span>
-        </div>
-        <pre id="bestConfig">waiting</pre>
-      </div>
-    </section>
+        <div id="alerts" class="alerts"></div>
 
-    <section class="section">
-      <div class="section-head">
-        <h2>候选明细</h2>
-        <span class="muted" id="trialCount">waiting</span>
-      </div>
-      <div id="candidateTable" class="table-wrap"></div>
-    </section>
+        <section id="taskView" class="view-panel">
+          <div class="breadcrumb">首页 / 任务详情</div>
+          <section class="section">
+            <div class="section-head">
+              <h2>任务详情</h2>
+              <span class="muted" id="taskStatus">暂无任务</span>
+            </div>
+            <div class="action-bar">
+              <button id="cancelTaskBtn" class="secondary" type="button" disabled>取消任务</button>
+            </div>
+            <div id="taskDetailPanel" style="margin-top:12px"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>最近任务</h2>
+              <button id="refreshTaskListBtn" class="secondary" type="button">刷新任务列表</button>
+            </div>
+            <div id="taskListPanel" class="table-wrap"></div>
+          </section>
+        </section>
 
-    <section class="section">
-      <div class="section-head">
-        <h2>失败案例</h2>
-        <span class="muted" id="failedCount">waiting</span>
-      </div>
-      <div id="failedCases"></div>
-    </section>
+        <section id="resultsView" class="view-panel">
+          <div class="breadcrumb">首页 / 实验结果</div>
+          <section class="section">
+            <div class="section-head">
+              <h2>查看结果</h2>
+              <span class="muted" id="apiResultsStatus">暂无结果</span>
+            </div>
+            <div class="action-bar">
+              <button id="refreshTaskResultsBtn" class="secondary" type="button">刷新结果</button>
+              <button id="downloadBestKernelBtn" class="secondary" type="button" disabled>下载 best_kernel.py</button>
+              <button id="downloadReportBtn" class="secondary" type="button" disabled>下载 report.md</button>
+            </div>
+            <div id="apiResultsPanel" style="margin-top:12px"></div>
+          </section>
+        </section>
 
-    <section class="section">
-      <div class="section-head">
-        <h2>日志 / Patch 路径</h2>
-        <span class="muted">只展示路径，不读取内容</span>
-      </div>
-      <div id="pathsTable" class="table-wrap"></div>
-    </section>
+        <section id="hardwareView" class="view-panel">
+          <div class="breadcrumb">首页 / 硬件画像</div>
+          <section class="section" id="hardwareSection">
+            <div class="section-head">
+              <h2>硬件画像</h2>
+              <span class="muted" id="hardwareStatus">尚未加载</span>
+            </div>
+            <p class="section-kicker">展示硬件名称、backend、source、confidence 和 unknown 字段。</p>
+            <div id="hardwarePanel"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>硬件 Probe</h2>
+              <span class="muted" id="probeStatus">尚未加载</span>
+            </div>
+            <p class="section-kicker">safe_probe 不是官方硬件上限；local_mock 不代表真实硬件验证。</p>
+            <div id="probePanel"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>Profiler 指标</h2>
+              <span class="muted" id="profilerStatus">尚未加载</span>
+            </div>
+            <div id="profilerPanel"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>Bottleneck diagnosis</h2>
+              <span class="muted" id="diagnosisStatus">尚未加载</span>
+            </div>
+            <div id="diagnosisPanel"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>Patch 尝试记录</h2>
+              <span class="muted" id="patchTrialsStatus">尚未加载</span>
+            </div>
+            <div id="patchTrialsPanel" class="table-wrap"></div>
+          </section>
+        </section>
 
-    <section class="section">
-      <div class="section-head">
-        <h2>report.md</h2>
-        <span class="muted">已做基础脱敏</span>
+        <section id="settingsView" class="view-panel">
+          <div class="breadcrumb">首页 / 设置</div>
+          <section class="section">
+            <div class="section-head">
+              <h2 id="settingsCard">设置</h2>
+              <span class="muted">SSH / LLM 长期设置</span>
+            </div>
+            <div class="settings-group">
+              <div class="settings-group-head"><span>远程 SSH</span><span class="chip ok" id="sshStatus">SSH：未填写</span></div>
+              <div class="settings-grid">
+                <div class="field"><label for="settingSshHost">Host</label><input id="settingSshHost" placeholder="ssh.modelforge.com" autocomplete="off"></div>
+                <div class="field"><label for="settingSshPort">Port</label><input id="settingSshPort" type="number" value="22"></div>
+                <div class="field"><label for="settingSshUsername">Username</label><input id="settingSshUsername" placeholder="ubuntu" autocomplete="off"></div>
+                <div class="field"><label for="settingAuthType">Auth</label><select id="settingAuthType"><option value="password">password</option><option value="key">key</option></select></div>
+                <div class="field"><label for="settingPasswordEnv">Password Env</label><input id="settingPasswordEnv" value="KERNEL_AGENT_SSH_PASSWORD" autocomplete="off"></div>
+                <div class="field"><label for="settingKeyPath">Key Path</label><input id="settingKeyPath" placeholder="~/.ssh/id_rsa" autocomplete="off"></div>
+                <div class="field"><label for="settingRemoteWorkspace">Workspace</label><input id="settingRemoteWorkspace" placeholder="/tmp/kernel_opt_workspace" autocomplete="off"></div>
+              </div>
+            </div>
+            <div class="settings-group">
+              <div class="settings-group-head"><span>LLM API</span><span class="chip ok" id="llmStatus">LLM：未填写</span></div>
+              <div class="settings-grid">
+                <div class="field"><label for="settingLlmBaseUrl">Base URL</label><input id="settingLlmBaseUrl" value="https://api.openai.com/v1" autocomplete="off"></div>
+                <div class="field"><label for="settingApiKeyEnv">API Key Env</label><input id="settingApiKeyEnv" value="OPENAI_API_KEY" autocomplete="off"></div>
+                <div class="field"><label for="settingLlmModel">Model</label><input id="settingLlmModel" value="gpt-4o-mini" autocomplete="off"></div>
+              </div>
+            </div>
+            <div class="status-grid">
+              <span class="chip" id="passwordEnvStatus">SSH password env：未检查</span>
+              <span class="chip" id="apiKeyEnvStatus">LLM API key env：未检查</span>
+              <span class="chip" id="connectionStatus">SSH 连接：未测试</span>
+            </div>
+            <div class="save-row">
+              <button id="loadSettingsBtn" class="secondary" type="button">读取后端设置</button>
+              <button id="saveSettingsBtn" type="button">保存设置</button>
+              <button id="testConnectionBtn" class="secondary" type="button">测试远程连接</button>
+              <button id="clearSettingsBtn" class="secondary" type="button">清空浏览器设置</button>
+            </div>
+            <div class="settings-note" style="margin-top:12px">页面不显示真实 password 或 API key，只保存环境变量名或 key path。</div>
+          </section>
+        </section>
+
+        <section id="developerView" class="view-panel">
+          <div class="breadcrumb">首页 / 开发者模式</div>
+          <section class="section">
+            <div class="section-head">
+              <h2>开发者模式</h2>
+              <span class="muted">低优先级入口</span>
+            </div>
+            <div class="action-bar">
+              <button id="downloadRunRequestYamlBtn" class="secondary" type="button">下载 run_request.yaml</button>
+              <button id="copyRunCommandBtn" class="secondary" type="button">复制 CLI 命令</button>
+              <button id="downloadSettingsBtn" class="secondary" type="button">下载 settings.yaml</button>
+              <button id="chooseDirBtn" class="secondary" type="button">选择结果目录</button>
+              <button id="reloadBtn" class="secondary" type="button">刷新本地结果</button>
+            </div>
+            <div class="developer-note" style="margin-top:12px">上传 sample 目录：未接入。当前普通主流程只支持粘贴代码或上传单文件。</div>
+            <div class="field" style="margin-top:12px">
+              <label for="runCommandOutput">CLI 命令</label>
+              <input id="runCommandOutput" readonly value="python main.py --run-request run_request.yaml --settings settings.yaml">
+            </div>
+            <textarea id="settingsOutput" readonly style="margin-top:12px" placeholder="settings.yaml 预览；不包含密钥值。"></textarea>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>本地结果查看器</h2>
+              <span class="muted" id="sourceNote">暂无本地结果文件</span>
+            </div>
+            <p class="section-kicker">只读结果文件模式用于开发验收，不作为普通用户主入口。</p>
+            <div class="compare-grid" id="compareGrid"></div>
+          </section>
+          <section class="section grid-2">
+            <div>
+              <div class="section-head">
+                <h2>Latency / TFLOPS / Bandwidth 趋势</h2>
+                <span class="muted">成功候选按轮次 / 候选序号排序</span>
+              </div>
+              <div class="chart" id="trendChart"></div>
+            </div>
+            <div>
+              <div class="section-head">
+                <h2>Best Config</h2>
+                <span class="muted" id="bestIdentity">暂无数据</span>
+              </div>
+              <pre id="bestConfig">暂无本地结果文件</pre>
+            </div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>候选明细</h2>
+              <span class="muted" id="trialCount">暂无候选明细</span>
+            </div>
+            <div id="candidateTable" class="table-wrap"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>失败案例</h2>
+              <span class="muted" id="failedCount">暂无失败案例</span>
+            </div>
+            <div id="failedCases"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>日志 / Patch 路径</h2>
+              <span class="muted">只展示路径，不读取内容</span>
+            </div>
+            <div id="pathsTable" class="table-wrap"></div>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>best_vs_baseline.diff</h2>
+              <span class="muted" id="bestDiffStatus">暂无 diff</span>
+            </div>
+            <pre id="bestDiffText">暂无 diff</pre>
+          </section>
+          <section class="section">
+            <div class="section-head">
+              <h2>report.md</h2>
+              <span class="muted">已做基础脱敏</span>
+            </div>
+            <pre id="reportText">暂无 report</pre>
+          </section>
+        </section>
       </div>
-      <pre id="reportText">waiting</pre>
-    </section>
+    </div>
   </main>
 
   <script>
-    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml", "hardware_probe.jsonl"];
+    const REQUIRED_FILES = ["report.md", "summary.csv", "experiments.jsonl", "failed_cases.jsonl", "all_results.csv", "hardware_detected.yaml", "hardware_probe.jsonl", "best_vs_baseline.diff"];
+    const PROFILER_METRIC_FIELDS = ["latency_ms", "tflops", "estimated_hbm_bandwidth", "register_count", "shared_memory_bytes", "private_memory_bytes", "occupancy", "warp_active_ratio", "hbm_read_bandwidth", "hbm_write_bandwidth", "shared_bank_conflict", "memory_coalescing_efficiency"];
     const PROBE_STATUSES = ["pass", "failed", "timeout", "guard_denied", "exception", "skipped"];
     const PROBE_STATUS_LABELS = {
       pass: "pass / 通过",
@@ -608,13 +1455,48 @@
       stdout: "stdout 路径",
       stderr: "stderr 路径",
     };
+    const V2_SETTINGS_KEY = "tilelang_v2_user_settings_v1";
+    const HARDWARE_FIELD_NAMES = [
+      "target_name",
+      "backend",
+      "device_count",
+      "warp_size",
+      "wave_size",
+      "max_threads_per_block",
+      "shared_memory_per_block_bytes",
+      "max_registers_per_thread",
+      "total_memory_GB",
+      "available_memory_GB",
+      "vector_alignment_bytes",
+      "supported_dtypes",
+      "matrix_intrinsic",
+      "hbm_bandwidth_GBps",
+    ];
+    const BUDGET_PRESETS = {
+      quick: { max_iterations: 1, candidates_per_iteration: 3, timeout_seconds: 60 },
+      standard: { max_iterations: 3, candidates_per_iteration: 4, timeout_seconds: 60 },
+      deep: { max_iterations: 5, candidates_per_iteration: 6, timeout_seconds: 60 },
+    };
+    const EVIDENCE_EVENT_LABELS = {
+      collecting_performance_evidence: "正在采集性能证据",
+      performance_evidence_collecting: "正在采集性能证据",
+      profiler_collecting: "正在采集性能证据",
+      profiler_started: "正在采集性能证据",
+      profiler_report_parsed: "profiler 报告解析完成",
+      profiler_report_parse_completed: "profiler 报告解析完成",
+      profiler_parsed: "profiler 报告解析完成",
+      bottleneck_diagnosis_completed: "瓶颈诊断完成",
+      diagnosis_completed: "瓶颈诊断完成",
+      bottleneck_diagnosed: "瓶颈诊断完成",
+    };
     const FIXED_RESULT_DIR = "../workspace/results/";
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
-    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null };
+    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, apiHealthy: false, apiError: "", hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, settingsEnv: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskList: [], taskPollTimer: null, eventPollTimer: null };
     const el = {
       alerts: document.getElementById("alerts"),
+      apiHealthStatus: document.getElementById("apiHealthStatus"),
       compareGrid: document.getElementById("compareGrid"),
       sourceNote: document.getElementById("sourceNote"),
       trendChart: document.getElementById("trendChart"),
@@ -628,15 +1510,120 @@
       hardwarePanel: document.getElementById("hardwarePanel"),
       probeStatus: document.getElementById("probeStatus"),
       probePanel: document.getElementById("probePanel"),
+      profilerStatus: document.getElementById("profilerStatus"),
+      profilerPanel: document.getElementById("profilerPanel"),
+      diagnosisStatus: document.getElementById("diagnosisStatus"),
+      diagnosisPanel: document.getElementById("diagnosisPanel"),
+      patchTrialsStatus: document.getElementById("patchTrialsStatus"),
+      patchTrialsPanel: document.getElementById("patchTrialsPanel"),
+      bestDiffStatus: document.getElementById("bestDiffStatus"),
+      bestDiffText: document.getElementById("bestDiffText"),
       pathsTable: document.getElementById("pathsTable"),
       reportText: document.getElementById("reportText"),
       chooseDirBtn: document.getElementById("chooseDirBtn"),
       reloadBtn: document.getElementById("reloadBtn"),
+      v2ProjectName: document.getElementById("v2ProjectName"),
+      v2GpuModel: document.getElementById("v2GpuModel"),
+      v2Backend: document.getElementById("v2Backend"),
+      v2BuildCommand: document.getElementById("v2BuildCommand"),
+      v2BenchmarkCommand: document.getElementById("v2BenchmarkCommand"),
+      v2CorrectnessCommand: document.getElementById("v2CorrectnessCommand"),
+      v2EntryFile: document.getElementById("v2EntryFile"),
+      v2SampleSourceType: document.getElementById("v2SampleSourceType"),
+      v2SamplePath: document.getElementById("v2SamplePath"),
+      v2RunnerType: document.getElementById("v2RunnerType"),
+      v2BudgetMode: document.getElementById("v2BudgetMode"),
+      v2MaxIterations: document.getElementById("v2MaxIterations"),
+      v2CandidatesPerIteration: document.getElementById("v2CandidatesPerIteration"),
+      v2TimeoutSeconds: document.getElementById("v2TimeoutSeconds"),
+      v2ProfilerEnabled: document.getElementById("v2ProfilerEnabled"),
+      v2ProfilerType: document.getElementById("v2ProfilerType"),
+      v2PatchingEnabled: document.getElementById("v2PatchingEnabled"),
+      v2SampleFile: document.getElementById("v2SampleFile"),
+      v2SampleText: document.getElementById("v2SampleText"),
+      v2HardwareEditor: document.getElementById("v2HardwareEditor"),
+      resolveHardwareBtn: document.getElementById("resolveHardwareBtn"),
+      startOptimizationBtn: document.getElementById("startOptimizationBtn"),
+      cancelTaskBtn: document.getElementById("cancelTaskBtn"),
+      taskStatus: document.getElementById("taskStatus"),
+      taskDetailPanel: document.getElementById("taskDetailPanel"),
+      refreshTaskListBtn: document.getElementById("refreshTaskListBtn"),
+      taskListPanel: document.getElementById("taskListPanel"),
+      apiResultsStatus: document.getElementById("apiResultsStatus"),
+      apiResultsPanel: document.getElementById("apiResultsPanel"),
+      refreshTaskResultsBtn: document.getElementById("refreshTaskResultsBtn"),
+      downloadBestKernelBtn: document.getElementById("downloadBestKernelBtn"),
+      downloadReportBtn: document.getElementById("downloadReportBtn"),
+      generateRunRequestBtn: document.getElementById("generateRunRequestBtn"),
+      downloadRunRequestYamlBtn: document.getElementById("downloadRunRequestYamlBtn"),
+      copyRunCommandBtn: document.getElementById("copyRunCommandBtn"),
+      runCommandOutput: document.getElementById("runCommandOutput"),
+      runRequestOutput: document.getElementById("runRequestOutput"),
+      saveSettingsBtn: document.getElementById("saveSettingsBtn"),
+      loadSettingsBtn: document.getElementById("loadSettingsBtn"),
+      testConnectionBtn: document.getElementById("testConnectionBtn"),
+      downloadSettingsBtn: document.getElementById("downloadSettingsBtn"),
+      clearSettingsBtn: document.getElementById("clearSettingsBtn"),
+      settingsOutput: document.getElementById("settingsOutput"),
+      passwordEnvStatus: document.getElementById("passwordEnvStatus"),
+      apiKeyEnvStatus: document.getElementById("apiKeyEnvStatus"),
+      connectionStatus: document.getElementById("connectionStatus"),
+      sshStatus: document.getElementById("sshStatus"),
+      llmStatus: document.getElementById("llmStatus"),
+      startSshStatus: document.getElementById("startSshStatus"),
+      startLlmStatus: document.getElementById("startLlmStatus"),
     };
 
+    document.querySelectorAll("[data-view-target]").forEach((button) => {
+      button.addEventListener("click", () => {
+        activateView(button.dataset.viewTarget);
+        if (button.dataset.focusSettings === "true") {
+          document.getElementById("settingsCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        if (button.dataset.focusSection) {
+          document.getElementById(button.dataset.focusSection)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+    });
     el.chooseDirBtn.addEventListener("click", chooseDirectory);
     el.reloadBtn.addEventListener("click", loadAndRender);
-    loadAndRender();
+    el.v2SampleFile.addEventListener("change", readSampleFile);
+    el.v2GpuModel.addEventListener("input", renderHardwareEditor);
+    el.v2Backend.addEventListener("input", renderHardwareEditor);
+    el.resolveHardwareBtn.addEventListener("click", resolveHardwareProfile);
+    el.startOptimizationBtn.addEventListener("click", startOptimization);
+    el.v2BudgetMode.addEventListener("change", applyBudgetPreset);
+    [el.v2MaxIterations, el.v2CandidatesPerIteration, el.v2TimeoutSeconds].forEach((input) => {
+      input.addEventListener("input", updateStartButtonState);
+    });
+    el.cancelTaskBtn.addEventListener("click", cancelActiveTask);
+    el.refreshTaskListBtn.addEventListener("click", loadTaskList);
+    el.refreshTaskResultsBtn.addEventListener("click", refreshTaskResults);
+    el.downloadBestKernelBtn.addEventListener("click", () => downloadTaskArtifact("best_kernel"));
+    el.downloadReportBtn.addEventListener("click", () => downloadTaskArtifact("report"));
+    el.generateRunRequestBtn.addEventListener("click", generateRunRequest);
+    el.downloadRunRequestYamlBtn.addEventListener("click", downloadRunRequest);
+    el.copyRunCommandBtn.addEventListener("click", copyRunCommand);
+    el.saveSettingsBtn.addEventListener("click", saveSettings);
+    el.loadSettingsBtn.addEventListener("click", loadSettingsFromApi);
+    el.testConnectionBtn.addEventListener("click", testRemoteConnection);
+    el.downloadSettingsBtn.addEventListener("click", downloadSettings);
+    el.clearSettingsBtn.addEventListener("click", clearSettings);
+    ["settingSshHost", "settingSshPort", "settingSshUsername", "settingAuthType", "settingPasswordEnv", "settingKeyPath", "settingRemoteWorkspace", "settingLlmBaseUrl", "settingLlmModel", "settingApiKeyEnv"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", () => { updateSettingStatus(); renderSettingsOutput(); });
+    });
+    loadSettings();
+    applyBudgetPreset();
+    renderHardwareEditor();
+    updateStartButtonState();
+    renderTaskWaiting("暂无任务，点击开始优化后这里会显示进度。");
+    renderTaskList();
+    checkApiHealth();
+
+    function activateView(targetId) {
+      document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.viewTarget === targetId));
+      document.querySelectorAll(".view-panel").forEach((panel) => panel.classList.toggle("active", panel.id === targetId));
+    }
 
     async function chooseDirectory() {
       if (!("showDirectoryPicker" in window)) {
@@ -646,6 +1633,234 @@
       }
       state.dirHandle = await window.showDirectoryPicker({ mode: "read" });
       await loadAndRender();
+    }
+
+    async function readSampleFile() {
+      try {
+        const file = el.v2SampleFile.files?.[0];
+        if (!file) return;
+        el.v2SampleText.value = sanitizeText(await file.text());
+        el.v2SampleSourceType.value = "upload";
+        el.v2EntryFile.value = sanitizeText(file.name || "kernel.py");
+        if (!el.v2ProjectName.value || el.v2ProjectName.value === "tilelang-v2-run") {
+          el.v2ProjectName.value = file.name.replace(/\.[^.]+$/, "") || "tilelang-v2-run";
+        }
+      } catch (error) {
+        addOneShotWarning(`读取 sample 文件失败：${error.message || "无法读取文件内容"}`);
+        renderAlerts();
+      }
+    }
+
+    function loadSettings() {
+      try {
+        state.settings = JSON.parse(localStorage.getItem(V2_SETTINGS_KEY) || "{}");
+      } catch (error) {
+        state.settings = {};
+      }
+      setSettingValue("settingSshHost", state.settings.ssh_host || "");
+      setSettingValue("settingSshPort", state.settings.ssh_port || "22");
+      setSettingValue("settingSshUsername", state.settings.ssh_username || "");
+      setSettingValue("settingAuthType", state.settings.auth_type || "password");
+      setSettingValue("settingPasswordEnv", state.settings.password_env || "KERNEL_AGENT_SSH_PASSWORD");
+      setSettingValue("settingKeyPath", state.settings.key_path || "");
+      setSettingValue("settingRemoteWorkspace", state.settings.remote_workspace || "");
+      setSettingValue("settingLlmBaseUrl", state.settings.llm_base_url || "https://api.openai.com/v1");
+      setSettingValue("settingLlmModel", state.settings.llm_model || "gpt-4o-mini");
+      setSettingValue("settingApiKeyEnv", state.settings.api_key_env || "OPENAI_API_KEY");
+      updateSettingStatus();
+      renderSettingsOutput();
+    }
+
+    async function loadSettingsFromApi(options = {}) {
+      try {
+        const payload = await apiFetch("/api/settings");
+        applySettingsPayload(payload.settings || {});
+        if (!options.silent) addOneShotWarning("已从后端读取设置。页面不会显示明文 password 或 API key。");
+      } catch (error) {
+        if (!options.silent) addOneShotWarning(`读取后端设置失败：${error.message}`);
+      }
+      updateSettingStatus();
+      renderSettingsOutput();
+      renderAlerts();
+    }
+
+    async function saveSettings() {
+      state.settings = readSettings();
+      localStorage.setItem(V2_SETTINGS_KEY, JSON.stringify(state.settings));
+      try {
+        const payload = await apiFetch("/api/settings", { method: "POST", body: settingsApiPayload() });
+        applySettingsPayload(payload.settings || settingsApiPayload());
+        addOneShotWarning("设置已保存到后端。仅保存环境变量名或 key path，不保存明文密钥。");
+      } catch (error) {
+        addOneShotWarning(`保存后端设置失败：${error.message}`);
+      }
+      updateSettingStatus();
+      renderSettingsOutput();
+      renderAlerts();
+    }
+
+    async function testRemoteConnection() {
+      if (!state.apiHealthy) {
+        await checkApiHealth();
+        if (!state.apiHealthy) return;
+      }
+      el.testConnectionBtn.disabled = true;
+      el.testConnectionBtn.textContent = "测试中";
+      try {
+        await saveSettings();
+        const payload = await apiFetch("/api/settings/test-connection", { method: "POST" });
+        if (payload.settings) applySettingsPayload(payload.settings);
+        const success = payload.success === true || (payload.ok === true && payload.failure !== true);
+        const message = payload.reason || payload.error_message || "后端未返回原因";
+        el.connectionStatus.className = `chip ${success ? "ok" : "bad"}`;
+        el.connectionStatus.textContent = `SSH 连接：${success ? "成功" : "失败"}`;
+        addOneShotWarning(`${success ? "远程连接测试成功" : "远程连接测试失败"}：${message}`);
+      } catch (error) {
+        el.connectionStatus.className = "chip bad";
+        el.connectionStatus.textContent = "SSH 连接：失败";
+        addOneShotWarning(`远程连接测试失败：${error.message}`);
+      } finally {
+        el.testConnectionBtn.disabled = false;
+        el.testConnectionBtn.textContent = "测试远程连接";
+        updateSettingStatus();
+        renderAlerts();
+      }
+    }
+
+    function clearSettings() {
+      localStorage.removeItem(V2_SETTINGS_KEY);
+      state.settings = {};
+      loadSettings();
+    }
+
+    function readSettings() {
+      return {
+        ssh_host: inputValue("settingSshHost"),
+        ssh_port: Number(inputValue("settingSshPort") || 22),
+        ssh_username: inputValue("settingSshUsername"),
+        auth_type: inputValue("settingAuthType") || "password",
+        password_env: inputValue("settingPasswordEnv"),
+        key_path: inputValue("settingKeyPath"),
+        remote_workspace: inputValue("settingRemoteWorkspace"),
+        llm_base_url: inputValue("settingLlmBaseUrl"),
+        llm_model: inputValue("settingLlmModel"),
+        api_key_env: inputValue("settingApiKeyEnv"),
+      };
+    }
+
+    function settingsApiPayload() {
+      const settings = readSettings();
+      return {
+        ssh: {
+          host: settings.ssh_host || "127.0.0.1",
+          port: settings.ssh_port || 22,
+          username: settings.ssh_username,
+          auth_type: settings.auth_type || "password",
+          password_env: settings.auth_type === "password" ? (settings.password_env || "KERNEL_AGENT_SSH_PASSWORD") : null,
+          key_path: settings.auth_type === "key" ? (settings.key_path || null) : null,
+          remote_workspace: settings.remote_workspace || "/tmp/kernel_opt_workspace",
+        },
+        llm: {
+          provider: "openai_compatible",
+          base_url: settings.llm_base_url || "https://api.openai.com/v1",
+          model: settings.llm_model || "gpt-4o-mini",
+          api_key_env: settings.api_key_env || "OPENAI_API_KEY",
+        },
+      };
+    }
+
+    function applySettingsPayload(payload) {
+      const ssh = payload.ssh || payload.remote || {};
+      const llm = payload.llm || {};
+      state.settingsEnv = {
+        passwordEnvExists: typeof ssh.password_env_exists === "boolean" ? ssh.password_env_exists : null,
+        apiKeyEnvExists: typeof llm.api_key_env_exists === "boolean" ? llm.api_key_env_exists : null,
+      };
+      state.settings = {
+        ssh_host: cleanRedacted(ssh.host),
+        ssh_port: ssh.port || 22,
+        ssh_username: cleanRedacted(ssh.username),
+        auth_type: ssh.auth_type || "password",
+        password_env: cleanRedacted(ssh.password_env) || "KERNEL_AGENT_SSH_PASSWORD",
+        key_path: cleanRedacted(ssh.key_path),
+        remote_workspace: cleanRedacted(ssh.remote_workspace),
+        llm_base_url: cleanRedacted(llm.base_url) || "https://api.openai.com/v1",
+        llm_model: cleanRedacted(llm.model) || "gpt-4o-mini",
+        api_key_env: cleanRedacted(llm.api_key_env) || "OPENAI_API_KEY",
+      };
+      localStorage.setItem(V2_SETTINGS_KEY, JSON.stringify(state.settings));
+      loadSettings();
+    }
+
+    function cleanRedacted(value) {
+      const text = sanitizeText(value ?? "");
+      return text.startsWith("<redacted:") ? "" : text;
+    }
+
+    function updateSettingStatus() {
+      const settings = readSettings();
+      setEnvStatusChip(el.passwordEnvStatus, "SSH password env", state.settingsEnv.passwordEnvExists);
+      setEnvStatusChip(el.apiKeyEnvStatus, "LLM API key env", state.settingsEnv.apiKeyEnvExists);
+      setStatusChip(el.sshStatus, "SSH", !!(settings.ssh_host && settings.ssh_username && settings.remote_workspace));
+      setStatusChip(el.llmStatus, "LLM", !!(settings.llm_base_url && settings.llm_model && settings.api_key_env));
+      setStartSettingChip(el.startSshStatus, "SSH", !!(settings.ssh_host && settings.ssh_username && settings.remote_workspace));
+      setStartSettingChip(el.startLlmStatus, "LLM", !!(settings.llm_base_url && settings.llm_model && settings.api_key_env));
+    }
+
+    function settingsFileObject() {
+      const settings = readSettings();
+      return {
+        runner: {
+          type: "ssh",
+        },
+        remote: {
+          host: settings.ssh_host,
+          port: settings.ssh_port || 22,
+          username: settings.ssh_username,
+          auth_type: settings.auth_type || "password",
+          password_env: settings.password_env || "KERNEL_AGENT_SSH_PASSWORD",
+          key_path: settings.auth_type === "key" ? settings.key_path : null,
+          remote_workspace: settings.remote_workspace,
+        },
+        llm: {
+          provider: "openai_compatible",
+          base_url: settings.llm_base_url,
+          model: settings.llm_model,
+          api_key_env: settings.api_key_env || "OPENAI_API_KEY",
+        },
+      };
+    }
+
+    function renderSettingsOutput() {
+      if (el.settingsOutput) el.settingsOutput.value = toYaml(settingsFileObject());
+    }
+
+    function downloadSettings() {
+      downloadTextFile("settings.yaml", toYaml(settingsFileObject()), "text/yaml");
+    }
+
+    function setStatusChip(node, label, configured) {
+      node.className = `chip ${configured ? "ok" : "warn"}`;
+      node.textContent = `${label}：${configured ? "已填写" : "未填写"}`;
+    }
+
+    function setStartSettingChip(node, label, configured) {
+      node.className = `chip ${configured ? "ok" : "warn"}`;
+      node.textContent = `${label}：${configured ? "已保存" : "未配置"}`;
+    }
+
+    function setEnvStatusChip(node, label, exists) {
+      const known = typeof exists === "boolean";
+      node.className = `chip ${exists ? "ok" : "warn"}`;
+      node.textContent = `${label}：${known ? (exists ? "已设置" : "未设置") : "未检查"}`;
+    }
+
+    function setSettingValue(id, value) {
+      document.getElementById(id).value = value ?? "";
+    }
+
+    function inputValue(id) {
+      return sanitizeText(document.getElementById(id).value.trim());
     }
 
     async function loadAndRender() {
@@ -703,7 +1918,7 @@
       const best = findBest(rows, experiments, baseline);
       const runId = pick(baseline?.run_id, best?.run_id, rows.find((row) => row.run_id)?.run_id, experiments.find((row) => row.run_id)?.run_id);
       const hardware = parseHardwareYaml(state.files.get("hardware_detected.yaml") || "");
-      return { experiments, failed, hardwareProbe, summary, allResults, rows, baseline, best, runId, hardware, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "" };
+      return { experiments, failed, hardwareProbe, summary, allResults, rows, baseline, best, runId, hardware, improvement: computeImprovement(baseline, best), report: state.files.get("report.md") || "", bestDiff: state.files.get("best_vs_baseline.diff") || "" };
     }
 
     function parseHardwareYaml(text) {
@@ -888,27 +2103,915 @@
     }
 
     function render(data) {
+      state.hardware = data.hardware;
       renderAlerts();
       renderHardware(data.hardware);
       renderHardwareProbe(data.hardwareProbe);
       renderCompare(data);
+      renderBestDiff(data.bestDiff);
       renderTrend(data.rows, data.best);
       renderBestConfig(data.best);
       renderCandidates(data.rows, data.best);
       renderFailedCases(data.failed);
       renderPaths(data.rows);
       el.reportText.textContent = data.report || "等待 report.md：后端可能仍在生成报告。";
+      renderHardwareEditor();
+    }
+
+    function renderHardwareEditor() {
+      if (state.hardwareResolveError) {
+        el.v2HardwareEditor.innerHTML = `<div class="empty">硬件参数解析失败：${escapeHtml(state.hardwareResolveError)}</div>`;
+        return;
+      }
+      const hardware = state.resolvedHardware || state.hardware || { fields: {} };
+      const detectedFields = hardware.fields || {};
+      const gpuModel = el.v2GpuModel.value.trim();
+      const backendInput = el.v2Backend.value.trim();
+      const rows = HARDWARE_FIELD_NAMES.map((field) => {
+        const detected = detectedFields[field] || {};
+        const userTarget = field === "target_name" && gpuModel;
+        const userBackend = field === "backend" && backendInput && backendInput !== "unknown";
+        const override = state.hardwareOverrides[field];
+        const formValue = userTarget ? gpuModel : userBackend ? backendInput : "";
+        const value = override !== undefined ? override : pick(detected.value, formValue, "");
+        const source = override !== undefined ? "用户修改" : (formValue ? "user_input" : pick(detected.source, value ? "user_input" : "unknown"));
+        const confidence = override !== undefined ? "high" : (formValue ? "medium" : pick(detected.confidence, value ? "medium" : "unknown"));
+        const notes = formValue ? "from V2 user input" : pick(detected.notes, value ? "from V2 form input" : "not available yet");
+        return { field, value, unit: unitForHardwareField(field), source, confidence, modified: override !== undefined, notes };
+      });
+      el.v2HardwareEditor.innerHTML = `<table class="hardware-table">
+        <thead><tr><th>字段</th><th>值</th><th>单位</th><th>来源</th><th>置信度</th><th>是否可编辑</th></tr></thead>
+        <tbody>
+          ${rows.map((row) => `<tr>
+            <td>${escapeHtml(row.field)}</td>
+            <td><input data-hardware-override="${escapeHtml(row.field)}" value="${escapeHtml(display(row.value) === "暂无数据" ? "" : display(row.value))}" placeholder="unavailable"></td>
+            <td>${escapeHtml(row.unit)}</td>
+            <td>${escapeHtml(display(row.source))}</td>
+            <td>${escapeHtml(display(row.confidence))}</td>
+            <td>${row.modified ? `<span class="badge best">用户修改</span>` : `<span class="badge warn">可编辑</span>`}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`;
+      el.v2HardwareEditor.querySelectorAll("[data-hardware-override]").forEach((input) => {
+        input.addEventListener("change", () => {
+          const field = input.dataset.hardwareOverride;
+          if (!field) return;
+          const value = sanitizeText(input.value.trim());
+          if (value) state.hardwareOverrides[field] = parseRequestValue(value);
+          else delete state.hardwareOverrides[field];
+          renderHardwareEditor();
+        });
+      });
+    }
+
+    function readHardwareOverride(field) {
+      return state.hardwareOverrides[field] === undefined ? "" : String(state.hardwareOverrides[field]);
+    }
+
+    function readHardwareFields() {
+      const fields = {};
+      for (const field of HARDWARE_FIELD_NAMES) {
+        const detected = state.hardware?.fields?.[field] || {};
+        const gpuModel = el.v2GpuModel.value.trim();
+        const fallbackValue = field === "target_name" ? gpuModel : "";
+        const override = readHardwareOverride(field);
+        const detectedValue = field === "target_name" && gpuModel ? gpuModel : detected.value;
+        const detectedSource = field === "target_name" && gpuModel ? "user_input" : detected.source;
+        const detectedConfidence = field === "target_name" && gpuModel ? "medium" : detected.confidence;
+        const detectedNotes = field === "target_name" && gpuModel ? "from V2 GPU model input" : detected.notes;
+        fields[field] = {
+          value: parseRequestValue(override || pick(detectedValue, fallbackValue, null)),
+          source: override ? "user_override" : pick(detectedSource, fallbackValue ? "user_input" : "unknown"),
+          confidence: override ? "high" : pick(detectedConfidence, fallbackValue ? "medium" : "unknown"),
+          notes: override ? "overridden in V2 frontend request" : pick(detectedNotes, fallbackValue ? "from V2 form input" : "not available yet"),
+        };
+      }
+      return fields;
+    }
+
+    function readHardwareOverrideFields() {
+      return { ...state.hardwareOverrides };
+    }
+
+    function unitForHardwareField(field) {
+      if (/bytes/i.test(field)) return "bytes";
+      if (/GBps|bandwidth/i.test(field)) return "GB/s";
+      if (/memory_GB/i.test(field)) return "GB";
+      if (/count|threads|registers|warp|wave/i.test(field)) return "count";
+      return "-";
+    }
+
+    function applyBudgetPreset() {
+      const preset = BUDGET_PRESETS[el.v2BudgetMode.value] || BUDGET_PRESETS.standard;
+      el.v2MaxIterations.value = preset.max_iterations;
+      el.v2CandidatesPerIteration.value = preset.candidates_per_iteration;
+      el.v2TimeoutSeconds.value = preset.timeout_seconds;
+      updateStartButtonState();
+    }
+
+    function readBudgetInputs() {
+      return {
+        max_iterations: Number(el.v2MaxIterations.value),
+        candidates_per_iteration: Number(el.v2CandidatesPerIteration.value),
+        timeout_seconds: Number(el.v2TimeoutSeconds.value),
+      };
+    }
+
+    function budgetValidationError() {
+      const budget = readBudgetInputs();
+      if (!Number.isInteger(budget.max_iterations) || budget.max_iterations < 1) return "最大迭代次数必须是大于等于 1 的整数。";
+      if (!Number.isInteger(budget.candidates_per_iteration) || budget.candidates_per_iteration < 1) return "每轮候选数必须是大于等于 1 的整数。";
+      if (!Number.isInteger(budget.timeout_seconds) || budget.timeout_seconds < 1) return "timeout 秒数必须是大于等于 1 的整数。";
+      return "";
+    }
+
+    function budgetFieldError(input, message) {
+      const value = Number(input.value);
+      return message && (!Number.isInteger(value) || value < 1) ? message : "";
+    }
+
+    function updateStartButtonState() {
+      const error = budgetValidationError();
+      el.v2MaxIterations.setCustomValidity(budgetFieldError(el.v2MaxIterations, error));
+      el.v2CandidatesPerIteration.setCustomValidity(budgetFieldError(el.v2CandidatesPerIteration, error));
+      el.v2TimeoutSeconds.setCustomValidity(budgetFieldError(el.v2TimeoutSeconds, error));
+      el.startOptimizationBtn.disabled = !!error;
+      if (error) {
+        el.taskStatus.textContent = "暂无任务";
+        el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(error)}</div>`;
+      }
+    }
+
+    function generateRunRequest() {
+      const budgetError = budgetValidationError();
+      if (budgetError) {
+        addOneShotWarning(budgetError);
+        renderAlerts();
+        return;
+      }
+      const budget = readBudgetInputs();
+      const sampleText = sanitizeText(el.v2SampleText.value);
+      const sourceType = el.v2SampleSourceType.value || "inline";
+      const request = {
+        schema_version: "v2.run_request.v1",
+        project_name: sanitizeText(el.v2ProjectName.value.trim() || "tilelang-v2-run"),
+        sample: {
+          source_type: sourceType,
+          inline_text: sourceType === "path" ? null : (sampleText || null),
+          path: sourceType === "path" ? (sanitizeText(el.v2SamplePath.value.trim()) || null) : null,
+          entry_file: sanitizeText(el.v2EntryFile.value.trim() || "kernel.py"),
+        },
+        commands: {
+          build_command: sanitizeText(el.v2BuildCommand.value.trim() || "python -m py_compile kernel.py"),
+          correctness_command: sanitizeText(el.v2CorrectnessCommand.value.trim() || "python correctness.py"),
+          benchmark_command: sanitizeText(el.v2BenchmarkCommand.value.trim() || "python benchmark.py"),
+        },
+        target: {
+          gpu_model: sanitizeText(el.v2GpuModel.value.trim()),
+          backend: sanitizeText(el.v2Backend.value.trim() || "unknown"),
+        },
+        settings_ref: {
+          use_saved_settings: true,
+        },
+        hardware_overrides: {
+          fields: readHardwareOverrideFields(),
+        },
+        search: {
+          strategy: "rule_based",
+          max_iterations: budget.max_iterations,
+          candidates_per_iteration: budget.candidates_per_iteration,
+          timeout_seconds: budget.timeout_seconds,
+          objective: "latency",
+        },
+        profiler: {
+          enabled: false,
+          type: el.v2ProfilerType.value,
+        },
+        patching: {
+          enabled: false,
+          run_controlled_trial: false,
+        },
+      };
+      state.runRequest = redactObject(request);
+      el.runCommandOutput.value = runRequestCommand();
+      el.runRequestOutput.value = toYaml(state.runRequest);
+    }
+
+    function downloadRunRequest() {
+      if (!state.runRequest) generateRunRequest();
+      downloadTextFile("run_request.yaml", toYaml(state.runRequest), "text/yaml");
+    }
+
+    function runRequestCommand() {
+      return "python main.py --run-request run_request.yaml --settings settings.yaml";
+    }
+
+    async function copyRunCommand() {
+      const command = runRequestCommand();
+      el.runCommandOutput.value = command;
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(command);
+    }
+
+    async function apiFetch(path, options = {}) {
+      let response;
+      try {
+        response = await fetch(path, {
+          method: options.method || "GET",
+          headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+          body: options.body ? JSON.stringify(options.body) : undefined,
+          cache: "no-store",
+        });
+      } catch (error) {
+        throw new Error("后端服务未启动，请确认本地服务已开启。");
+      }
+      const contentType = response.headers.get("content-type") || "";
+      const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+      if (!response.ok) {
+        const detail = typeof payload === "object" ? (payload.detail || payload.error || JSON.stringify(payload)) : payload;
+        if (response.status === 404 && path.startsWith("/api/")) throw new Error("后端服务未启动，请确认本地服务已开启。");
+        if (response.status === 502 && String(detail).includes("backend API unavailable")) throw new Error("后端服务未启动，请确认本地服务已开启。");
+        throw new Error(detail || `${response.status} ${response.statusText}`);
+      }
+      return payload;
+    }
+
+    async function checkApiHealth() {
+      try {
+        const payload = await apiFetch("/api/health");
+        state.apiHealthy = !!payload.ok;
+        state.apiError = "";
+        el.apiHealthStatus.className = "chip ok";
+        el.apiHealthStatus.textContent = "API：已连接";
+        await loadSettingsFromApi({ silent: true });
+        await loadTaskList();
+        renderAlerts();
+      } catch (error) {
+        state.apiHealthy = false;
+        state.apiError = error.message || "后端服务未启动，请确认本地服务已开启。";
+        el.apiHealthStatus.className = "chip bad";
+        el.apiHealthStatus.textContent = "API：未启动";
+        renderTaskWaiting(state.apiError);
+        el.apiResultsStatus.textContent = "暂无结果";
+        el.apiResultsPanel.innerHTML = `<div class="empty">${escapeHtml(state.apiError)}</div>`;
+        renderTaskList(state.apiError);
+        renderAlerts();
+      }
+    }
+
+    async function resolveHardwareProfile() {
+      el.resolveHardwareBtn.disabled = true;
+      el.resolveHardwareBtn.textContent = "搜索中";
+      try {
+        const payload = await apiFetch("/api/hardware/resolve", {
+          method: "POST",
+          body: {
+            gpu_model: sanitizeText(el.v2GpuModel.value.trim() || "unknown"),
+            backend: sanitizeText(el.v2Backend.value.trim() || "unknown"),
+            user_overrides: readHardwareOverrideFields(),
+            allow_llm_lookup: false,
+            allow_web_lookup: false,
+          },
+        });
+        state.resolvedHardware = payload.hardware_profile || payload.hardware || null;
+        state.hardwareResolveError = "";
+        renderHardwareEditor();
+        addOneShotWarning("硬件参数已由后端解析；低置信度或 unknown 字段请手动确认。");
+      } catch (error) {
+        state.resolvedHardware = null;
+        state.hardwareResolveError = error.message;
+        renderHardwareEditor();
+        addOneShotWarning(`硬件参数解析失败：${error.message}`);
+      } finally {
+        el.resolveHardwareBtn.disabled = false;
+        el.resolveHardwareBtn.textContent = "解析硬件参数";
+        renderAlerts();
+      }
+    }
+
+    function buildApiTaskRequest() {
+      const budget = readBudgetInputs();
+      const sampleText = sanitizeText(el.v2SampleText.value);
+      const sourceType = el.v2SampleSourceType.value || "inline";
+      const usePath = sourceType === "path" || (sourceType === "upload" && inputValue("v2SamplePath"));
+      const sample = {
+        source_type: usePath ? sourceType : "inline",
+        inline_text: usePath ? null : sampleText,
+        path: usePath ? inputValue("v2SamplePath") : null,
+        entry_file: inputValue("v2EntryFile") || "kernel.py",
+      };
+      return {
+        project_name: inputValue("v2ProjectName") || "web-task",
+        sample,
+        target: {
+          gpu_model: inputValue("v2GpuModel") || "unknown",
+          backend: String(pick(state.hardwareOverrides.backend, inputValue("v2Backend"), state.resolvedHardware?.fields?.backend?.value, "unknown")),
+          user_overrides: readHardwareOverrideFields(),
+          allow_llm_lookup: false,
+          allow_web_lookup: false,
+        },
+        commands: {
+          build_command: inputValue("v2BuildCommand") || "python -m py_compile kernel.py",
+          correctness_command: inputValue("v2CorrectnessCommand") || "python correctness.py",
+          benchmark_command: inputValue("v2BenchmarkCommand") || "python benchmark.py",
+        },
+        budget: {
+          strategy: "rule_based",
+          max_iterations: budget.max_iterations,
+          candidates_per_iteration: budget.candidates_per_iteration,
+          timeout_seconds: budget.timeout_seconds,
+          objective: "latency",
+        },
+        profiler: {
+          enabled: false,
+          type: "dummy",
+        },
+        patching: {
+          enabled: false,
+          run_controlled_trial: false,
+        },
+        runner: {
+          type: el.v2RunnerType.value === "ssh" ? "ssh" : "local",
+        },
+      };
+    }
+
+    function unwrapTaskPayload(payload) {
+      if (!payload || typeof payload !== "object") return null;
+      return payload.task || payload.task_detail || (payload.task_id ? payload : null);
+    }
+
+    async function startOptimization() {
+      if (!state.apiHealthy) {
+        await checkApiHealth();
+        if (!state.apiHealthy) return;
+      }
+      const budgetError = budgetValidationError();
+      if (budgetError) {
+        el.taskStatus.textContent = "暂无任务";
+        el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(budgetError)}</div>`;
+        addOneShotWarning(budgetError);
+        renderAlerts();
+        updateStartButtonState();
+        return;
+      }
+      const request = buildApiTaskRequest();
+      const remoteBlocker = remoteRunnerBlocker(request.runner.type);
+      if (remoteBlocker) {
+        el.taskStatus.textContent = "暂无任务";
+        el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(remoteBlocker)}</div>`;
+        addOneShotWarning(remoteBlocker);
+        renderAlerts();
+        return;
+      }
+      if (request.sample.source_type === "inline" && !request.sample.inline_text) {
+        addOneShotWarning("请先输入或上传 sample；不会提交空任务。");
+        renderAlerts();
+        return;
+      }
+      el.startOptimizationBtn.disabled = true;
+      el.startOptimizationBtn.textContent = "提交中";
+      renderTaskWaiting("正在调用 POST /api/tasks，等待后端返回 task_id。");
+      activateView("taskView");
+      try {
+        const payload = await apiFetch("/api/tasks", { method: "POST", body: request });
+        state.task = unwrapTaskPayload(payload);
+        state.activeTaskId = pick(payload.task_id, state.task?.task_id);
+        state.taskEvents = state.task?.events || [];
+        state.taskResults = null;
+        el.cancelTaskBtn.disabled = false;
+        renderTaskDetail();
+        loadTaskList();
+        startTaskPolling();
+      } catch (error) {
+        el.taskStatus.textContent = "failed";
+        el.taskDetailPanel.innerHTML = `<div class="empty">任务启动失败：${escapeHtml(error.message)}</div>`;
+      } finally {
+        el.startOptimizationBtn.textContent = "开始优化";
+        updateStartButtonState();
+      }
+    }
+
+    function startTaskPolling() {
+      stopTaskPolling();
+      pollTask();
+      pollTaskEvents();
+      state.taskPollTimer = window.setInterval(pollTask, 2500);
+      state.eventPollTimer = window.setInterval(pollTaskEvents, 2000);
+    }
+
+    function stopTaskPolling() {
+      if (state.taskPollTimer) window.clearInterval(state.taskPollTimer);
+      if (state.eventPollTimer) window.clearInterval(state.eventPollTimer);
+      state.taskPollTimer = null;
+      state.eventPollTimer = null;
+    }
+
+    async function pollTask() {
+      if (!state.activeTaskId) return;
+      try {
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}`);
+        state.task = unwrapTaskPayload(payload);
+        renderTaskDetail();
+        if (["completed", "failed", "cancelled"].includes(state.task.status)) {
+          stopTaskPolling();
+          el.cancelTaskBtn.disabled = true;
+          await refreshTaskResults();
+          await loadTaskList();
+        }
+      } catch (error) {
+        el.taskStatus.textContent = "failed";
+        el.taskDetailPanel.innerHTML = `<div class="empty">读取任务状态失败：${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function pollTaskEvents() {
+      if (!state.activeTaskId) return;
+      try {
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/events`);
+        state.taskEvents = payload.events || [];
+        renderTaskDetail();
+      } catch (error) {
+        addOneShotWarning(`读取任务事件失败：${error.message}`);
+        renderAlerts();
+      }
+    }
+
+    async function cancelActiveTask() {
+      if (!state.activeTaskId) return;
+      el.cancelTaskBtn.disabled = true;
+      try {
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/cancel`, { method: "POST" });
+        state.task = unwrapTaskPayload(payload);
+        renderTaskDetail();
+      } catch (error) {
+        addOneShotWarning(`取消任务失败：${error.message}`);
+        el.cancelTaskBtn.disabled = false;
+        renderAlerts();
+      }
+    }
+
+    async function refreshTaskResults() {
+      if (!state.activeTaskId) {
+        el.apiResultsStatus.textContent = "暂无结果";
+        el.apiResultsPanel.innerHTML = `<div class="empty">等待任务结果：请先开始优化。</div>`;
+        return;
+      }
+      el.apiResultsStatus.textContent = "读取中";
+      try {
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/results`);
+        state.task = payload.task || state.task;
+        state.taskResults = payload.results || payload || null;
+        renderApiResults();
+        activateView("resultsView");
+      } catch (error) {
+        el.apiResultsStatus.textContent = "failed";
+        el.apiResultsPanel.innerHTML = `<div class="empty">读取任务结果失败：${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    function remoteRunnerBlocker(runnerType) {
+      if (runnerType !== "ssh") return "";
+      const settings = readSettings();
+      if (!settings.ssh_host || !settings.ssh_username || !settings.remote_workspace) {
+        return "remote SSH 需要先填写并保存 SSH host、username 和 remote workspace。";
+      }
+      if (settings.auth_type === "password" && state.settingsEnv.passwordEnvExists !== true) {
+        return "remote SSH 需要后端环境变量中的 SSH password env 已设置；请保存设置后确认 SSH password env 显示“已设置”。";
+      }
+      if (settings.auth_type === "key" && !settings.key_path) {
+        return "remote SSH key 认证需要填写 key path；页面不会读取或显示私钥内容。";
+      }
+      return "";
+    }
+
+    async function loadTaskList() {
+      if (!state.apiHealthy) {
+        state.taskList = [];
+        renderTaskList(state.apiError || "后端服务未启动，请确认本地服务已开启。");
+        return;
+      }
+      el.taskListPanel.innerHTML = `<div class="empty">正在读取最近任务。</div>`;
+      try {
+        const payload = await apiFetch("/api/tasks");
+        state.taskList = Array.isArray(payload.tasks) ? payload.tasks : [];
+        renderTaskList();
+      } catch (error) {
+        renderTaskList(`读取任务列表失败：${error.message}`);
+      }
+    }
+
+    function renderTaskList(errorMessage = "") {
+      if (errorMessage) {
+        el.taskListPanel.innerHTML = `<div class="empty">${escapeHtml(errorMessage)}</div>`;
+        return;
+      }
+      if (!state.taskList.length) {
+        el.taskListPanel.innerHTML = `<div class="empty">暂无任务。点击“开始优化”后会出现在这里。</div>`;
+        return;
+      }
+      el.taskListPanel.innerHTML = `<table>
+        <thead><tr><th>task_id</th><th>项目</th><th>状态</th><th>提升比例</th><th>最新消息</th></tr></thead>
+        <tbody>
+          ${state.taskList.map((task) => `<tr class="click-row" data-task-id="${escapeHtml(task.task_id)}"><td>${escapeHtml(shortId(task.task_id))}</td><td>${escapeHtml(display(task.project_name))}</td><td>${taskStatusBadge(task.status)}</td><td>${task.improvement_percent === null || task.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(task.improvement_percent)}%`}</td><td>${escapeHtml(display(task.latest_message))}</td></tr>`).join("")}
+        </tbody>
+      </table>`;
+      el.taskListPanel.querySelectorAll("[data-task-id]").forEach((row) => {
+        row.addEventListener("click", () => openTask(row.dataset.taskId));
+      });
+    }
+
+    async function openTask(taskId) {
+      if (!taskId) return;
+      state.activeTaskId = taskId;
+      renderTaskWaiting("正在读取任务详情。");
+      try {
+        const [taskPayload, eventPayload] = await Promise.all([
+          apiFetch(`/api/tasks/${encodeURIComponent(taskId)}`),
+          apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/events`),
+        ]);
+        state.task = unwrapTaskPayload(taskPayload);
+        state.taskEvents = eventPayload.events || [];
+        renderTaskDetail();
+        await refreshTaskResults();
+        if (state.task && !["completed", "failed", "cancelled"].includes(state.task.status)) {
+          el.cancelTaskBtn.disabled = false;
+          startTaskPolling();
+        } else {
+          el.cancelTaskBtn.disabled = true;
+        }
+      } catch (error) {
+        el.taskStatus.textContent = "failed";
+        el.taskDetailPanel.innerHTML = `<div class="empty">读取任务失败：${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    function renderTaskWaiting(message) {
+      el.taskStatus.textContent = "暂无任务";
+      el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+    }
+
+    function eventKey(value) {
+      return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    }
+
+    function eventLabel(value) {
+      const raw = display(value);
+      return EVIDENCE_EVENT_LABELS[eventKey(value)] || raw;
+    }
+
+    function latestEventLabel(event) {
+      if (!event) return "暂无任务事件";
+      return eventLabel(pick(event.type, event.event_type, event.name));
+    }
+
+    function eventMessage(event) {
+      if (!event) return "";
+      return pick(event.message, event.detail, event.description, EVIDENCE_EVENT_LABELS[eventKey(pick(event.type, event.event_type, event.name))]);
+    }
+
+    function renderTaskDetail() {
+      const task = state.task;
+      if (!task) {
+        renderTaskWaiting("暂无任务，点击开始优化后这里会显示进度。");
+        return;
+      }
+      const events = state.taskEvents || task.events || [];
+      const latestEvent = events[events.length - 1] || null;
+      const summary = state.taskResults?.summary_table || state.taskResults?.summary || [];
+      const best = state.taskResults?.best_row || state.task?.best_row || null;
+      const baseline = summary[0] || null;
+      const improvement = pick(state.task?.improvement_percent, state.taskResults?.improvement_percent);
+      const currentStage = eventLabel(task.current_stage || latestEvent?.type || task.status);
+      const latestEventText = pick(task.latest_message, eventMessage(latestEvent), latestEventLabel(latestEvent));
+      el.taskStatus.textContent = task.status || "暂无任务";
+      el.taskDetailPanel.innerHTML = `
+        <div class="compare-grid">
+          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
+          <article class="result-card"><div class="metric-label">当前 trial 数</div><div class="metric-main">${display(pick(task.total_trials, summary.length || null))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>current best latency</div><div>${escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
+        </div>
+        ${task.error ? `<div class="empty">失败原因：${escapeHtml(task.error)}</div>` : ""}
+        <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${events.slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(latestEventLabel(event)))}</td><td>${escapeHtml(display(eventMessage(event)))}</td></tr>`).join("") || `<tr><td colspan="3">暂无任务事件</td></tr>`}</tbody></table></div>
+      `;
+    }
+
+    function asArray(value) {
+      if (Array.isArray(value)) return value;
+      return value === undefined || value === null || value === "" ? [] : [value];
+    }
+
+    function hasEvidenceContent(value) {
+      if (Array.isArray(value)) return value.length > 0;
+      if (value && typeof value === "object") return Object.keys(value).length > 0;
+      return value !== undefined && value !== null && value !== "";
+    }
+
+    function evidenceSummaryFromResults(results) {
+      const summary = results?.evidence_summary || results?.evidenceSummary || null;
+      if (!hasEvidenceContent(summary)) return null;
+      return summary;
+    }
+
+    function evidenceRecordsFromSummary(summary) {
+      if (!summary) return [];
+      if (Array.isArray(summary)) return summary.filter((item) => item && typeof item === "object");
+      return asArray(pick(summary.records, summary.evidence, summary.items, summary.observations)).filter((item) => item && typeof item === "object");
+    }
+
+    function evidenceId(record) {
+      return String(pick(record?.evidence_id, record?.id, record?.record_id, record?.observation_id, record?.metric_id, "") || "");
+    }
+
+    function evidenceRecordMap(summary) {
+      const map = new Map();
+      evidenceRecordsFromSummary(summary).forEach((record) => {
+        const id = evidenceId(record);
+        if (id) map.set(id, record);
+      });
+      return map;
+    }
+
+    function diagnosisRowsFromResults(results) {
+      const sources = [
+        results?.diagnoses,
+        results?.bottleneck_diagnosis,
+        results?.diagnosis,
+        results?.bottlenecks,
+      ];
+      for (const source of sources) {
+        const rows = asArray(source).filter((item) => item && typeof item === "object");
+        if (rows.length) return rows;
+      }
+      return [];
+    }
+
+    function observationRowsFromEvidence(summary, diagnosisRows, results) {
+      const rows = [
+        ...asArray(results?.observations),
+        ...asArray(results?.raw_observations),
+        ...asArray(summary?.observations),
+        ...asArray(summary?.raw_observations),
+        ...diagnosisRows.flatMap((row) => asArray(row.observations || row.raw_observations)),
+      ];
+      return rows.filter(hasEvidenceContent);
+    }
+
+    function evidenceList(title, value) {
+      const items = asArray(value).filter(hasEvidenceContent);
+      if (!items.length) return "";
+      return `<div><strong>${escapeHtml(title)}</strong><ul class="list-plain">${items.map((item) => `<li>${escapeHtml(display(item))}</li>`).join("")}</ul></div>`;
+    }
+
+    function evidenceRecordLabel(record, fallbackId = "") {
+      const metric = pick(record?.metric_name, record?.metric, record?.name, record?.field, fallbackId);
+      const valueKey = ["value", "metric_value", "observed_value", "actual_value"].find((key) => record && Object.prototype.hasOwnProperty.call(record, key));
+      const value = valueKey ? record[valueKey] : undefined;
+      const unit = pick(record?.unit, record?.metric_unit, record?.units);
+      const source = pick(record?.source, record?.record_type, record?.kind);
+      const valueText = value === undefined || value === "" ? "" : `= ${value === null ? "null / unavailable" : display(value)}`;
+      const parts = [metric, valueText, unit, source ? `source: ${display(source)}` : ""].filter(Boolean);
+      return parts.join(" ");
+    }
+
+    function diagnosisEvidenceItems(row, evidenceMap) {
+      const ids = asArray(row?.evidence_ids || row?.evidenceIds).filter(hasEvidenceContent).map((id) => String(id));
+      const fromIds = ids.map((id) => evidenceMap.get(id) ? evidenceRecordLabel(evidenceMap.get(id), id) : `missing evidence: ${id}`);
+      return fromIds.length ? fromIds : asArray(row?.evidence || row?.evidences).filter(hasEvidenceContent);
+    }
+
+    function renderEvidenceSummary(summary, diagnosisRows, profilerAvailable) {
+      if (!summary && !diagnosisRows.length && profilerAvailable !== false) {
+        return `<section class="section"><div class="section-head"><h2>性能证据与诊断</h2><span class="muted">暂无数据</span></div><div class="empty">暂无性能证据与诊断。任务完成并返回 evidence_summary 后展示。</div></section>`;
+      }
+      const profilerUnavailable = profilerAvailable === false;
+      const evidenceMap = evidenceRecordMap(summary);
+      const cards = diagnosisRows.map((row) => `
+        <article class="diagnosis-card">
+          <h3><span>${escapeHtml(display(pick(row.bottleneck_type, row.type, row.name)))}</span><span class="badge ${display(row.confidence).toLowerCase() === "high" ? "ok" : "warn"}">${escapeHtml(display(row.confidence))}</span></h3>
+          ${evidenceList("证据", diagnosisEvidenceItems(row, evidenceMap))}
+          ${evidenceList("不确定性", pick(row.uncertainty, row.uncertainties))}
+        </article>
+      `).join("");
+      return `<section class="section">
+        <div class="section-head"><h2>性能证据与诊断</h2><span class="muted">evidence_summary</span></div>
+        ${profilerUnavailable ? `<div class="alert warn">本次任务没有可用的 profiler 数据，诊断基于 benchmark 和日志，置信度较低。</div>` : ""}
+        ${cards ? `<div class="diagnosis-grid">${cards}</div>` : `<div class="empty">暂无瓶颈诊断记录。</div>`}
+      </section>`;
+    }
+
+    function renderObservationsDetails(summary, diagnosisRows, results) {
+      const observations = observationRowsFromEvidence(summary, diagnosisRows, results);
+      const evidenceJson = hasEvidenceContent(summary) ? `<h3>完整 evidence_summary</h3><pre>${escapeHtml(JSON.stringify(redactObject(summary), null, 2))}</pre>` : "";
+      const observationsJson = observations.length ? `<h3>原始 observations</h3><pre>${escapeHtml(JSON.stringify(redactObject(observations), null, 2))}</pre>` : "";
+      return evidenceJson + observationsJson;
+    }
+
+    function explicitShapeResults(results) {
+      const source = results?.shape_results ?? results?.shapeResults;
+      const rows = Array.isArray(source) ? source.filter((item) => item && typeof item === "object" && !Array.isArray(item)) : [];
+      const byContext = new Map();
+      rows.forEach((row) => {
+        const key = normalizeContextLength(pick(row.context_length, row.contextLength));
+        // Duplicate contexts are ambiguous without additional shape identifiers.
+        if (key) byContext.set(key, byContext.has(key) ? null : row);
+      });
+      return byContext;
+    }
+
+    function normalizeContextLength(value) {
+      if (typeof value !== "number" && typeof value !== "string") return "";
+      if (typeof value === "string" && !/^\d+$/.test(value.trim())) return "";
+      const number = Number(value);
+      return Number.isSafeInteger(number) && number > 0 ? String(number) : "";
+    }
+
+    function provenanceKind(value) {
+      const text = display(value).toLowerCase();
+      if (["real_profiler", "benchmark/log", "benchmark_log", "synthetic", "unknown"].includes(text)) {
+        return text === "benchmark_log" ? "benchmark/log" : text;
+      }
+      return "unknown";
+    }
+
+    function sourceBadge(value) {
+      const kind = provenanceKind(value);
+      const cls = kind === "real_profiler" ? "ok" : kind === "benchmark/log" || kind === "synthetic" || kind === "unknown" ? "warn" : "bad";
+      return `<span class="badge ${cls}">${escapeHtml(kind)}</span>`;
+    }
+
+    function shapeCorrectness(row) {
+      const correctness = row?.correctness && typeof row.correctness === "object" ? row.correctness : null;
+      return {
+        status: correctness ? pick(correctness.status, correctness.result) : undefined,
+        maxError: correctness ? pick(correctness.max_error, correctness.maxError) : undefined,
+      };
+    }
+
+    function shapeLatencyStats(row) {
+      const stats = row?.latency_stats || row?.latencyStats || {};
+      return {
+        median: pick(stats.median, stats.median_ms, stats.latency_median_ms),
+        p90: pick(stats.p90, stats.p90_ms, stats.latency_p90_ms),
+        stddev: pick(stats.stddev, stats.stddev_ms, stats.latency_stddev_ms),
+      };
+    }
+
+    function shapeProfilerAvailable(row) {
+      if (!row || !Object.prototype.hasOwnProperty.call(row, "profiler_available")) return undefined;
+      return row.profiler_available;
+    }
+
+    function shapeProfilerStatus(row) {
+      return pick(row?.profiler_status, row?.profilerStatus);
+    }
+
+    function shapeProvenance(row) {
+      return provenanceKind(pick(row?.provenance, row?.source));
+    }
+
+    function shapeEvidenceRows(row) {
+      return asArray(row?.evidence || row?.evidence_summary || row?.evidenceSummary).filter((item) => item && typeof item === "object");
+    }
+
+    function shapeDiagnosisRows(row) {
+      return asArray(row?.diagnoses || row?.diagnosis || row?.bottlenecks).filter((item) => item && typeof item === "object");
+    }
+
+    function evidenceMetricName(row) {
+      return pick(row?.metric_name, row?.metric, row?.name, row?.field, row?.source_field_name, "metric");
+    }
+
+    function evidenceMetricValue(row) {
+      const valueKey = ["value", "metric_value", "observed_value", "actual_value"].find((key) => row && Object.prototype.hasOwnProperty.call(row, key));
+      return valueKey ? row[valueKey] : undefined;
+    }
+
+    function compactEvidenceLabel(row) {
+      const value = evidenceMetricValue(row);
+      const pieces = [
+        evidenceMetricName(row),
+        value === undefined || value === "" ? "未采集" : value === null ? "未采集" : display(value),
+        pick(row?.unit, row?.units),
+      ].filter(Boolean);
+      return pieces.join(" ");
+    }
+
+    function renderShapeResults(results) {
+      const byContext = explicitShapeResults(results);
+      if (!byContext.size) return "";
+      const contexts = [...byContext.keys()].sort((a, b) => Number(a) - Number(b));
+      const cards = contexts.map((context) => {
+        const row = byContext.get(context);
+        const correctness = shapeCorrectness(row);
+        const latency = shapeLatencyStats(row);
+        const profiler = shapeProfilerAvailable(row);
+        const provenance = shapeProvenance(row);
+        const synthetic = provenance === "synthetic";
+        const profilerText = synthetic ? "synthetic：非实测" : profiler === true ? "profiler 可用" : profiler === false ? "profiler 不可用" : "未采集";
+        const profilerClass = profiler === true && provenance === "real_profiler" ? "ok" : "warn";
+        const evidenceRows = shapeEvidenceRows(row);
+        const diagnoses = shapeDiagnosisRows(row);
+        const evidenceMap = evidenceRecordMap(evidenceRows);
+        const evidence = evidenceRows.slice(0, 4).map(compactEvidenceLabel);
+        return `<article class="diagnosis-card">
+          <h3><span>${escapeHtml(context)} context</span><span class="badge ${profilerClass}">${escapeHtml(profilerText)}</span></h3>
+          <div class="kv">
+            <div>correctness</div><div>${escapeHtml(display(correctness.status === undefined ? "未采集" : correctness.status))}</div>
+            <div>max error</div><div>${escapeHtml(display(correctness.maxError === undefined ? "未采集" : correctness.maxError))}</div>
+            <div>latency median (ms)</div><div>${escapeHtml(display(latency.median === undefined ? "未采集" : latency.median))}</div>
+            <div>latency p90 (ms)</div><div>${escapeHtml(display(latency.p90 === undefined ? "未采集" : latency.p90))}</div>
+            <div>latency stddev (ms)</div><div>${escapeHtml(display(latency.stddev === undefined ? "未采集" : latency.stddev))}</div>
+            <div>profiler status</div><div>${escapeHtml(display(shapeProfilerStatus(row) || "未采集"))}</div>
+            <div>数据来源</div><div>${sourceBadge(provenance)}</div>
+          </div>
+          ${row === null ? `<div class="alert warn">该 context 返回多条记录，无法确定对应 shape；请查看原始结果。</div>` : ""}
+          ${synthetic ? `<div class="alert warn">synthetic：仅解析测试，不是性能证据。</div>` : ""}
+          ${diagnoses.length ? diagnoses.slice(0, 3).map((item) => `<div style="margin-top:10px"><strong>${escapeHtml(display(pick(item.bottleneck_type, item.type, item.name, "诊断")))}</strong> ${confidenceBadgeFor(pick(item.confidence, "unknown"))}${evidenceList("证据", diagnosisEvidenceItems(item, evidenceMap))}${evidenceList("不确定性", pick(item.uncertainty, item.uncertainties))}</div>`).join("") : `<div class="empty">诊断未采集。</div>`}
+          ${evidence.length ? evidenceList("原始证据摘要", evidence) : ""}
+        </article>`;
+      }).join("");
+      return `<section class="section">
+        <div class="section-head"><h2>按 context length 的证据</h2><span class="muted">${escapeHtml(contexts.join(" / "))}</span></div>
+        <div class="diagnosis-grid">${cards}</div>
+      </section>`;
+    }
+
+    function renderApiResults() {
+      const results = state.taskResults;
+      if (!results) {
+        el.apiResultsStatus.textContent = "暂无结果";
+        el.apiResultsPanel.innerHTML = `<div class="empty">暂无结果，任务完成后展示 best kernel 和 report。</div>`;
+        return;
+      }
+      el.apiResultsStatus.textContent = state.task?.status || "已读取";
+      const reportMarkdown = pick(results.report_markdown, results.report);
+      el.downloadBestKernelBtn.disabled = !results.best_kernel;
+      el.downloadReportBtn.disabled = !reportMarkdown;
+      const summary = Array.isArray(results.summary_table) ? results.summary_table : (Array.isArray(results.summary) ? results.summary : []);
+      const failedCases = Array.isArray(results.failed_cases) ? results.failed_cases : [];
+      const baseline = summary[0] || {};
+      const best = results.best_row || summary.find((row) => row.status === "benchmark_ok") || {};
+      const bestTrialId = pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
+      const evidenceSummary = evidenceSummaryFromResults(results);
+      const diagnosisRows = diagnosisRowsFromResults(results);
+      const profilerAvailable = pick(results.profiler_available, results.profilerAvailable, evidenceSummary?.profiler_available);
+      const shapeResultsHtml = renderShapeResults(results);
+      el.apiResultsPanel.innerHTML = `
+        <div class="compare-grid">
+          <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(pick(baseline.latency, baseline.objective_value, state.task?.baseline_latency)))}</div></article>
+          <article class="result-card best-card"><div class="metric-label">best latency</div><div class="metric-main best">${escapeHtml(display(pick(best.latency, best.objective_value, state.task?.best_latency)))}</div><div class="kv"><div>best trial id</div><div>${escapeHtml(display(bestTrialId))}</div></div></article>
+          <article class="result-card"><div class="metric-label">性能提升</div><div class="metric-main ${numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
+        </div>
+        ${shapeResultsHtml || renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable)}
+        <h3>best kernel</h3>
+        <pre>${escapeHtml(results.best_kernel || "等待结果文件：best_kernel.py")}</pre>
+        <h3>best_config.yaml</h3>
+        <pre>${escapeHtml(results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "等待结果文件：best_config.yaml")}</pre>
+        <h3>report.md</h3>
+        <pre>${escapeHtml(reportMarkdown || "等待结果文件：report.md")}</pre>
+        <details style="margin-top:12px">
+          <summary>高级详情</summary>
+          <h3>summary.csv</h3>
+          <div class="table-wrap">${summary.length ? `<table><thead><tr>${Object.keys(summary[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${summary.map((row) => `<tr>${Object.keys(summary[0]).map((key) => `<td>${escapeHtml(display(row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录。</div>`}</div>
+          <h3>failed_cases.jsonl</h3>
+          <div class="table-wrap">${failedCases.length ? `<table><thead><tr>${Object.keys(failedCases[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${failedCases.map((row) => `<tr>${Object.keys(failedCases[0]).map((key) => `<td>${escapeHtml(display(typeof row[key] === "object" ? JSON.stringify(redactObject(row[key])) : row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录。</div>`}</div>
+          ${shapeResultsHtml ? renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable) : ""}
+          ${shapeResultsHtml ? `<h3>原始 shape_results</h3><pre>${escapeHtml(JSON.stringify(redactObject(results.shape_results ?? results.shapeResults), null, 2))}</pre>` : ""}
+          ${renderObservationsDetails(evidenceSummary, diagnosisRows, results)}
+          <h3>best_vs_baseline.diff</h3>
+          <pre>${escapeHtml(results.best_vs_baseline_diff || "unavailable")}</pre>
+        </details>
+      `;
+    }
+
+    function downloadTaskArtifact(kind) {
+      if (!state.activeTaskId) return;
+      window.location.href = `/api/tasks/${encodeURIComponent(state.activeTaskId)}/download/${kind}`;
+    }
+
+    function shortId(value) {
+      const text = display(value);
+      return text.length > 12 ? text.slice(0, 12) : text;
+    }
+
+    function downloadTextFile(filename, body, type) {
+      const blob = new Blob([body], { type });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(link.href);
     }
 
     function renderHardware(hardware) {
       if (!hardware?.available) {
-        el.hardwareStatus.textContent = "waiting";
-        el.hardwarePanel.innerHTML = `<div class="empty">等待 hardware_detected.yaml：后端可能仍在运行，文件出现后点击刷新即可。</div>`;
+        el.hardwareStatus.textContent = "尚未加载";
+        el.hardwarePanel.innerHTML = `<div class="empty">暂无硬件画像。</div>`;
         return;
       }
       const target = hardware.fields.target_name || {};
       const backend = hardware.fields.backend || {};
-      const conservative = hardware.conservative_mode === true ? "开启" : hardware.conservative_mode === false ? "关闭" : "waiting";
+      const conservative = hardware.conservative_mode === true ? "开启" : hardware.conservative_mode === false ? "关闭" : "暂无数据";
       const unknown = hardware.unknownFields || [];
       const rows = Object.entries(hardware.fields || {}).sort(([a], [b]) => a.localeCompare(b));
       el.hardwareStatus.textContent = `${display(target.value)} / ${display(backend.value)}`;
@@ -952,8 +3055,8 @@
 
     function renderHardwareProbe(rows) {
       if (!state.files.has("hardware_probe.jsonl")) {
-        el.probeStatus.textContent = "waiting";
-        el.probePanel.innerHTML = `<div class="empty">等待 hardware_probe.jsonl：后端可能仍在运行，文件出现后点击刷新即可。</div>`;
+        el.probeStatus.textContent = "尚未加载";
+        el.probePanel.innerHTML = `<div class="empty">暂无硬件 probe 文件。</div>`;
         return;
       }
       if (!rows.length) {
@@ -993,6 +3096,189 @@
           </table>
         </div>
       `;
+    }
+
+    function normalizeProfilerRows(rows) {
+      return rows.flatMap((row) => {
+        if (row?.profiler && typeof row.profiler === "object") {
+          return [{ ...row.profiler, run_id: row.run_id, iteration: row.iteration, candidate_id: row.candidate_id }];
+        }
+        return [row];
+      });
+    }
+
+    function normalizeDiagnosisRows(rows) {
+      return rows.flatMap((row) => {
+        const nested = row?.bottleneck_diagnosis || row?.diagnosis || row?.diagnoses;
+        if (Array.isArray(nested)) {
+          return nested.map((item) => ({ ...item, run_id: row.run_id, iteration: row.iteration, candidate_id: row.candidate_id }));
+        }
+        return [row];
+      });
+    }
+
+    function normalizePatchTrialRows(rows) {
+      return rows.flatMap((row) => {
+        const nested = row?.patch_trials || row?.patches || row?.trials;
+        if (Array.isArray(nested)) {
+          return nested.map((item) => ({ ...item, run_id: row.run_id, iteration: row.iteration, candidate_id: row.candidate_id }));
+        }
+        return [row];
+      });
+    }
+
+    function renderProfiler(rows) {
+      if (!state.files.has("profiler_results.jsonl")) {
+        el.profilerStatus.textContent = "尚未加载";
+        el.profilerPanel.innerHTML = `<div class="empty">暂无 profiler 指标。</div>`;
+        return;
+      }
+      if (!rows.length) {
+        el.profilerStatus.textContent = "0 条记录";
+        el.profilerPanel.innerHTML = `<div class="empty">profiler_results.jsonl 已读取，但暂无 profiler 指标记录。</div>`;
+        return;
+      }
+      el.profilerStatus.textContent = `${rows.length} 条 profiler 记录`;
+      const visibleRows = rows.slice(-20);
+      el.profilerPanel.innerHTML = `<div class="table-wrap">
+        <table>
+          <thead><tr><th>候选</th>${PROFILER_METRIC_FIELDS.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}<th>available_metrics</th></tr></thead>
+          <tbody>
+            ${visibleRows.map((row) => `<tr><td>${escapeHtml(candidateLabel(row))}</td>${PROFILER_METRIC_FIELDS.map((field) => `<td>${escapeHtml(displayProfilerMetric(row, field))}</td>`).join("")}<td class="config-cell">${escapeHtml(availableMetricsSummary(row))}</td></tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`;
+    }
+
+    function renderDiagnosis(rows) {
+      if (!state.files.has("diagnosis.jsonl")) {
+        el.diagnosisStatus.textContent = "尚未加载";
+        el.diagnosisPanel.innerHTML = `<div class="empty">暂无瓶颈诊断。</div>`;
+        return;
+      }
+      if (!rows.length) {
+        el.diagnosisStatus.textContent = "0 条诊断";
+        el.diagnosisPanel.innerHTML = `<div class="empty">diagnosis.jsonl 已读取，但暂无 bottleneck diagnosis 记录。</div>`;
+        return;
+      }
+      el.diagnosisStatus.textContent = `${rows.length} 条诊断`;
+      el.diagnosisPanel.innerHTML = `<div class="diagnosis-grid">
+        ${rows.map((row) => `<article class="diagnosis-card">
+          <h3><span>${escapeHtml(display(row.bottleneck || row.bottleneck_type || row.type || row.name))}</span>${confidenceBadgeFor(row.confidence)}</h3>
+          <div class="muted">${escapeHtml(candidateLabel(row))}</div>
+          ${diagnosisList("evidence", row.evidence)}
+          ${diagnosisList("uncertainty", row.uncertainty)}
+        </article>`).join("")}
+      </div>`;
+    }
+
+    function renderPatchTrials(rows) {
+      if (!state.files.has("patch_trials.jsonl")) {
+        el.patchTrialsStatus.textContent = "尚未加载";
+        el.patchTrialsPanel.innerHTML = `<div class="empty">暂无 patch 尝试记录。</div>`;
+        return;
+      }
+      if (!rows.length) {
+        el.patchTrialsStatus.textContent = "0 条 patch";
+        el.patchTrialsPanel.innerHTML = `<div class="empty">patch_trials.jsonl 已读取，但暂无 patch 尝试记录。</div>`;
+        return;
+      }
+      el.patchTrialsStatus.textContent = `${rows.length} 条 patch 尝试`;
+      el.patchTrialsPanel.innerHTML = `<table>
+        <thead><tr><th>patch 名称</th><th>状态</th><th>收益</th><th>失败原因</th></tr></thead>
+        <tbody>
+          ${rows.map((row) => `<tr>
+            <td>${escapeHtml(display(patchName(row)))}</td>
+            <td>${patchStatusBadge(row)}</td>
+            <td>${escapeHtml(display(patchBenefit(row)))}</td>
+            <td class="reason-cell">${escapeHtml(display(patchFailureReason(row)))}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`;
+    }
+
+    function renderBestDiff(text) {
+      if (!state.files.has("best_vs_baseline.diff")) {
+        el.bestDiffStatus.textContent = "暂无 diff";
+        el.bestDiffText.textContent = "暂无 diff";
+        return;
+      }
+      el.bestDiffStatus.textContent = text.trim() ? "已读取" : "empty";
+      el.bestDiffText.textContent = text.trim() ? text : "best_vs_baseline.diff 已读取，但内容为空。";
+    }
+
+    function displayProfilerMetric(row, field) {
+      const value = field === "latency_ms" ? pick(row.latency_ms, row.latency) : row[field];
+      const metrics = row?.available_metrics;
+      const hasAvailability = metrics && typeof metrics === "object" && Object.prototype.hasOwnProperty.call(metrics, field);
+      if (value === null || value === undefined || value === "") return hasAvailability && metrics[field] ? "null" : "null / unavailable";
+      return display(value);
+    }
+
+    function availableMetricsSummary(row) {
+      const metrics = row?.available_metrics;
+      if (!metrics || typeof metrics !== "object") return "unavailable";
+      const available = Object.entries(metrics).filter(([, value]) => Boolean(value)).map(([key]) => key);
+      return available.length ? available.join(", ") : "none";
+    }
+
+    function confidenceBadgeFor(confidence) {
+      const text = display(confidence);
+      const normalized = text.toLowerCase();
+      const kind = normalized === "high" ? "ok" : normalized === "medium" || normalized === "low" || normalized === "unknown" ? "warn" : "bad";
+      return `<span class="badge ${kind}">${escapeHtml(text)}</span>`;
+    }
+
+    function diagnosisList(title, value) {
+      const items = Array.isArray(value) ? value : (value ? [value] : []);
+      const body = items.length ? items.map((item) => `<li>${escapeHtml(display(item))}</li>`).join("") : `<li>暂无数据</li>`;
+      return `<div><div class="metric-label">${escapeHtml(title)}</div><ul class="list-plain">${body}</ul></div>`;
+    }
+
+    function patchField(row, fields) {
+      for (const field of fields) {
+        const direct = row?.[field];
+        if (direct !== undefined && direct !== null && direct !== "") return direct;
+        const nested = valueAt(row, ["patch", field]) || valueAt(row, ["result", field]) || valueAt(row, ["validation", field]) || valueAt(row, ["metrics", field]) || valueAt(row, ["benchmark", field]);
+        if (nested !== undefined && nested !== null && nested !== "") return nested;
+      }
+      return "";
+    }
+
+    function patchName(row) {
+      return patchField(row, ["patch_name", "name", "optimization_name", "selected_optimization", "template", "patch_id", "id"]);
+    }
+
+    function patchBenefit(row) {
+      return patchField(row, ["benefit", "improvement", "speedup", "latency_improvement", "latency_delta", "objective_delta", "expected_improvement", "expected_delta"]);
+    }
+
+    function patchFailureReason(row) {
+      return patchField(row, ["failure_reason", "failed_reason", "reason", "error", "error_message", "rollback_reason", "validation_error", "parse_error", "status_reason"]);
+    }
+
+    function patchMetric(row, key) {
+      return pick(row?.[key], row?.[`${key}_ms`], valueAt(row, ["metrics", key]), valueAt(row, ["benchmark", key]), valueAt(row, ["result", key]));
+    }
+
+    function patchPath(row) {
+      return display(valueAt(row, ["paths", "patch"]) || row?.patch_path || row?.patch_file || row?.diff_path || row?.diff_file);
+    }
+
+    function patchStatus(row) {
+      return display(patchField(row, ["status", "validation_status", "result_status", "outcome"])).toLowerCase();
+    }
+
+    function patchStatusBadge(row) {
+      const status = patchStatus(row) || "暂无数据";
+      const ok = ["pass", "passed", "success", "accepted", "best", "improved"].includes(status);
+      const warn = ["neutral", "regressed", "rollback", "rolled_back", "not_applicable", "skipped"].includes(status);
+      return `<span class="badge ${ok ? "ok" : warn ? "warn" : "bad"}">${escapeHtml(status)}</span>`;
+    }
+
+    function displayList(value) {
+      if (Array.isArray(value)) return value.length ? value.map((item) => display(item)).join("; ") : "暂无数据";
+      return display(value);
     }
 
     function summarizeProbeRows(rows) {
@@ -1069,12 +3355,13 @@
     }
     function renderAlerts() {
       el.alerts.innerHTML = "";
+      if (state.apiError) addAlert("warn", escapeHtml(state.apiError));
       if (state.missing.length) {
         const list = state.missing.map((name) => `<li>${escapeHtml(name)}</li>`).join("");
-        addAlert("warn", `以下结果文件仍在 waiting：<ul class="waiting-list">${list}</ul>通常表示后端尚未跑完，或选择的不是 workspace/results/。`);
+        addAlert("warn", `以下结果文件暂未加载：<ul class="waiting-list">${list}</ul>通常表示文件不存在，或选择的不是 workspace/results/。`);
       }
       for (const warning of state.warnings) addAlert("warn", escapeHtml(warning));
-      if (!state.missing.length && !state.warnings.length) addAlert("ok", "已读取本地结果文件。前端只读结果文件，不执行命令。");
+      if (state.lastLoadedAt && !state.missing.length && !state.warnings.length) addAlert("ok", "已读取本地结果文件。开发者模式只读结果文件。");
     }
 
     function renderCompare(data) {
@@ -1084,12 +3371,12 @@
         ${resultCard("Best-seen 最优已见", data.best, "best-card")}
         <article class="result-card">
           <div class="metric-label">提升比例</div>
-          <div class="metric-main ${delta !== null && delta >= 0 ? "good" : ""}">${delta === null ? "waiting" : `${formatNumber(delta)}%`}</div>
+          <div class="metric-main ${delta !== null && delta >= 0 ? "good" : ""}">${delta === null ? "暂无性能提升数据" : `${formatNumber(delta)}%`}</div>
           <div class="kv">
             <div>口径</div><div>基于 latency，越低越好</div>
             <div>Run ID</div><div>${escapeHtml(display(data.runId))}</div>
             <div>成功/失败</div><div>${data.rows.filter(isSuccess).length} / ${data.rows.filter((row) => !isSuccess(row)).length}</div>
-            <div>总候选</div><div>${data.rows.length || "waiting"}</div>
+            <div>总候选</div><div>${data.rows.length || "暂无候选明细"}</div>
           </div>
         </article>`;
       el.sourceNote.textContent = sourceLabel();
@@ -1150,14 +3437,14 @@
     }
 
     function renderBestConfig(best) {
-      el.bestIdentity.textContent = best ? candidateLabel(best) : "waiting";
-      el.bestConfig.textContent = best ? JSON.stringify(redactObject(best.config || {}), null, 2) : "等待 best-seen config：尚无成功候选。";
+      el.bestIdentity.textContent = best ? candidateLabel(best) : "暂无数据";
+      el.bestConfig.textContent = best ? JSON.stringify(redactObject(best.config || {}), null, 2) : "暂无本地结果文件";
     }
 
     function renderCandidates(rows, best) {
-      el.trialCount.textContent = rows.length ? `${rows.length} 个候选` : "waiting";
+      el.trialCount.textContent = rows.length ? `${rows.length} 个候选` : "暂无候选明细";
       if (!rows.length) {
-        el.candidateTable.innerHTML = `<div class="empty">等待候选记录：后端运行中时这里会先为空，summary.csv / experiments.jsonl 出现后点击刷新即可。</div>`;
+        el.candidateTable.innerHTML = `<div class="empty">暂无候选明细。</div>`;
         return;
       }
       const headers = ["iteration", "candidate_id", "status", "latency", "tflops", "bandwidth", "objective_value", "config_hash", "config"];
@@ -1169,7 +3456,7 @@
     function renderFailedCases(failed) {
       el.failedCount.textContent = failed.length ? `${failed.length} 条失败` : "0 条失败";
       if (!failed.length) {
-        el.failedCases.innerHTML = `<div class="empty">暂无失败案例。若 failed_cases.jsonl 缺失，会在顶部显示 waiting。</div>`;
+        el.failedCases.innerHTML = `<div class="empty">暂无失败案例。</div>`;
         return;
       }
       el.failedCases.innerHTML = `<div class="chips">${failed.slice(0, 8).map((item) => `<span class="chip">${escapeHtml(candidateLabel(item))}: ${escapeHtml(errorCategory(item))}</span>`).join("")}</div>
@@ -1181,7 +3468,7 @@
     function renderPaths(rows) {
       const withPaths = rows.filter((row) => row.kernel_path || row.patch_path || row.stdout || row.stderr);
       if (!withPaths.length) {
-        el.pathsTable.innerHTML = `<div class="empty">等待 log/patch 路径：路径缺失时页面不会尝试读取文件内容。</div>`;
+        el.pathsTable.innerHTML = `<div class="empty">暂无日志或 patch 路径。</div>`;
         return;
       }
       const fields = ["kernel_path", "patch_path", "stdout", "stderr"];
@@ -1202,10 +3489,18 @@
       return `<span class="badge ${kind}">${escapeHtml(text)}</span>`;
     }
 
+    function taskStatusBadge(status) {
+      const text = display(status);
+      const normalized = text.toLowerCase();
+      const ok = ["completed", "success", "done"].includes(normalized);
+      const warn = ["pending", "running", "waiting", "cancelled"].includes(normalized);
+      return `<span class="badge ${ok ? "ok" : warn ? "warn" : "bad"}">${escapeHtml(text)}</span>`;
+    }
+
     function displayStatus(status) {
       const raw = display(status);
       const normalized = raw.toLowerCase();
-      if (normalized === "waiting") return "waiting";
+      if (normalized === "waiting") return "等待中";
       if (normalized.includes("ok") || normalized === "success" || normalized === "pass") return `成功 (${raw})`;
       if (normalized === "skipped" || normalized === "skip") return "跳过 (skipped)";
       if (normalized === "timeout" || normalized === "timed_out") return "超时 (timeout)";
@@ -1256,13 +3551,13 @@
     }
 
     function candidateLabel(row) {
-      if (!row) return "waiting";
+      if (!row) return "暂无数据";
       return `第 ${display(row.iteration)} 轮 / 候选 ${display(row.candidate_id)}`;
     }
 
     function sourceLabel() {
       const mode = state.dirHandle ? "用户选择的结果目录" : "固定目录 ../workspace/results/";
-      const time = state.lastLoadedAt ? state.lastLoadedAt.toLocaleTimeString() : "waiting";
+      const time = state.lastLoadedAt ? state.lastLoadedAt.toLocaleTimeString() : "尚未加载";
       return `${mode}，最后刷新 ${time}`;
     }
 
@@ -1274,19 +3569,30 @@
 
     function displayNumber(value) {
       const number = numeric(value);
-      return number === null ? "waiting" : formatNumber(number);
+      return number === null ? "暂无数据" : formatNumber(number);
     }
 
     function formatNumber(value) {
       const number = Number(value);
-      if (!Number.isFinite(number)) return "waiting";
+      if (!Number.isFinite(number)) return "暂无数据";
       return Math.abs(number) >= 100 ? number.toFixed(2) : number.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
     }
 
     function display(value) {
-      if (value === null || value === undefined || value === "") return "waiting";
+      if (value === null || value === undefined || value === "") return "暂无数据";
       if (typeof value === "object") return JSON.stringify(redactObject(value));
       return sanitizeText(String(value));
+    }
+
+    function parseRequestValue(value) {
+      if (value === null || value === undefined || value === "") return null;
+      const text = String(value).trim();
+      if (text === "true") return true;
+      if (text === "false") return false;
+      if (text === "null" || text === "unknown") return null;
+      if (/^-?\d+(?:\.\d+)?$/.test(text)) return Number(text);
+      if (text.includes(",") && !text.includes("{") && !text.includes("[")) return text.split(",").map((item) => parseRequestValue(item.trim()));
+      return sanitizeText(text);
     }
 
     function valueAt(object, path) {
@@ -1315,8 +3621,39 @@
       if (value && typeof value === "object") {
         return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, redactObject(childValue, childKey)]));
       }
-      if (SENSITIVE_KEY_RE.test(key)) return "[REDACTED]";
+      if (/(_env|Env)$/.test(key)) return typeof value === "string" ? sanitizeText(value) : value;
+      if (SENSITIVE_KEY_RE.test(key)) return typeof value === "string" ? "[REDACTED]" : value;
       return typeof value === "string" ? sanitizeText(value) : value;
+    }
+
+    function toYaml(value, indent = 0) {
+      const pad = " ".repeat(indent);
+      if (Array.isArray(value)) {
+        if (!value.length) return "[]";
+        return value.map((item) => `${pad}- ${isScalar(item) ? yamlScalar(item) : `\n${toYaml(item, indent + 2)}`}`).join("\n");
+      }
+      if (value && typeof value === "object") {
+        const entries = Object.entries(value);
+        if (!entries.length) return "{}";
+        return entries.map(([key, item]) => {
+          if (isScalar(item)) return `${pad}${key}: ${yamlScalar(item)}`;
+          return Object.keys(item || {}).length ? `${pad}${key}:\n${toYaml(item, indent + 2)}` : `${pad}${key}: {}`;
+        }).join("\n");
+      }
+      return `${pad}${yamlScalar(value)}`;
+    }
+
+    function isScalar(value) {
+      return value === null || value === undefined || typeof value !== "object";
+    }
+
+    function yamlScalar(value) {
+      if (value === null || value === undefined) return "null";
+      if (typeof value === "number" || typeof value === "boolean") return String(value);
+      const text = String(value);
+      if (!text) return '""';
+      if (/^[A-Za-z0-9_./:-]+$/.test(text)) return text;
+      return JSON.stringify(text);
     }
 
     function escapeHtml(value) {

@@ -1,6 +1,6 @@
 # HTTP API 参考
 
-> 适用版本：本文描述 [V2 开发分支](https://github.com/cc-c122/TileLang-Remote-Autotuning-Agent/tree/v2/evidence-guided-agent) 的实现。GitHub 默认 `main` 分支保留 V1；使用本文中的 Web API 和模块前，请切换到 `v2/evidence-guided-agent`。本页同步了 V2 文档，运行代码仍以对应分支为准。
+> 适用版本：默认 `main` 分支中的 V2 实现。历史 V1.0.0-rc1 安装包不包含这些 Web API。
 
 FastAPI 应用入口：
 

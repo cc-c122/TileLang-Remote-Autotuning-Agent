@@ -1,5 +1,7 @@
-include README.md LICENSE NOTICE
-include docs/technical-architecture.md docs/http-api.md
+include README.md
+include LICENSE
+include NOTICE
+recursive-include docs *.md
 prune kernel_opt_agent/workspace
 prune build
 prune dist

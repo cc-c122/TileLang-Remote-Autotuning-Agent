@@ -1,0 +1,18 @@
+schema_version: v2.user_settings.v1
+
+runner:
+  type: ssh
+
+remote:
+  host: your-ssh-host
+  port: 22
+  username: your-user
+  auth_type: password
+  password_env: KERNEL_AGENT_SSH_PASSWORD
+  remote_workspace: /tmp/kernel_opt_workspace
+
+llm:
+  provider: openai_compatible
+  base_url: https://api.openai.com/v1
+  model: gpt-4o-mini
+  api_key_env: OPENAI_API_KEY

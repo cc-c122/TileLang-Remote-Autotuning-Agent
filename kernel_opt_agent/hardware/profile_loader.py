@@ -12,7 +12,7 @@ PROFILE_ROOT = Path(__file__).resolve().parents[1] / "hardware_profiles"
 def normalize_profile_name(name: str | None) -> str:
     if not name:
         return "unknown_gpu"
-    return name.strip().lower().replace("-", "_")
+    return name.strip().lower().replace("-", "_").replace(" ", "_")
 
 
 class HardwareProfileLoader:
