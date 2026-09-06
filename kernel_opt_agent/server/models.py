@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 TaskStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
+ExecutionMode = Literal["parameter_search", "baseline_only"]
 
 
 def utc_now() -> str:
@@ -47,14 +48,23 @@ class SamplePayload(BaseModel):
     source_type: Literal["inline", "path", "upload"] = "inline"
     inline_text: str | None = None
     path: str | None = None
+    upload_id: str | None = None
     entry_file: str = "kernel.py"
 
     @model_validator(mode="after")
     def validate_sample(self) -> "SamplePayload":
         if self.source_type == "inline" and not self.inline_text:
             raise ValueError("sample.inline_text is required for inline samples")
-        if self.source_type in {"path", "upload"} and not self.path:
-            raise ValueError("sample.path is required for path/upload samples")
+        if self.source_type == "inline" and (self.path is not None or self.upload_id is not None):
+            raise ValueError("sample.path and sample.upload_id must be omitted for inline samples")
+        if self.source_type == "path" and not self.path:
+            raise ValueError("sample.path is required for path samples")
+        if self.source_type == "path" and (self.inline_text is not None or self.upload_id is not None):
+            raise ValueError("sample.inline_text and sample.upload_id must be omitted for path samples")
+        if self.source_type == "upload" and not self.upload_id:
+            raise ValueError("sample.upload_id is required for upload samples")
+        if self.source_type == "upload" and (self.inline_text is not None or self.path is not None):
+            raise ValueError("sample.inline_text and sample.path must be omitted for upload samples")
         return self
 
 
@@ -156,6 +166,7 @@ class TaskRecord(BaseModel):
     finished_at: str | None = None
     workspace: str
     results_dir: str
+    execution_mode: ExecutionMode | None = None
     error: str | None = None
     events: list[dict[str, Any]] = Field(default_factory=list)
     cancel_requested: bool = False

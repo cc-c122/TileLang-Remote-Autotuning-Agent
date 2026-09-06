@@ -25,6 +25,8 @@ class VariantGenerator:
         self.patches_dir = patches_dir.resolve()
         self.allowed_patterns = allowed_patterns
         self.template_path = self.sample_path / entry_file if self.sample_path.is_dir() else self.sample_path
+        if not self._allowed(self.template_path):
+            raise ValueError(f"kernel entry_file is not allowed by constraints.allowed_file_patterns: {entry_file}")
         self.template = TemplateManager(self.template_path, search_space)
 
     def _allowed(self, path: Path) -> bool:
@@ -41,9 +43,11 @@ class VariantGenerator:
             for item in self.sample_path.rglob("*"):
                 rel = item.relative_to(self.sample_path)
                 dest = trial_dir / rel
+                if item.is_symlink():
+                    raise ValueError(f"sample contains a symbolic link: {rel.as_posix()}")
                 if item.is_dir():
                     dest.mkdir(parents=True, exist_ok=True)
-                elif self._allowed(item):
+                elif item.is_file():
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(item, dest)
         else:

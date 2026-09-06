@@ -295,10 +295,12 @@ def _settings_config(request: RunRequest, settings_path: Path) -> dict[str, Any]
 def _app_config_from_request(request: RunRequest, request_dir: Path, settings_path: Path = USER_SETTINGS_PATH) -> AppConfig:
     saved = _settings_config(request, settings_path)
     sample_path = _materialize_sample(request, request_dir)
+    search_space = _infer_search_space(request, sample_path)
     gpu_model = request.target.gpu_model.strip() if request.target.gpu_model else None
     backend = request.target.backend if request.target.backend and request.target.backend != "unknown" else None
     raw_config: dict[str, Any] = {
         "project_name": request.project_name,
+        "execution_mode": "parameter_search" if search_space else "baseline_only",
         "runner": saved["runner"] or {"type": "local"},
         "remote": saved["remote"],
         "llm": saved["llm"] or {},
@@ -310,7 +312,7 @@ def _app_config_from_request(request: RunRequest, request_dir: Path, settings_pa
             "run_command": request.commands.benchmark_command,
         },
         "search": request.search.model_dump(exclude={"search_space"}),
-        "search_space": _infer_search_space(request, sample_path),
+        "search_space": search_space,
         "hardware": {
             "target_name": gpu_model,
             "backend": backend,

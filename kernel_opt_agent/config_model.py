@@ -110,6 +110,7 @@ class PatchingConfig(BaseModel):
 
 class AppConfig(BaseModel):
     project_name: str = "tilelang-autotune-demo"
+    execution_mode: Literal["parameter_search", "baseline_only"] = "parameter_search"
     runner: RunnerConfig = Field(default_factory=RunnerConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -125,8 +126,10 @@ class AppConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_app(self) -> "AppConfig":
-        if not self.search_space:
+        if self.execution_mode == "parameter_search" and not self.search_space:
             raise ValueError("search_space is required and must be non-empty")
+        if self.execution_mode == "baseline_only" and self.search_space:
+            raise ValueError("baseline_only execution requires an empty search_space")
         for name, values in self.search_space.items():
             if not name or not isinstance(values, list) or not values:
                 raise ValueError(f"search_space.{name} must be a non-empty list")
@@ -143,6 +146,8 @@ class AppConfig(BaseModel):
         template_text = entry.read_text(encoding="utf-8")
         placeholders = set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}", template_text))
         space_names = set(self.search_space.keys())
+        if self.execution_mode == "baseline_only" and placeholders:
+            raise ValueError("baseline_only execution does not accept template placeholders")
         if placeholders != space_names:
             missing = sorted(placeholders - space_names)
             extra = sorted(space_names - placeholders)

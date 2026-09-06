@@ -8,6 +8,7 @@ import kernel_opt_agent.main as agent_main
 from .models import TaskCreateRequest
 from .profiler_status import profiler_status, read_jsonl
 from .run_request_builder import build_effective_config
+from .sample_uploads import SampleUploadStore
 from .task_manager import TaskManager
 
 
@@ -15,9 +16,15 @@ WORKER_LOCK = threading.Lock()
 
 
 class JobWorker:
-    def __init__(self, manager: TaskManager, settings_path: Path | None = None):
+    def __init__(
+        self,
+        manager: TaskManager,
+        settings_path: Path | None = None,
+        upload_store: SampleUploadStore | None = None,
+    ):
         self.manager = manager
         self.settings_path = settings_path
+        self.upload_store = upload_store
 
     def submit(self, task_id: str, request: TaskCreateRequest) -> None:
         thread = threading.Thread(target=self._run_task, args=(task_id, request), daemon=True)
@@ -46,9 +53,7 @@ class JobWorker:
         patches_dir: Path,
     ) -> None:
         self.manager.set_status(task_id, "running")
-        self.manager.add_event(task_id, "sample_uploaded", "sample saved to task workspace")
         self.manager.add_event(task_id, "hardware_resolved", "hardware profile and user overrides prepared")
-        self.manager.add_event(task_id, "build_started", "building internal run request")
         original = {
             "WORKSPACE_ROOT": agent_main.WORKSPACE_ROOT,
             "RESULTS_DIR": agent_main.RESULTS_DIR,
@@ -56,16 +61,18 @@ class JobWorker:
             "PATCHES_DIR": agent_main.PATCHES_DIR,
         }
         try:
-            config = build_effective_config(request, workspace, self.settings_path)
-            self.manager.add_event(task_id, "correctness_started", "starting correctness and benchmark loop")
-            self.manager.add_event(task_id, "benchmark_started", "benchmark command will run after correctness passes")
-            if config.profiler.enabled:
-                self.manager.add_event(task_id, "profiling_started", "profiler evidence collection enabled")
+            config = build_effective_config(request, workspace, self.settings_path, self.upload_store)
+            self.manager.set_execution_mode(task_id, config.execution_mode)
+            self.manager.add_event(task_id, "sample_uploaded", "sample saved to isolated task workspace")
             agent_main.WORKSPACE_ROOT = workspace
             agent_main.RESULTS_DIR = results_dir
             agent_main.GENERATED_DIR = generated_dir
             agent_main.PATCHES_DIR = patches_dir
-            agent_main.run(config, should_cancel=lambda: self.manager.is_cancel_requested(task_id))
+            agent_main.run(
+                config,
+                should_cancel=lambda: self.manager.is_cancel_requested(task_id),
+                event_callback=lambda event_type, message: self.manager.add_event(task_id, event_type, message),
+            )
             if self.manager.is_cancel_requested(task_id):
                 self.manager.set_status(task_id, "cancelled")
             else:

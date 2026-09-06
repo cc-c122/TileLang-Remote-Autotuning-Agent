@@ -8,8 +8,9 @@ from typing import Any
 
 import uvicorn
 import yaml
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from kernel_opt_agent.hardware.hardware_info import CANONICAL_FIELDS, HardwareInfo
 from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader, normalize_profile_name
@@ -18,13 +19,16 @@ from kernel_opt_agent.main import WORKSPACE_ROOT
 from .job_worker import JobWorker
 from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest
 from .profiler_status import profiler_status
+from .sample_uploads import SampleUploadError, SampleUploadStore
 from .settings_store import SettingsStore
 from .task_manager import TaskManager
 
 
 SERVER_WORKSPACE = WORKSPACE_ROOT / "server"
 TASKS_ROOT = WORKSPACE_ROOT / "tasks"
+UPLOADS_ROOT = SERVER_WORKSPACE / "uploads"
 SETTINGS_PATH = WORKSPACE_ROOT / "server_settings.yaml"
+FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 
 
 def _read_text(path: Path) -> str | None:
@@ -79,6 +83,8 @@ def _task_payload(task: Any) -> dict[str, Any]:
     payload = task.model_dump()
     summary = _read_csv(Path(task.results_dir) / "summary.csv")
     best_row, improvement = _best_summary(summary)
+    if task.execution_mode == "baseline_only":
+        improvement = None
     baseline = summary[0] if summary else {}
     iterations = [_numeric(row.get("iteration")) for row in summary]
     latest_event = task.events[-1] if task.events else {}
@@ -96,9 +102,11 @@ def _task_payload(task: Any) -> dict[str, Any]:
     return payload
 
 
-def _result_payload(results_dir: Path) -> dict[str, Any]:
+def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dict[str, Any]:
     summary = _read_csv(results_dir / "summary.csv")
     best_row, improvement = _best_summary(summary)
+    if execution_mode == "baseline_only":
+        improvement = None
     files = {}
     for name in [
         "experiments.jsonl",
@@ -184,7 +192,8 @@ def _redact_connection_error(message: str, settings: SettingsPayload) -> str:
 
 
 manager = TaskManager(TASKS_ROOT)
-worker = JobWorker(manager, SETTINGS_PATH)
+upload_store = SampleUploadStore(UPLOADS_ROOT)
+worker = JobWorker(manager, SETTINGS_PATH, upload_store)
 settings_store = SettingsStore(SETTINGS_PATH)
 app = FastAPI(title="TileLang Remote Autotuning Agent API")
 
@@ -257,8 +266,36 @@ def hardware_resolve(payload: HardwareResolveRequest) -> dict[str, Any]:
     return {"ok": True, "hardware": resolve_hardware(payload)}
 
 
+@app.post("/api/samples/upload")
+async def upload_sample(
+    files: list[UploadFile] = File(...),
+    entry_file: str = Form(...),
+) -> dict[str, Any]:
+    try:
+        manifest = await upload_store.create(files, entry_file)
+    except SampleUploadError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    finally:
+        for upload in files:
+            await upload.close()
+    return {
+        "ok": True,
+        "upload_id": manifest["upload_id"],
+        "entry_file": manifest["entry_file"],
+        "files": [
+            {"path": item["path"], "size_bytes": item["size_bytes"]}
+            for item in manifest["files"]
+        ],
+    }
+
+
 @app.post("/api/tasks")
 def create_task(payload: TaskCreateRequest) -> dict[str, Any]:
+    if payload.sample.source_type == "upload":
+        try:
+            upload_store.validate_reference(payload.sample.upload_id or "", payload.sample.entry_file)
+        except SampleUploadError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     task = manager.create(payload)
     worker.submit(task.task_id, payload)
     return {"ok": True, "task_id": task.task_id, "task": _task_payload(task)}
@@ -307,7 +344,11 @@ def get_task_results(task_id: str) -> dict[str, Any]:
         task = manager.get(task_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="task not found") from exc
-    return {"ok": True, "task": _task_payload(task), "results": _result_payload(Path(task.results_dir))}
+    return {
+        "ok": True,
+        "task": _task_payload(task),
+        "results": _result_payload(Path(task.results_dir), task.execution_mode),
+    }
 
 
 def _download(task_id: str, filename: str) -> FileResponse:
@@ -338,6 +379,17 @@ def cancel_task(task_id: str) -> dict[str, Any]:
         return {"ok": True, "task": _task_payload(task)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="task not found") from exc
+
+
+@app.api_route(
+    "/api/{unmatched_path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+)
+def unknown_api_route(unmatched_path: str) -> None:
+    raise HTTPException(status_code=404, detail="API route not found")
+
+
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 
 
 def main() -> None:

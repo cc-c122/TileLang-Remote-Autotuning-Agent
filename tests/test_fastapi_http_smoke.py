@@ -6,23 +6,16 @@ import subprocess
 import sys
 import time
 import unittest
+import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-INLINE_KERNEL = """BM = {{BM}}
-BN = {{BN}}
-BK = {{BK}}
-NUM_THREADS = {{NUM_THREADS}}
-NUM_STAGES = {{NUM_STAGES}}
-VECTOR_WIDTH = {{VECTOR_WIDTH}}
+PLAIN_KERNEL = """from helper import VALUE
 
 def kernel_score():
-    # BEGIN_AGENT_PATCH: compute
-    value = BM + BN + BK + NUM_THREADS + NUM_STAGES + VECTOR_WIDTH
-    # END_AGENT_PATCH
-    return value
+    return VALUE
 """
 
 
@@ -42,6 +35,32 @@ def _request_json(method: str, url: str, payload: dict | None = None) -> dict:
 def _request_text(url: str) -> str:
     with urlopen(url, timeout=20) as response:
         return response.read().decode("utf-8")
+
+
+def _request_multipart(url: str, entry_file: str, files: list[tuple[str, bytes]]) -> dict:
+    boundary = f"----tilelang-agent-{uuid.uuid4().hex}"
+    body = bytearray()
+    body.extend(f"--{boundary}\r\n".encode())
+    body.extend(b'Content-Disposition: form-data; name="entry_file"\r\n\r\n')
+    body.extend(entry_file.encode("utf-8"))
+    body.extend(b"\r\n")
+    for filename, content in files:
+        body.extend(f"--{boundary}\r\n".encode())
+        body.extend(
+            f'Content-Disposition: form-data; name="files"; filename="{filename}"\r\n'.encode()
+        )
+        body.extend(b"Content-Type: application/octet-stream\r\n\r\n")
+        body.extend(content)
+        body.extend(b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode())
+    request = Request(
+        url,
+        data=bytes(body),
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urlopen(request, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 class FastApiHttpSmokeTests(unittest.TestCase):
@@ -67,6 +86,7 @@ class FastApiHttpSmokeTests(unittest.TestCase):
 
             health = _request_json("GET", f"{base}/api/health")
             self.assertEqual(health, {"ok": True, "service": "tilelang-agent", "mode": "local-runner"})
+            self.assertIn("<title>TileLang", _request_text(f"{base}/"))
 
             saved = _request_json(
                 "POST",
@@ -103,21 +123,33 @@ class FastApiHttpSmokeTests(unittest.TestCase):
             self.assertTrue(hardware["ok"])
             self.assertEqual(hardware["hardware"]["fields"]["max_threads_per_block"]["source"], "user_override")
 
+            uploaded = _request_multipart(
+                f"{base}/api/samples/upload",
+                "kernel.py",
+                [
+                    ("kernel.py", PLAIN_KERNEL.encode("utf-8")),
+                    ("helper.py", b"VALUE = 7\n"),
+                ],
+            )
+            self.assertTrue(uploaded["ok"])
+            self.assertEqual(uploaded["entry_file"], "kernel.py")
+            self.assertNotIn("sha256", json.dumps(uploaded).lower())
+
             created = _request_json(
                 "POST",
                 f"{base}/api/tasks",
                 {
                     "project_name": "http-smoke-demo",
                     "sample": {
-                        "source_type": "inline",
-                        "inline_text": INLINE_KERNEL,
+                        "source_type": "upload",
+                        "upload_id": uploaded["upload_id"],
                         "entry_file": "kernel.py",
                     },
                     "target": {"gpu_model": "unknown", "backend": "unknown", "user_overrides": {}},
                     "commands": {
                         "build_command": "python -m py_compile kernel.py",
-                        "correctness_command": "python -c \"import kernel; print('CORRECTNESS_RESULT status=PASS max_error=0 reason=ok')\"",
-                        "benchmark_command": "python -c \"import kernel; print(f'BENCHMARK_RESULT latency_ms={10.0/kernel.kernel_score():.4f} tflops=1.0 bandwidth_gbps=2.0')\"",
+                        "correctness_command": "python -c \"import kernel; assert kernel.kernel_score() == 7; print('CORRECTNESS_RESULT status=PASS max_error=0 reason=ok')\"",
+                        "benchmark_command": "python -c \"import kernel; print(f'BENCHMARK_RESULT latency_ms={kernel.kernel_score()/7:.4f} tflops=1.0 bandwidth_gbps=2.0')\"",
                     },
                     "budget": {
                         "strategy": "rule_based",
@@ -127,7 +159,7 @@ class FastApiHttpSmokeTests(unittest.TestCase):
                         "objective": "latency",
                     },
                     "profiler": {"enabled": True, "type": "dummy"},
-                    "patching": {"enabled": True, "run_controlled_trial": True},
+                    "patching": {"enabled": False, "run_controlled_trial": False},
                 },
             )
             self.assertTrue(created["ok"])
@@ -145,6 +177,7 @@ class FastApiHttpSmokeTests(unittest.TestCase):
                 time.sleep(0.25)
             self.assertIsNotNone(final_task)
             self.assertEqual(final_task["status"], "completed")
+            self.assertEqual(final_task["execution_mode"], "baseline_only")
             for required in {
                 "task_created",
                 "hardware_resolved",
@@ -158,6 +191,8 @@ class FastApiHttpSmokeTests(unittest.TestCase):
                 "task_completed",
             }:
                 self.assertIn(required, event_types)
+            ordered_events = [event["type"] for event in events_payload["events"]]
+            self.assertLess(ordered_events.index("correctness_started"), ordered_events.index("benchmark_started"))
 
             workspace = Path(final_task["workspace"])
             self.assertTrue((workspace / "run_request.yaml").exists())
@@ -173,11 +208,12 @@ class FastApiHttpSmokeTests(unittest.TestCase):
             result_payload = results["results"]
             self.assertEqual(results["task"]["project_name"], "http-smoke-demo")
             self.assertIn("def kernel_score", result_payload["best_kernel"])
-            self.assertIsNotNone(result_payload["best_config"])
+            self.assertEqual(result_payload["best_config"], {})
             self.assertIn("TileLang Autotuning Report", result_payload["report_markdown"])
+            self.assertIn("baseline-only", result_payload["report_markdown"])
             self.assertIsInstance(result_payload["summary_table"], list)
             self.assertIsInstance(result_payload["failed_cases"], list)
-            self.assertIsNotNone(result_payload["improvement_percent"])
+            self.assertIsNone(result_payload["improvement_percent"])
             self.assertTrue(result_payload["generated_files"]["best_kernel.py"]["exists"])
 
             best_kernel = _request_text(f"{base}/api/tasks/{task_id}/download/best_kernel")
