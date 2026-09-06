@@ -330,6 +330,41 @@
       margin-bottom: 10px;
     }
 
+    .source-trials {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .source-trial {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .source-trial[open] { border-color: #9fbdfb; }
+
+    .source-trial > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      cursor: pointer;
+      font-weight: 760;
+    }
+
+    .source-trial-body {
+      border-top: 1px solid var(--line);
+      padding: 14px;
+    }
+
+    .source-trial-body pre {
+      max-height: 420px;
+      overflow: auto;
+    }
+
     .list-plain {
       margin: 6px 0 10px;
       padding-left: 18px;
@@ -1261,18 +1296,18 @@
                 </select>
               </div>
               <div class="field">
-                <label for="v2BudgetMode">运行预算</label>
-                <select id="v2BudgetMode">
-                  <option value="quick">快速</option>
-                  <option value="standard" selected>标准</option>
-                  <option value="deep">深入</option>
+                <label for="v2ExecutionIntent">运行模式</label>
+                <select id="v2ExecutionIntent">
+                  <option value="baseline_only" selected>仅验证与测量</option>
+                  <option value="source_optimization" disabled>源码优化（后端未提供）</option>
                 </select>
               </div>
               <div class="field">
-                <label for="v2TimeoutSeconds">timeout 秒数</label>
-                <input id="v2TimeoutSeconds" type="number" min="1" step="1" value="60">
+                <label for="v2OptimizationMaxCandidates">源码候选次数</label>
+                <input id="v2OptimizationMaxCandidates" type="number" min="1" step="1" value="3" disabled>
               </div>
             </div>
+            <div id="sourceOptimizationCapabilityHint" class="settings-note" style="margin-top:12px">正在确认后端是否支持源码优化；未确认前仅可验证与测量。</div>
             <div class="status-grid" style="margin-top:12px">
               <span class="chip" id="startSshStatus">SSH：未配置</span>
               <span class="chip" id="startLlmStatus">LLM：未配置</span>
@@ -1294,6 +1329,20 @@
                   <input id="v2BenchmarkCommand" value="python benchmark.py" autocomplete="off">
                 </div>
                 <input id="v2ProfilerType" type="hidden" value="dummy">
+              </div>
+              <div class="form-grid three" style="margin-top:12px">
+                <div class="field">
+                  <label for="v2TimeoutSeconds">timeout 秒数</label>
+                  <input id="v2TimeoutSeconds" type="number" min="1" step="1" value="60">
+                </div>
+                <div class="field">
+                  <label for="v2BenchmarkRepeats">benchmark 重复次数</label>
+                  <input id="v2BenchmarkRepeats" type="number" min="1" step="1" value="5" disabled>
+                </div>
+                <div class="field">
+                  <label for="v2MinImprovementPercent">最低提升门槛 (%)</label>
+                  <input id="v2MinImprovementPercent" type="number" min="0" step="0.1" value="1.0" disabled>
+                </div>
               </div>
             </details>
           </section>
@@ -1561,11 +1610,8 @@
       "matrix_intrinsic",
       "hbm_bandwidth_GBps",
     ];
-    const BUDGET_PRESETS = {
-      quick: { max_iterations: 1, candidates_per_iteration: 3, timeout_seconds: 60 },
-      standard: { max_iterations: 3, candidates_per_iteration: 4, timeout_seconds: 60 },
-      deep: { max_iterations: 5, candidates_per_iteration: 6, timeout_seconds: 60 },
-    };
+    const SOURCE_OPTIMIZATION_STATUSES = new Set(["not_requested", "unavailable", "running", "completed", "failed", "cancelled"]);
+    const SOURCE_TRIAL_STATUSES = new Set(["proposed", "running", "validation_failed", "build_failed", "correctness_failed", "benchmark_failed", "no_improvement", "accepted", "cancelled"]);
     const EVIDENCE_EVENT_LABELS = {
       collecting_performance_evidence: "正在采集性能证据",
       performance_evidence_collecting: "正在采集性能证据",
@@ -1590,7 +1636,7 @@
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
-    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, apiHealthy: false, apiError: "", hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, settingsEnv: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskList: [], taskPollTimer: null, eventPollTimer: null, sampleFiles: [], sampleUploadId: null, sampleUploadStage: "empty", sampleUploadError: "", sampleUploadVersion: 0, sampleUploadedVersion: null, sampleUploadedEntryFile: "", sampleSourceMode: "inline", taskSubmitting: false, cancellationPending: false };
+    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, apiHealthy: false, apiError: "", apiCapabilities: { sourceOptimization: false, declared: false }, sourceOptimizationChoiceTouched: false, hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, settingsEnv: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskList: [], taskPollTimer: null, eventPollTimer: null, sampleFiles: [], sampleUploadId: null, sampleUploadStage: "empty", sampleUploadError: "", sampleUploadVersion: 0, sampleUploadedVersion: null, sampleUploadedEntryFile: "", sampleSourceMode: "inline", taskSubmitting: false, cancellationPending: false };
     const el = {
       alerts: document.getElementById("alerts"),
       apiHealthStatus: document.getElementById("apiHealthStatus"),
@@ -1628,7 +1674,11 @@
       v2EntryFile: document.getElementById("v2EntryFile"),
       v2SampleSourceType: document.getElementById("v2SampleSourceType"),
       v2RunnerType: document.getElementById("v2RunnerType"),
-      v2BudgetMode: document.getElementById("v2BudgetMode"),
+      v2ExecutionIntent: document.getElementById("v2ExecutionIntent"),
+      v2OptimizationMaxCandidates: document.getElementById("v2OptimizationMaxCandidates"),
+      v2BenchmarkRepeats: document.getElementById("v2BenchmarkRepeats"),
+      v2MinImprovementPercent: document.getElementById("v2MinImprovementPercent"),
+      sourceOptimizationCapabilityHint: document.getElementById("sourceOptimizationCapabilityHint"),
       v2MaxIterations: document.getElementById("v2MaxIterations"),
       v2CandidatesPerIteration: document.getElementById("v2CandidatesPerIteration"),
       v2TimeoutSeconds: document.getElementById("v2TimeoutSeconds"),
@@ -1709,8 +1759,11 @@
     el.v2Backend.addEventListener("input", renderHardwareEditor);
     el.resolveHardwareBtn.addEventListener("click", resolveHardwareProfile);
     el.startOptimizationBtn.addEventListener("click", startOptimization);
-    el.v2BudgetMode.addEventListener("change", applyBudgetPreset);
-    [el.v2MaxIterations, el.v2CandidatesPerIteration, el.v2TimeoutSeconds].forEach((input) => {
+    el.v2ExecutionIntent.addEventListener("change", () => {
+      state.sourceOptimizationChoiceTouched = true;
+      syncSourceOptimizationUi();
+    });
+    [el.v2MaxIterations, el.v2CandidatesPerIteration, el.v2TimeoutSeconds, el.v2OptimizationMaxCandidates, el.v2BenchmarkRepeats, el.v2MinImprovementPercent].forEach((input) => {
       input.addEventListener("input", updateStartButtonState);
     });
     [el.v2BuildCommand, el.v2CorrectnessCommand, el.v2BenchmarkCommand].forEach((input) => {
@@ -1733,7 +1786,7 @@
       document.getElementById(id).addEventListener("input", () => { updateSettingStatus(); renderSettingsOutput(); });
     });
     loadSettings();
-    applyBudgetPreset();
+    syncSourceOptimizationUi();
     updateSampleSourceUi();
     renderHardwareEditor();
     updateStartButtonState();
@@ -2592,11 +2645,56 @@
       return "-";
     }
 
-    function applyBudgetPreset() {
-      const preset = BUDGET_PRESETS[el.v2BudgetMode.value] || BUDGET_PRESETS.standard;
-      el.v2MaxIterations.value = preset.max_iterations;
-      el.v2CandidatesPerIteration.value = preset.candidates_per_iteration;
-      el.v2TimeoutSeconds.value = preset.timeout_seconds;
+    function sourceOptimizationAvailable() {
+      return state.apiCapabilities.sourceOptimization === true;
+    }
+
+    function sourceOptimizationRequested() {
+      return el.v2ExecutionIntent.value === "source_optimization";
+    }
+
+    function readSourceOptimizationInputs() {
+      return {
+        max_candidates: Number(el.v2OptimizationMaxCandidates.value),
+        benchmark_repeats: Number(el.v2BenchmarkRepeats.value),
+        min_improvement_percent: Number(el.v2MinImprovementPercent.value),
+      };
+    }
+
+    function sourceOptimizationValidationError() {
+      if (!sourceOptimizationRequested()) return "";
+      if (!sourceOptimizationAvailable()) return "当前后端未声明源码优化能力，只能验证与测量。";
+      const optimization = readSourceOptimizationInputs();
+      if (!Number.isInteger(optimization.max_candidates) || optimization.max_candidates < 1) return "源码候选次数必须是大于等于 1 的整数。";
+      if (!Number.isInteger(optimization.benchmark_repeats) || optimization.benchmark_repeats < 1) return "benchmark 重复次数必须是大于等于 1 的整数。";
+      if (!Number.isFinite(optimization.min_improvement_percent) || optimization.min_improvement_percent < 0) return "最低提升门槛必须是大于等于 0 的数字。";
+      return "";
+    }
+
+    function startActionLabel() {
+      return sourceOptimizationRequested() && sourceOptimizationAvailable() ? "开始源码优化" : "验证并测量";
+    }
+
+    function syncSourceOptimizationUi({ preferSource = false } = {}) {
+      const available = sourceOptimizationAvailable();
+      const sourceOption = el.v2ExecutionIntent.querySelector('option[value="source_optimization"]');
+      sourceOption.disabled = !available;
+      sourceOption.textContent = available ? "源码优化" : "源码优化（后端未提供）";
+      if (!available && sourceOptimizationRequested()) el.v2ExecutionIntent.value = "baseline_only";
+      if (available && preferSource && !state.sourceOptimizationChoiceTouched) el.v2ExecutionIntent.value = "source_optimization";
+      const sourceMode = available && sourceOptimizationRequested();
+      el.v2OptimizationMaxCandidates.disabled = !sourceMode;
+      el.v2BenchmarkRepeats.disabled = !sourceMode;
+      el.v2MinImprovementPercent.disabled = !sourceMode;
+      if (sourceMode) {
+        el.sourceOptimizationCapabilityHint.textContent = "后端已声明源码优化能力。候选会逐个执行正确性与性能验证，只有被后端接受的 trial 才会成为 best。";
+      } else if (state.apiHealthy && state.apiCapabilities.declared) {
+        el.sourceOptimizationCapabilityHint.textContent = "当前后端未启用源码优化；本次只运行真实 baseline 验证与测量。";
+      } else if (state.apiHealthy) {
+        el.sourceOptimizationCapabilityHint.textContent = "当前后端未返回源码优化能力字段，按旧后端兼容模式仅验证与测量。";
+      } else {
+        el.sourceOptimizationCapabilityHint.textContent = "正在确认后端是否支持源码优化；未确认前仅可验证与测量。";
+      }
       updateStartButtonState();
     }
 
@@ -2670,19 +2768,27 @@
     }
 
     function startFormValidationError() {
-      return budgetValidationError() || sampleValidationError() || commandValidationError();
+      return sourceOptimizationValidationError() || budgetValidationError() || sampleValidationError() || commandValidationError();
     }
 
     function updateStartButtonState() {
       const budgetError = budgetValidationError();
+      const optimizationError = sourceOptimizationValidationError();
       const error = startFormValidationError();
       el.v2MaxIterations.setCustomValidity(budgetFieldError(el.v2MaxIterations, budgetError));
       el.v2CandidatesPerIteration.setCustomValidity(budgetFieldError(el.v2CandidatesPerIteration, budgetError));
       el.v2TimeoutSeconds.setCustomValidity(budgetFieldError(el.v2TimeoutSeconds, budgetError));
+      const optimization = readSourceOptimizationInputs();
+      el.v2OptimizationMaxCandidates.setCustomValidity(optimizationError && (!Number.isInteger(optimization.max_candidates) || optimization.max_candidates < 1) ? optimizationError : "");
+      el.v2BenchmarkRepeats.setCustomValidity(optimizationError && (!Number.isInteger(optimization.benchmark_repeats) || optimization.benchmark_repeats < 1) ? optimizationError : "");
+      el.v2MinImprovementPercent.setCustomValidity(optimizationError && (!Number.isFinite(optimization.min_improvement_percent) || optimization.min_improvement_percent < 0) ? optimizationError : "");
       el.startOptimizationBtn.disabled = state.taskSubmitting || !!error;
+      if (!state.taskSubmitting) el.startOptimizationBtn.textContent = startActionLabel();
       el.startValidationMessage.textContent = state.taskSubmitting
         ? "正在准备并提交真实后端任务，请勿重复操作。"
-        : error || "输入已就绪；提交后由后端依次执行 build、correctness 和 benchmark。";
+        : error || (sourceOptimizationRequested()
+          ? "输入已就绪；后端将验证 baseline，并在候选预算内尝试可安全授权的源码修改。"
+          : "输入已就绪；提交后由后端依次执行 build、correctness 和 benchmark。只验证 baseline，不执行源码优化。");
       if (budgetError) {
         el.taskStatus.textContent = "暂无任务";
         el.taskDetailPanel.innerHTML = `<div class="empty">${escapeHtml(budgetError)}</div>`;
@@ -2794,16 +2900,27 @@
     async function checkApiHealth() {
       try {
         const payload = await apiFetch("/api/health");
-        state.apiHealthy = !!payload.ok;
+        if (payload?.ok !== true) {
+          throw new Error(pick(payload?.detail, payload?.error, "后端健康检查未通过，请确认服务状态。"));
+        }
+        state.apiHealthy = true;
         state.apiError = "";
+        const sourceOptimizationCapability = payload?.capabilities?.source_optimization;
+        state.apiCapabilities = {
+          sourceOptimization: sourceOptimizationCapability === true,
+          declared: typeof sourceOptimizationCapability === "boolean",
+        };
         el.apiHealthStatus.className = "chip ok";
         el.apiHealthStatus.textContent = "API：已连接";
+        syncSourceOptimizationUi({ preferSource: sourceOptimizationCapability === true });
         await loadSettingsFromApi({ silent: true });
         await loadTaskList();
         renderAlerts();
       } catch (error) {
         state.apiHealthy = false;
         state.apiError = error.message || "后端服务未启动，请确认本地服务已开启。";
+        state.apiCapabilities = { sourceOptimization: false, declared: false };
+        syncSourceOptimizationUi();
         el.apiHealthStatus.className = "chip bad";
         el.apiHealthStatus.textContent = "API：未启动";
         renderTaskWaiting(state.apiError);
@@ -2907,7 +3024,7 @@
             inline_text: sampleText,
             entry_file: inputValue("v2EntryFile"),
           };
-      return {
+      const request = {
         project_name: inputValue("v2ProjectName") || "web-task",
         sample,
         target: {
@@ -2941,6 +3058,13 @@
           type: el.v2RunnerType.value === "ssh" ? "ssh" : "local",
         },
       };
+      if (sourceOptimizationRequested()) {
+        request.optimization = {
+          enabled: true,
+          ...readSourceOptimizationInputs(),
+        };
+      }
+      return request;
     }
 
     function unwrapTaskPayload(payload) {
@@ -2993,7 +3117,6 @@
         renderAlerts();
       } finally {
         state.taskSubmitting = false;
-        el.startOptimizationBtn.textContent = "验证并测量";
         updateStartButtonState();
       }
     }
@@ -3193,6 +3316,64 @@
       return pick(event.message, event.detail, event.description, EVIDENCE_EVENT_LABELS[eventKey(pick(event.type, event.event_type, event.name))]);
     }
 
+    function sourceOptimizationPayload(results) {
+      const value = results?.source_optimization;
+      return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+    }
+
+    function sourceOptimizationTrials(sourceOptimization) {
+      return Array.isArray(sourceOptimization?.trials)
+        ? sourceOptimization.trials.filter((trial) => trial && typeof trial === "object" && !Array.isArray(trial))
+        : [];
+    }
+
+    function sourceOptimizationStatus(sourceOptimization) {
+      const status = typeof sourceOptimization?.status === "string" ? sourceOptimization.status.trim().toLowerCase() : "";
+      return SOURCE_OPTIMIZATION_STATUSES.has(status) ? status : "unknown";
+    }
+
+    function sourceTrialStatus(trial) {
+      const status = typeof trial?.status === "string" ? trial.status.trim().toLowerCase() : "";
+      return SOURCE_TRIAL_STATUSES.has(status) ? status : "unknown";
+    }
+
+    function acceptedSourceTrial(sourceOptimization) {
+      const acceptedId = typeof sourceOptimization?.accepted_trial_id === "string" ? sourceOptimization.accepted_trial_id.trim() : "";
+      if (!acceptedId) return null;
+      return sourceOptimizationTrials(sourceOptimization).find((trial) => String(trial.trial_id || "") === acceptedId) || null;
+    }
+
+    function acceptedSourceTrialVerified(sourceOptimization) {
+      const trial = acceptedSourceTrial(sourceOptimization);
+      if (sourceOptimization?.schema_version !== "v2.source_optimization.v1" || sourceOptimizationStatus(sourceOptimization) !== "completed" || !trial || sourceTrialStatus(trial) !== "accepted" || trial.correctness?.passed !== true) return false;
+      const baselineHash = sourceSha256(sourceOptimization?.baseline_source_sha256);
+      const bestHash = sourceSha256(sourceOptimization?.best_source_sha256);
+      const beforeHash = sourceSha256(trial.source_before_sha256);
+      const afterHash = sourceSha256(trial.source_after_sha256);
+      return !!baselineHash
+        && !!bestHash
+        && baselineHash === beforeHash
+        && bestHash === afterHash
+        && sourceMeasurementValues(trial.baseline_latency_ms).length > 0
+        && sourceMeasurementValues(trial.candidate_latency_ms).length > 0;
+    }
+
+    function sourceSha256(value) {
+      if (typeof value !== "string") return "";
+      const normalized = value.trim().toLowerCase();
+      return /^[a-f0-9]{64}$/.test(normalized) ? normalized : "";
+    }
+
+    function sourceHashVerification(sourceOptimization) {
+      const trial = acceptedSourceTrial(sourceOptimization);
+      const baselineHash = sourceSha256(sourceOptimization?.baseline_source_sha256);
+      const bestHash = sourceSha256(sourceOptimization?.best_source_sha256);
+      const beforeHash = sourceSha256(trial?.source_before_sha256);
+      const afterHash = sourceSha256(trial?.source_after_sha256);
+      if (!trial || !baselineHash || !bestHash || !beforeHash || !afterHash) return "missing";
+      return baselineHash === beforeHash && bestHash === afterHash ? "verified" : "mismatch";
+    }
+
     function renderTaskDetail() {
       const task = state.task;
       if (!task) {
@@ -3207,14 +3388,18 @@
       const improvement = pick(state.task?.improvement_percent, state.taskResults?.improvement_percent);
       const executionMode = task.execution_mode;
       const baselineOnly = executionMode === "baseline_only";
+      const sourceMode = executionMode === "source_optimization";
+      const sourceOptimization = sourceOptimizationPayload(state.taskResults);
+      const acceptedVerified = acceptedSourceTrialVerified(sourceOptimization);
+      const attemptedCount = sourceMode ? pick(task.total_trials, sourceOptimizationTrials(sourceOptimization).length || null) : pick(task.total_trials, summary.length || null);
       const currentStage = eventLabel(task.current_stage || latestEvent?.type || task.status);
       const latestEventText = pick(task.latest_message, eventMessage(latestEvent), latestEventLabel(latestEvent));
       el.taskStatus.textContent = task.status || "暂无任务";
       el.taskDetailPanel.innerHTML = `
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>执行模式</div><div>${executionModeBadge(executionMode)}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
-          <article class="result-card"><div class="metric-label">已尝试 trial</div><div class="metric-main">${display(pick(task.total_trials, summary.length || null))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>${baselineOnly ? "源码优化" : "current best latency"}</div><div>${baselineOnly ? "未执行" : escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
-          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${!baselineOnly && numeric(improvement) !== null && numeric(improvement) >= 0 ? "good" : ""}">${baselineOnly ? "仅基线测量" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">${sourceMode ? "已尝试次数" : "已尝试 trial"}</div><div class="metric-main">${escapeHtml(display(attemptedCount))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>${baselineOnly ? "源码优化" : "current best latency"}</div><div>${baselineOnly ? "未执行" : escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : sourceMode ? "源码修改决定" : "性能提升"}</div><div class="metric-main ${acceptedVerified ? "good" : ""}">${baselineOnly ? "仅基线测量" : sourceMode ? acceptedVerified ? "已接受源码修改" : sourceOptimization && !["running", "unknown"].includes(sourceOptimizationStatus(sourceOptimization)) ? "保留 baseline" : "等待后端决定" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
         </div>
         ${executionModeNotice(executionMode)}
         ${state.cancellationPending ? `<div class="alert warn">取消请求已提交，仍在等待后端确认终态。</div>` : ""}
@@ -3464,6 +3649,175 @@
       </section>`;
     }
 
+    function sourceOptimizationStatusBadge(sourceOptimization) {
+      const status = sourceOptimizationStatus(sourceOptimization);
+      const acceptedVerified = acceptedSourceTrialVerified(sourceOptimization);
+      const kind = status === "completed" && acceptedVerified ? "ok" : status === "failed" ? "bad" : "warn";
+      const labels = {
+        not_requested: "未请求",
+        unavailable: "不可用",
+        running: "运行中",
+        completed: acceptedVerified ? "已完成并接受修改" : "已完成，保留 baseline",
+        failed: "失败",
+        cancelled: "已取消",
+        unknown: "未知状态",
+      };
+      return `<span class="badge ${kind}">${escapeHtml(labels[status])}</span>`;
+    }
+
+    function sourceTrialStatusBadge(trial, selected, acceptedVerified) {
+      const status = sourceTrialStatus(trial);
+      const verifiedAcceptance = status === "accepted" && selected && acceptedVerified;
+      const acceptedByBackend = status === "accepted" && trial?.correctness?.passed === true;
+      const warningStatuses = new Set(["proposed", "running", "no_improvement", "cancelled"]);
+      const kind = verifiedAcceptance ? "ok" : acceptedByBackend || warningStatuses.has(status) ? "warn" : "bad";
+      const labels = {
+        proposed: "待验证",
+        running: "验证中",
+        validation_failed: "验证失败",
+        build_failed: "构建失败",
+        correctness_failed: "正确性失败",
+        benchmark_failed: "性能测量失败",
+        no_improvement: "无收益",
+        accepted: verifiedAcceptance ? "已接受" : acceptedByBackend ? "接受状态待核验" : "接受状态不完整",
+        cancelled: "已取消",
+        unknown: "未知状态",
+      };
+      return `<span class="badge ${kind}">${escapeHtml(labels[status])}</span>`;
+    }
+
+    function sourceCorrectnessBadge(correctness) {
+      if (correctness?.passed === true) return `<span class="badge ok">通过</span>`;
+      if (correctness?.passed === false) return `<span class="badge bad">未通过</span>`;
+      return `<span class="badge warn">未返回</span>`;
+    }
+
+    function sourceRollbackBadge(value) {
+      if (value === true) return `<span class="badge ok">回滚已验证</span>`;
+      if (value === false) return `<span class="badge bad">回滚未验证</span>`;
+      return `<span class="badge warn">回滚状态未返回</span>`;
+    }
+
+    function sourceMeasurementSummary(value) {
+      const values = sourceMeasurementValues(value);
+      return values.length ? `${values.length} 次测量` : "未采集";
+    }
+
+    function sourceMeasurementValues(value) {
+      if (!Array.isArray(value) || !value.length || value.some((item) => typeof item !== "number" || !Number.isFinite(item) || item <= 0)) return [];
+      return value.slice();
+    }
+
+    function sourceBaselineArtifactVerified(sourceOptimization, baselineRow) {
+      const status = sourceOptimizationStatus(sourceOptimization);
+      const terminalWithBaseline = new Set(["completed", "unavailable", "failed", "cancelled"]);
+      const baselineHash = sourceSha256(sourceOptimization?.baseline_source_sha256);
+      const bestHash = sourceSha256(sourceOptimization?.best_source_sha256);
+      const baselineStatus = String(baselineRow?.status || "").trim().toLowerCase();
+      return sourceOptimization?.schema_version === "v2.source_optimization.v1"
+        && !sourceOptimization?.accepted_trial_id
+        && terminalWithBaseline.has(status)
+        && !!baselineHash
+        && baselineHash === bestHash
+        && baselineStatus === "benchmark_ok"
+        && baselineRow?.correctness?.passed === true;
+    }
+
+    function sourceMeasurementMedian(value) {
+      const values = sourceMeasurementValues(value).slice().sort((a, b) => a - b);
+      if (!values.length) return null;
+      const middle = Math.floor(values.length / 2);
+      return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+    }
+
+    function sourceTrialEvidenceList(trial, evidenceMap) {
+      const ids = Array.isArray(trial?.evidence_ids) ? trial.evidence_ids : [];
+      if (!ids.length) return `<div class="empty">未引用证据。</div>`;
+      return `<ul class="list-plain">${ids.map((rawId) => {
+        const id = String(rawId);
+        const record = evidenceMap.get(id);
+        if (!record) return `<li>${escapeHtml(id)}：证据记录未返回</li>`;
+        const confidence = pick(record.confidence, "unknown");
+        return `<li>${escapeHtml(evidenceRecordLabel(record, id))}；confidence: ${escapeHtml(display(confidence))}</li>`;
+      }).join("")}</ul>`;
+    }
+
+    function renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified) {
+      const trialId = typeof trial.trial_id === "string" && trial.trial_id.trim() ? trial.trial_id.trim() : "未返回 trial_id";
+      const selected = acceptedId && trialId === acceptedId;
+      const correctness = trial.correctness && typeof trial.correctness === "object" ? trial.correctness : null;
+      const improvement = numeric(trial.improvement_percent);
+      const title = pick(trial.optimization_name, trial.hypothesis, trialId);
+      const advanced = {
+        source_before_sha256: trial.source_before_sha256 ?? null,
+        source_after_sha256: trial.source_after_sha256 ?? null,
+        baseline_latency_ms: Array.isArray(trial.baseline_latency_ms) ? trial.baseline_latency_ms : [],
+        candidate_latency_ms: Array.isArray(trial.candidate_latency_ms) ? trial.candidate_latency_ms : [],
+        logs: trial.logs ?? null,
+        stdout_path: trial.stdout_path ?? null,
+        stderr_path: trial.stderr_path ?? null,
+      };
+      return `<details class="source-trial" ${selected ? "open" : ""}>
+        <summary><span>${escapeHtml(display(title))}</span><span>${sourceTrialStatusBadge(trial, selected, acceptedVerified)}</span></summary>
+        <div class="source-trial-body">
+          <div class="kv">
+            <div>trial_id</div><div>${escapeHtml(trialId)}</div>
+            <div>目标位置</div><div>${escapeHtml([trial.target_file, trial.target_function].filter(Boolean).map(display).join(" / ") || "未返回")}</div>
+            <div>优化假设</div><div>${escapeHtml(display(trial.hypothesis))}</div>
+            <div>correctness</div><div>${sourceCorrectnessBadge(correctness)} max_error: ${escapeHtml(correctness && Object.prototype.hasOwnProperty.call(correctness, "max_error") ? display(correctness.max_error) : "未返回")}</div>
+            <div>correctness 原因</div><div>${escapeHtml(correctness ? display(correctness.reason) : "未返回")}</div>
+            <div>baseline 测量</div><div>${escapeHtml(sourceMeasurementSummary(trial.baseline_latency_ms))}</div>
+            <div>candidate 测量</div><div>${escapeHtml(sourceMeasurementSummary(trial.candidate_latency_ms))}</div>
+            <div>性能提升</div><div>${improvement === null ? "未采集" : `${escapeHtml(formatNumber(improvement))}%`}</div>
+            <div>接受 / 回滚决定</div><div>${escapeHtml(display(trial.decision_reason))} ${sourceRollbackBadge(trial.rollback_verified)}</div>
+          </div>
+          <h3>证据引用</h3>
+          ${sourceTrialEvidenceList(trial, evidenceMap)}
+          <h3>源码 diff</h3>
+          <pre>${escapeHtml(typeof trial.diff === "string" && trial.diff ? trial.diff : "未返回 diff")}</pre>
+          <details style="margin-top:10px"><summary>原始测量、哈希与日志</summary><pre>${escapeHtml(JSON.stringify(redactObject(advanced), null, 2))}</pre></details>
+        </div>
+      </details>`;
+    }
+
+    function renderSourceOptimization(results, executionMode) {
+      const sourceOptimization = sourceOptimizationPayload(results);
+      if (!sourceOptimization && executionMode !== "source_optimization") return "";
+      if (!sourceOptimization) {
+        return `<section class="section"><div class="section-head"><h2>源码优化</h2><span class="badge warn">结果未返回</span></div><div class="alert warn">任务声明为源码优化模式，但后端尚未返回 source_optimization；前端不会推断优化结果。</div></section>`;
+      }
+      const status = sourceOptimizationStatus(sourceOptimization);
+      const trials = sourceOptimizationTrials(sourceOptimization);
+      const acceptedId = typeof sourceOptimization.accepted_trial_id === "string" ? sourceOptimization.accepted_trial_id.trim() : "";
+      const acceptedVerified = acceptedSourceTrialVerified(sourceOptimization);
+      const acceptedTrial = acceptedSourceTrial(sourceOptimization);
+      const acceptedByBackend = !!acceptedTrial && sourceTrialStatus(acceptedTrial) === "accepted" && acceptedTrial.correctness?.passed === true;
+      const hashVerification = sourceHashVerification(sourceOptimization);
+      const evidenceMap = evidenceRecordMap(evidenceSummaryFromResults(results));
+      const schemaValid = sourceOptimization.schema_version === "v2.source_optimization.v1";
+      let decision;
+      if (acceptedVerified) {
+        decision = `<div class="alert ok">已接受源码修改：${escapeHtml(acceptedId)}。best 仅来自后端明确接受、correctness 通过、测量数组有效且源码 hash 一致的 trial。</div>`;
+      } else if (acceptedByBackend && status !== "completed") {
+        decision = `<div class="alert warn">源码优化整体状态仍为 ${escapeHtml(status)}；当前 accepted trial 属于 partial 结果，前端不会提前标记为已验证优化。</div>`;
+      } else if (acceptedByBackend && hashVerification === "mismatch") {
+        decision = `<div class="alert bad">后端返回了接受决定，但发布源码 hash 与 accepted trial 不一致；前端不会把该产物标记为已验证优化。</div>`;
+      } else if (acceptedByBackend) {
+        decision = `<div class="alert warn">后端返回了接受决定，但测量数组或源码 hash 缺失；前端不会把该产物标记为已验证优化。</div>`;
+      } else if (acceptedId) {
+        decision = `<div class="alert bad">后端返回了 accepted_trial_id，但对应 trial 缺失、状态不是 accepted 或 correctness 未明确通过；前端不会标记为已验证优化。</div>`;
+      } else {
+        decision = `<div class="alert warn">没有 accepted_trial_id，最终结果保留 baseline。${sourceOptimization.reason ? `原因：${escapeHtml(display(sourceOptimization.reason))}` : "后端未返回原因。"}</div>`;
+      }
+      return `<section class="section">
+        <div class="section-head"><h2>源码优化结果</h2>${sourceOptimizationStatusBadge(sourceOptimization)}</div>
+        ${schemaValid ? "" : `<div class="alert warn">source_optimization schema_version 缺失或不匹配，以下字段按兼容方式展示。</div>`}
+        ${decision}
+        ${status === "unavailable" ? `<div class="alert warn">当前 sample 无法安全进入源码优化，已按后端结果保留 baseline。</div>` : ""}
+        <div class="source-trials">${trials.length ? trials.map((trial) => renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified)).join("") : `<div class="empty">暂无源码候选记录。</div>`}</div>
+      </section>`;
+    }
+
     function renderApiResults() {
       const results = state.taskResults;
       if (!results) {
@@ -3479,11 +3833,24 @@
       const baseline = summary[0] || {};
       const benchmarkBest = [results.best_row, ...summary].find((row) => row && typeof row === "object" && String(row.status || "").trim().toLowerCase() === "benchmark_ok") || null;
       const best = benchmarkBest || {};
-      const bestTrialId = pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
       const executionMode = state.task?.execution_mode;
       const baselineOnly = executionMode === "baseline_only";
+      const sourceMode = executionMode === "source_optimization";
+      const sourceOptimization = sourceOptimizationPayload(results);
+      const acceptedTrial = acceptedSourceTrial(sourceOptimization);
+      const acceptedVerified = acceptedSourceTrialVerified(sourceOptimization);
+      const acceptedTrialId = typeof sourceOptimization?.accepted_trial_id === "string" ? sourceOptimization.accepted_trial_id.trim() : "";
+      const sourceBaselineVerified = sourceMode && sourceBaselineArtifactVerified(sourceOptimization, baseline);
+      const bestTrialId = sourceMode ? acceptedVerified ? acceptedTrialId : sourceBaselineVerified ? "无，保留 baseline" : "无，baseline 待核验" : pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
       const baselineSucceeded = baselineOnly && !!benchmarkBest;
-      el.downloadBestKernelBtn.disabled = !results.best_kernel || !benchmarkBest;
+      const fallbackBaselineLatency = pick(state.task?.baseline_latency, baseline.latency, baseline.objective_value);
+      const acceptedBaselineLatency = acceptedVerified ? sourceMeasurementMedian(acceptedTrial?.baseline_latency_ms) : null;
+      const acceptedCandidateLatency = acceptedVerified ? sourceMeasurementMedian(acceptedTrial?.candidate_latency_ms) : null;
+      const baselineLatency = sourceMode && acceptedVerified ? acceptedBaselineLatency : fallbackBaselineLatency;
+      const sourceBestLatency = acceptedVerified ? acceptedCandidateLatency : baselineLatency;
+      const sourceImprovement = acceptedVerified ? numeric(acceptedTrial?.improvement_percent) : null;
+      const verifiedArtifact = sourceMode ? acceptedVerified || sourceBaselineVerified : !!benchmarkBest;
+      el.downloadBestKernelBtn.disabled = !results.best_kernel || !verifiedArtifact;
       const evidenceSummary = evidenceSummaryFromResults(results);
       const diagnosisRows = diagnosisRowsFromResults(results);
       const profilerAvailable = pick(results.profiler_available, results.profilerAvailable, evidenceSummary?.profiler_available);
@@ -3491,16 +3858,18 @@
       el.apiResultsPanel.innerHTML = `
         ${executionModeNotice(executionMode)}
         ${baselineOnly && !baselineSucceeded ? `<div class="alert bad">correctness 或 benchmark 未通过，本次没有已验证的基线性能结果。</div>` : ""}
+        ${sourceMode && !acceptedVerified && !sourceBaselineVerified ? `<div class="alert warn">未能同时确认 baseline correctness、benchmark、终态和同源 hash；当前 baseline 产物不开放下载。</div>` : ""}
         <div class="compare-grid">
-          <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(pick(baseline.latency, baseline.objective_value, state.task?.baseline_latency)))}</div></article>
-          <article class="result-card ${baselineOnly ? "" : "best-card"}"><div class="metric-label">${baselineOnly ? "源码优化结果" : "best latency"}</div><div class="metric-main ${baselineOnly ? "" : "best"}">${baselineOnly ? "未执行" : escapeHtml(display(pick(best.latency, best.objective_value, state.task?.best_latency)))}</div>${baselineOnly ? "" : `<div class="kv"><div>best trial id</div><div>${escapeHtml(display(bestTrialId))}</div></div>`}</article>
-          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${baselineSucceeded || (!baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0) ? "good" : ""}">${baselineOnly ? baselineSucceeded ? "基线验证完成" : "基线验证未通过" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
+          <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(baselineLatency))}</div></article>
+          <article class="result-card ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best-card"}"><div class="metric-label">${baselineOnly ? "源码优化结果" : sourceMode && !acceptedVerified ? "best latency（保留 baseline）" : "best latency"}</div><div class="metric-main ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best"}">${baselineOnly ? "未执行" : escapeHtml(display(sourceMode ? sourceBestLatency : pick(best.latency, best.objective_value, state.task?.best_latency)))}</div>${baselineOnly ? "" : `<div class="kv"><div>${sourceMode ? "accepted trial id" : "best trial id"}</div><div>${escapeHtml(display(bestTrialId))}</div></div>`}</article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${baselineSucceeded || sourceMode && acceptedVerified && numeric(sourceImprovement) !== null && numeric(sourceImprovement) >= 0 || !sourceMode && !baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${baselineOnly ? baselineSucceeded ? "基线验证完成" : "基线验证未通过" : sourceMode ? acceptedVerified ? sourceImprovement === null || sourceImprovement === undefined ? "未采集" : `${formatNumber(sourceImprovement)}%` : "未接受源码修改" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
         </div>
+        ${renderSourceOptimization(results, executionMode)}
         ${shapeResultsHtml || renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable)}
-        <h3>${baselineOnly ? baselineSucceeded ? "已验证基线 kernel" : "基线 kernel 未通过验证" : benchmarkBest ? "best kernel" : "尚无 best kernel"}</h3>
-        <pre>${escapeHtml(benchmarkBest ? results.best_kernel || "等待结果文件：best_kernel.py" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
+        <h3>${baselineOnly ? baselineSucceeded ? "已验证基线 kernel" : "基线 kernel 未通过验证" : sourceMode && !acceptedVerified ? sourceBaselineVerified ? "最终 kernel（baseline）" : "baseline kernel 待核验" : verifiedArtifact ? "best kernel" : "尚无 best kernel"}</h3>
+        <pre>${escapeHtml(verifiedArtifact ? results.best_kernel || "等待结果文件：best_kernel.py" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
         <h3>${baselineOnly ? baselineSucceeded ? "基线配置产物" : "基线配置未通过验证" : "best_config.yaml"}</h3>
-        <pre>${escapeHtml(benchmarkBest && results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "没有可作为 best 的已验证配置。")}</pre>
+        <pre>${escapeHtml(verifiedArtifact && results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "没有可作为 best 的已验证配置。")}</pre>
         <h3>report.md</h3>
         <pre>${escapeHtml(reportMarkdown || "等待结果文件：report.md")}</pre>
         <details style="margin-top:12px">
@@ -3512,6 +3881,7 @@
           ${shapeResultsHtml ? renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable) : ""}
           ${shapeResultsHtml ? `<h3>原始 shape_results</h3><pre>${escapeHtml(JSON.stringify(redactObject(results.shape_results ?? results.shapeResults), null, 2))}</pre>` : ""}
           ${renderObservationsDetails(evidenceSummary, diagnosisRows, results)}
+          ${sourceOptimization ? `<h3>原始 source_optimization</h3><pre>${escapeHtml(JSON.stringify(redactObject(sourceOptimization), null, 2))}</pre>` : ""}
           <h3>best_vs_baseline.diff</h3>
           <pre>${escapeHtml(results.best_vs_baseline_diff || "unavailable")}</pre>
         </details>
@@ -4032,12 +4402,16 @@
     }
 
     function executionModeBadge(mode) {
+      if (mode === "source_optimization") return `<span class="badge best">源码优化</span>`;
       if (mode === "baseline_only") return `<span class="badge warn">仅基线测量</span>`;
       if (mode === "parameter_search") return `<span class="badge warn">历史参数搜索</span>`;
       return `<span class="badge warn">后端未提供</span>`;
     }
 
     function executionModeNotice(mode) {
+      if (mode === "source_optimization") {
+        return `<div class="alert warn">本任务由后端声明为源码优化模式；只有 accepted_trial_id 指向正确性通过的 accepted trial，且测量数组有效、发布源码 hash 一致，前端才会标记源码修改已被验证接受。</div>`;
+      }
       if (mode === "baseline_only") {
         return `<div class="alert warn">仅基线测量，未执行源码优化。此结果不能表示目标架构适配已完成。</div>`;
       }
