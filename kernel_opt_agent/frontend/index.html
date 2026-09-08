@@ -1612,6 +1612,17 @@
     ];
     const SOURCE_OPTIMIZATION_STATUSES = new Set(["not_requested", "unavailable", "running", "completed", "failed", "cancelled"]);
     const SOURCE_TRIAL_STATUSES = new Set(["proposed", "running", "validation_failed", "build_failed", "correctness_failed", "benchmark_failed", "no_improvement", "accepted", "cancelled"]);
+    const PERFORMANCE_GATE_SCHEMA_VERSION = "v2.performance_gate.v1";
+    const PERFORMANCE_GATE_DECISIONS = new Set(["accepted", "no_improvement", "inconclusive", "codegen_unchanged"]);
+    const PERFORMANCE_GATE_CODEGEN_STATUSES = new Set(["changed", "unchanged", "unavailable", "inconsistent"]);
+    const PERFORMANCE_GATE_LABELS = {
+      accepted: "已验证提升",
+      no_improvement: "实测未提升",
+      inconclusive: "测量证据不足",
+      codegen_unchanged: "生成代码未变化",
+      invalid: "门禁结果无效",
+      missing: "旧结果未提供",
+    };
     const EVIDENCE_EVENT_LABELS = {
       collecting_performance_evidence: "正在采集性能证据",
       performance_evidence_collecting: "正在采集性能证据",
@@ -1623,6 +1634,8 @@
       bottleneck_diagnosis_completed: "瓶颈诊断完成",
       diagnosis_completed: "瓶颈诊断完成",
       bottleneck_diagnosed: "瓶颈诊断完成",
+      baseline_recheck_started: "正在复测原版，检查计时漂移",
+      source_trial_completed: "候选验证结束",
     };
     const FIXED_RESULT_DIR = "../workspace/results/";
     const SAMPLE_UPLOAD_LIMITS = {
@@ -3277,7 +3290,7 @@
       el.taskListPanel.innerHTML = `<table>
         <thead><tr><th>task_id</th><th>项目</th><th>状态</th><th>结果</th><th>最新消息</th></tr></thead>
         <tbody>
-          ${state.taskList.map((task) => `<tr class="click-row" data-task-id="${escapeHtml(task.task_id)}"><td>${escapeHtml(shortId(task.task_id))}</td><td>${escapeHtml(display(task.project_name))}</td><td>${taskStatusBadge(task.status, task)}</td><td>${task.execution_mode === "source_optimization" && task.source_best_verified === false ? "当前 best 验证失败" : ["completed", "success", "done"].includes(String(task.status || "").toLowerCase()) && taskCompletionVerification(task) === "failed" ? "基线未通过" : task.improvement_percent === null || task.improvement_percent === undefined ? "未返回提升数据" : `${formatNumber(task.improvement_percent)}%`}</td><td>${escapeHtml(display(task.latest_message))}</td></tr>`).join("")}
+          ${state.taskList.map((task) => `<tr class="click-row" data-task-id="${escapeHtml(task.task_id)}"><td>${escapeHtml(shortId(task.task_id))}</td><td>${escapeHtml(display(task.project_name))}</td><td>${taskStatusBadge(task.status, task)}</td><td>${task.execution_mode === "source_optimization" ? taskListSourceResult(task) : ["completed", "success", "done"].includes(String(task.status || "").toLowerCase()) && taskCompletionVerification(task) === "failed" ? "基线未通过" : task.improvement_percent === null || task.improvement_percent === undefined ? "未返回提升数据" : `${formatNumber(task.improvement_percent)}%`}</td><td>${escapeHtml(display(task.latest_message))}</td></tr>`).join("")}
         </tbody>
       </table>`;
       el.taskListPanel.querySelectorAll("[data-task-id]").forEach((row) => {
@@ -3357,6 +3370,50 @@
       return SOURCE_TRIAL_STATUSES.has(status) ? status : "unknown";
     }
 
+    function taskListSourceResult(task) {
+      if (task?.source_best_verified === false) return "当前 best 验证失败";
+      const acceptedId = typeof task?.source_accepted_trial_id === "string" ? task.source_accepted_trial_id.trim() : "";
+      if (task?.source_best_verified === true && acceptedId) {
+        return task.improvement_percent === null || task.improvement_percent === undefined
+          ? "已验证提升"
+          : `${escapeHtml(formatNumber(task.improvement_percent))}%`;
+      }
+      const decision = typeof task?.source_performance_decision === "string" ? task.source_performance_decision.trim().toLowerCase() : "";
+      if (PERFORMANCE_GATE_DECISIONS.has(decision) && decision !== "accepted") return escapeHtml(PERFORMANCE_GATE_LABELS[decision]);
+      const terminal = ["completed", "success", "done", "failed", "cancelled"].includes(String(task?.status || "").trim().toLowerCase());
+      return terminal ? "源码结果待详情核验" : "等待结果核验";
+    }
+
+    function sourceTrialPerformanceGate(trial) {
+      const artifacts = trial?.artifacts;
+      const present = !!artifacts
+        && typeof artifacts === "object"
+        && !Array.isArray(artifacts)
+        && Object.prototype.hasOwnProperty.call(artifacts, "performance_gate");
+      if (!present) return {present: false, valid: false, accepted: false, decision: "missing", reason: ""};
+      const gate = artifacts.performance_gate;
+      const isObject = !!gate && typeof gate === "object" && !Array.isArray(gate);
+      const decision = isObject && typeof gate.decision === "string" ? gate.decision.trim().toLowerCase() : "";
+      const reason = isObject && typeof gate.reason === "string" ? gate.reason.trim() : "";
+      const codegenStatus = isObject && typeof gate.codegen_status === "string" ? gate.codegen_status.trim().toLowerCase() : "";
+      const baselineRecheckKnown = isObject && typeof gate.baseline_recheck_passed === "boolean";
+      const valid = isObject
+        && gate.schema_version === PERFORMANCE_GATE_SCHEMA_VERSION
+        && PERFORMANCE_GATE_DECISIONS.has(decision)
+        && !!reason
+        && baselineRecheckKnown;
+      return {
+        present: true,
+        valid,
+        accepted: valid && decision === "accepted" && gate.baseline_recheck_passed === true,
+        decision: valid ? decision : "invalid",
+        reason,
+        codegenStatus: PERFORMANCE_GATE_CODEGEN_STATUSES.has(codegenStatus) ? codegenStatus : "unknown",
+        baselineRecheckPassed: baselineRecheckKnown ? gate.baseline_recheck_passed : null,
+        gate,
+      };
+    }
+
     function acceptedSourceTrial(sourceOptimization) {
       const acceptedId = typeof sourceOptimization?.accepted_trial_id === "string" ? sourceOptimization.accepted_trial_id.trim() : "";
       if (!acceptedId) return null;
@@ -3366,6 +3423,8 @@
     function acceptedSourceTrialVerified(sourceOptimization, results, task) {
       const trial = acceptedSourceTrial(sourceOptimization);
       if (sourceBestVerificationFailed(results, task) || sourceOptimization?.schema_version !== "v2.source_optimization.v1" || sourceOptimizationStatus(sourceOptimization) !== "completed" || !trial || sourceTrialStatus(trial) !== "accepted" || trial.correctness?.passed !== true) return false;
+      const performanceGate = sourceTrialPerformanceGate(trial);
+      if (performanceGate.present && !performanceGate.accepted) return false;
       const baselineHash = sourceSha256(sourceOptimization?.baseline_source_sha256);
       const bestHash = sourceSha256(sourceOptimization?.best_source_sha256);
       const beforeHash = sourceSha256(trial.source_before_sha256);
@@ -3480,13 +3539,13 @@
       const sourceBestInvalid = sourceMode && sourceBestVerificationFailed(state.taskResults, task);
       const acceptedTrial = acceptedSourceTrial(sourceOptimization);
       const acceptedBestLatency = acceptedVerified ? sourceMeasurementMedian(acceptedTrial?.candidate_latency_ms) : null;
-      const retainedBaseline = sourceMode && sourceOptimizationStatus(sourceOptimization) === "completed" && !sourceOptimization?.accepted_trial_id;
+      const retainedBaseline = sourceMode && sourceOptimizationStatus(sourceOptimization) === "completed" && !acceptedVerified;
       const sourceCurrentBest = sourceBestInvalid
         ? "验证失败"
         : acceptedVerified
           ? display(acceptedBestLatency)
           : retainedBaseline
-            ? display(pick(task.best_latency, task.baseline_latency, baseline?.latency, baseline?.objective_value))
+            ? display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value))
             : "未确认";
       const attemptedCount = sourceMode ? pick(task.total_trials, sourceOptimizationTrials(sourceOptimization).length || null) : pick(task.total_trials, summary.length || null);
       const statusPresentation = taskStatusPresentation(task.status, task, state.taskResults);
@@ -3789,6 +3848,26 @@
       return `<span class="badge ${kind}">${escapeHtml(labels[status])}</span>`;
     }
 
+    function performanceGateBadge(performanceGate) {
+      const kind = performanceGate.accepted ? "ok" : performanceGate.valid || !performanceGate.present ? "warn" : "bad";
+      return `<span class="badge ${kind}">${escapeHtml(performanceGateLabel(performanceGate))}</span>`;
+    }
+
+    function performanceGateLabel(performanceGate) {
+      if (performanceGate.valid && performanceGate.decision === "accepted" && !performanceGate.accepted) return "基线复测未通过";
+      return PERFORMANCE_GATE_LABELS[performanceGate.decision] || PERFORMANCE_GATE_LABELS.invalid;
+    }
+
+    function performanceGateCodegenLabel(status) {
+      return {
+        changed: "生成代码已变化",
+        unchanged: "生成代码未变化",
+        unavailable: "生成代码不可用",
+        inconsistent: "生成代码不一致",
+        unknown: "未返回",
+      }[status] || "未返回";
+    }
+
     function sourceCorrectnessBadge(correctness) {
       if (correctness?.passed === true) return `<span class="badge ok">通过</span>`;
       if (correctness?.passed === false) return `<span class="badge bad">未通过</span>`;
@@ -3851,6 +3930,13 @@
       const correctness = trial.correctness && typeof trial.correctness === "object" ? trial.correctness : null;
       const improvement = numeric(trial.improvement_percent);
       const title = pick(trial.optimization_name, trial.hypothesis, trialId);
+      const performanceGate = sourceTrialPerformanceGate(trial);
+      const measurementAccepted = !!selected && acceptedVerified;
+      const gateMedianImprovement = numeric(performanceGate.gate?.median_improvement_percent);
+      const gateConservativeImprovement = numeric(performanceGate.gate?.conservative_improvement_percent);
+      const gateUncertainty = Array.isArray(performanceGate.gate?.uncertainty)
+        ? performanceGate.gate.uncertainty.length ? performanceGate.gate.uncertainty.map(display).join("；") : "无"
+        : "未返回";
       const advanced = {
         source_before_sha256: trial.source_before_sha256 ?? null,
         source_after_sha256: trial.source_after_sha256 ?? null,
@@ -3859,6 +3945,7 @@
         logs: trial.logs ?? null,
         stdout_path: trial.stdout_path ?? null,
         stderr_path: trial.stderr_path ?? null,
+        performance_gate: performanceGate.present ? performanceGate.gate ?? null : null,
       };
       return `<details class="source-trial" ${selected ? "open" : ""}>
         <summary><span>${escapeHtml(display(title))}</span><span>${sourceTrialStatusBadge(trial, selected, acceptedVerified)}</span></summary>
@@ -3871,7 +3958,13 @@
             <div>correctness 原因</div><div>${escapeHtml(correctness ? display(correctness.reason) : "未返回")}</div>
             <div>baseline 测量</div><div>${escapeHtml(sourceMeasurementSummary(trial.baseline_latency_ms))}</div>
             <div>candidate 测量</div><div>${escapeHtml(sourceMeasurementSummary(trial.candidate_latency_ms))}</div>
-            <div>性能提升</div><div>${improvement === null ? "未采集" : `${escapeHtml(formatNumber(improvement))}%`}</div>
+            <div>性能提升</div><div>${improvement === null ? "未采集" : `${escapeHtml(formatNumber(improvement))}%`}${performanceGate.present && !measurementAccepted ? ` <span class="badge warn">未采纳</span>` : ""}</div>
+            <div>性能门禁</div><div>${performanceGateBadge(performanceGate)}</div>
+            <div>门禁原因</div><div>${escapeHtml(performanceGate.present ? performanceGate.valid ? performanceGate.reason : performanceGate.reason || "performance_gate 格式无效，无法采纳。" : "旧结果未包含 performance_gate，继续使用原有完整性校验。")}</div>
+            ${performanceGate.present ? `<div>生成代码状态</div><div>${escapeHtml(performanceGateCodegenLabel(performanceGate.codegenStatus))}</div>
+            <div>baseline 复测</div><div>${performanceGate.baselineRecheckPassed === true ? `<span class="badge ok">通过</span>` : performanceGate.baselineRecheckPassed === false ? `<span class="badge bad">未通过</span>` : `<span class="badge warn">未返回</span>`}</div>
+            <div>门禁测量收益</div><div>median: ${gateMedianImprovement === null ? "未采集" : `${escapeHtml(formatNumber(gateMedianImprovement))}%`}；conservative: ${gateConservativeImprovement === null ? "未采集" : `${escapeHtml(formatNumber(gateConservativeImprovement))}%`}${!measurementAccepted ? ` <span class="badge warn">未采纳</span>` : ""}</div>
+            <div>测量不确定性</div><div>${escapeHtml(gateUncertainty)}</div>` : ""}
             <div>接受 / 回滚决定</div><div>${escapeHtml(display(trial.decision_reason))} ${sourceRollbackBadge(trial.rollback_verified)}</div>
           </div>
           <h3>证据引用</h3>
@@ -3895,15 +3988,20 @@
       const acceptedVerified = acceptedSourceTrialVerified(sourceOptimization, results, task);
       const acceptedTrial = acceptedSourceTrial(sourceOptimization);
       const acceptedByBackend = !!acceptedTrial && sourceTrialStatus(acceptedTrial) === "accepted" && acceptedTrial.correctness?.passed === true;
+      const acceptedPerformanceGate = sourceTrialPerformanceGate(acceptedTrial);
       const hashVerification = sourceHashVerification(sourceOptimization);
       const sourceBestInvalid = sourceBestVerificationFailed(results, task);
       const evidenceMap = evidenceRecordMap(evidenceSummaryFromResults(results));
       const schemaValid = sourceOptimization.schema_version === "v2.source_optimization.v1";
       let decision;
       if (acceptedVerified) {
-        decision = `<div class="alert ok">已接受源码修改：${escapeHtml(acceptedId)}。best 仅来自后端明确接受、correctness 通过、测量数组有效且源码 hash 一致的 trial。</div>`;
+        decision = `<div class="alert ok">已接受源码修改：${escapeHtml(acceptedId)}。best 仅来自后端明确接受、performance gate 通过、correctness 通过、测量数组有效且源码 hash 一致的 trial。</div>`;
       } else if (sourceBestInvalid) {
         decision = sourceBestVerificationNotice(results, task);
+      } else if (acceptedId && acceptedTrial && acceptedPerformanceGate.present && !acceptedPerformanceGate.valid) {
+        decision = `<div class="alert bad">accepted_trial_id 与无效的 performance_gate 冲突；前端不会采纳该候选，也不会开放 best kernel 下载。${acceptedPerformanceGate.reason ? `原因：${escapeHtml(acceptedPerformanceGate.reason)}` : ""}</div>`;
+      } else if (acceptedId && acceptedTrial && acceptedPerformanceGate.present && !acceptedPerformanceGate.accepted) {
+        decision = `<div class="alert warn">accepted_trial_id 与 performance_gate 决定冲突：${escapeHtml(performanceGateLabel(acceptedPerformanceGate))}。即使候选 improvement_percent 为正，前端仍保留 baseline，不采纳该候选。${acceptedPerformanceGate.reason ? `原因：${escapeHtml(acceptedPerformanceGate.reason)}` : ""}</div>`;
       } else if (acceptedByBackend && status !== "completed") {
         decision = `<div class="alert warn">源码优化整体状态仍为 ${escapeHtml(status)}；当前 accepted trial 属于 partial 结果，前端不会提前标记为已验证优化。</div>`;
       } else if (acceptedByBackend && hashVerification === "mismatch") {
