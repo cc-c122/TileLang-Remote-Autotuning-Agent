@@ -3435,7 +3435,8 @@
     }
 
     function taskListSourceResult(task) {
-      if (task?.source_best_verified === false) return "当前 best 验证失败";
+      const terminal = ["completed", "success", "done", "failed", "cancelled"].includes(String(task?.status || "").trim().toLowerCase());
+      if (task?.source_best_verified === false) return terminal ? "当前 best 验证失败" : "等待结果核验";
       const acceptedId = typeof task?.source_accepted_trial_id === "string" ? task.source_accepted_trial_id.trim() : "";
       if (task?.source_best_verified === true && acceptedId) {
         return task.improvement_percent === null || task.improvement_percent === undefined
@@ -3444,7 +3445,6 @@
       }
       const decision = typeof task?.source_performance_decision === "string" ? task.source_performance_decision.trim().toLowerCase() : "";
       if (PERFORMANCE_GATE_DECISIONS.has(decision) && decision !== "accepted") return escapeHtml(PERFORMANCE_GATE_LABELS[decision]);
-      const terminal = ["completed", "success", "done", "failed", "cancelled"].includes(String(task?.status || "").trim().toLowerCase());
       return terminal ? "源码结果待详情核验" : "等待结果核验";
     }
 
@@ -3461,19 +3461,35 @@
       const reason = isObject && typeof gate.reason === "string" ? gate.reason.trim() : "";
       const codegenStatus = isObject && typeof gate.codegen_status === "string" ? gate.codegen_status.trim().toLowerCase() : "";
       const baselineRecheckKnown = isObject && typeof gate.baseline_recheck_passed === "boolean";
+      const baselineHashPresent = isObject && Object.prototype.hasOwnProperty.call(gate, "baseline_codegen_hash");
+      const candidateHashPresent = isObject && Object.prototype.hasOwnProperty.call(gate, "candidate_codegen_hash");
+      const baselineCodegenHash = sourceSha256(gate?.baseline_codegen_hash);
+      const candidateCodegenHash = sourceSha256(gate?.candidate_codegen_hash);
+      const baselineHashValid = baselineHashPresent && (gate.baseline_codegen_hash === null || !!baselineCodegenHash);
+      const candidateHashValid = candidateHashPresent && (gate.candidate_codegen_hash === null || !!candidateCodegenHash);
       const valid = isObject
         && gate.schema_version === PERFORMANCE_GATE_SCHEMA_VERSION
         && PERFORMANCE_GATE_DECISIONS.has(decision)
         && !!reason
-        && baselineRecheckKnown;
+        && baselineRecheckKnown
+        && PERFORMANCE_GATE_CODEGEN_STATUSES.has(codegenStatus)
+        && baselineHashValid
+        && candidateHashValid;
+      let acceptanceIssue = "";
+      if (valid && decision === "accepted") {
+        if (gate.baseline_recheck_passed !== true) acceptanceIssue = "基线复测未通过";
+        else if (codegenStatus !== "changed") acceptanceIssue = performanceGateCodegenLabel(codegenStatus);
+        else if (baselineCodegenHash && candidateCodegenHash && baselineCodegenHash === candidateCodegenHash) acceptanceIssue = "生成代码 hash 相同";
+      }
       return {
         present: true,
         valid,
-        accepted: valid && decision === "accepted" && gate.baseline_recheck_passed === true,
+        accepted: valid && decision === "accepted" && !acceptanceIssue,
         decision: valid ? decision : "invalid",
         reason,
         codegenStatus: PERFORMANCE_GATE_CODEGEN_STATUSES.has(codegenStatus) ? codegenStatus : "unknown",
         baselineRecheckPassed: baselineRecheckKnown ? gate.baseline_recheck_passed : null,
+        acceptanceIssue,
         gate,
       };
     }
@@ -4033,7 +4049,7 @@
     }
 
     function performanceGateLabel(performanceGate) {
-      if (performanceGate.valid && performanceGate.decision === "accepted" && !performanceGate.accepted) return "基线复测未通过";
+      if (performanceGate.valid && performanceGate.decision === "accepted" && performanceGate.acceptanceIssue) return performanceGate.acceptanceIssue;
       return PERFORMANCE_GATE_LABELS[performanceGate.decision] || PERFORMANCE_GATE_LABELS.invalid;
     }
 
@@ -4174,7 +4190,9 @@
       const schemaValid = sourceOptimization.schema_version === "v2.source_optimization.v1";
       let decision;
       if (acceptedVerified) {
-        decision = `<div class="alert ok">已接受源码修改：${escapeHtml(acceptedId)}。best 仅来自后端明确接受、performance gate 通过、correctness 通过、测量数组有效且源码 hash 一致的 trial。</div>`;
+        decision = acceptedPerformanceGate.present
+          ? `<div class="alert ok">已接受源码修改：${escapeHtml(acceptedId)}。best 仅来自后端明确接受、performance gate 通过、correctness 通过、测量数组有效且源码 hash 一致的 trial。</div>`
+          : `<div class="alert ok">已接受源码修改：${escapeHtml(acceptedId)}。旧结果未提供 performance_gate；当前仅按 accepted_trial_id、correctness、测量数组与源码 hash 的原有完整性校验兼容展示，不代表已完成 codegen 或计时漂移校验。</div>`;
       } else if (sourceBestInvalid) {
         decision = sourceBestVerificationNotice(results, task);
       } else if (acceptedId && acceptedTrial && acceptedPerformanceGate.present && !acceptedPerformanceGate.valid) {
