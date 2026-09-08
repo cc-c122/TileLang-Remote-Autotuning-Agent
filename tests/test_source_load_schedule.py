@@ -78,6 +78,9 @@ class SourceLoadScheduleTests(unittest.TestCase):
             "custom_compute(acc)",
             "Output[0, 0] = acc[0, 0]",
             "T.copy(acc, Output)",
+            "T.copy(src=acc, dst=Output)",
+            "T.fill(buffer=Output, value=0)",
+            "T.gemm(A=A_shared, B=B_shared, C=Output)",
             "T.barrier()",
             "T.async_wait()",
             "value = unknown_call()[0]",
@@ -145,6 +148,24 @@ class SourceLoadScheduleTests(unittest.TestCase):
         changed = source.replace("T.copy(B[offset, :], B_shared)", "T.copy(B[k, :], B_shared)")
         with self.assertRaisesRegex(ValueError, "stale"):
             rewrite_source_target(changed, target)
+        comment_changed = source.replace(
+            "T.copy(B[offset, :], B_shared)",
+            "T.copy(B[offset, :], B_shared)  # changed after analysis",
+        )
+        with self.assertRaisesRegex(ValueError, "stale"):
+            rewrite_source_target(comment_changed, target)
+
+    def test_semicolon_compound_source_lines_are_rejected(self) -> None:
+        suffix = _kernel().replace(
+            "T.copy(B[offset, :], B_shared)",
+            "T.copy(B[offset, :], B_shared); T.copy(B_shared, Output)",
+        )
+        self.assertEqual(_prefetch_targets(suffix), [])
+        prefix = _kernel().replace(
+            "T.copy(B[offset, :], B_shared)",
+            "T.clear(acc); T.copy(B[offset, :], B_shared)",
+        )
+        self.assertEqual(_prefetch_targets(prefix), [])
 
     def test_planner_only_accepts_each_targets_authorized_template(self) -> None:
         source = _kernel()

@@ -94,6 +94,26 @@ def _source_text(source: str, node: ast.AST) -> str:
     return ast.get_source_segment(source, node) or ast.unparse(node)
 
 
+def _line_bytes(source: str, line_number: int) -> bytes:
+    return source.splitlines()[line_number - 1].encode("utf-8")
+
+
+def _starts_source_line(source: str, node: ast.stmt) -> bool:
+    return not _line_bytes(source, node.lineno)[: node.col_offset].strip()
+
+
+def _is_isolated_statement(source: str, node: ast.stmt) -> bool:
+    if node.end_lineno is None or node.end_col_offset is None or not _starts_source_line(source, node):
+        return False
+    suffix = _line_bytes(source, node.end_lineno)[node.end_col_offset :].lstrip()
+    return not suffix or suffix.startswith(b"#")
+
+
+def _statement_line_block(source: str, node: ast.stmt) -> str:
+    lines = source.splitlines(keepends=True)
+    return "".join(lines[node.lineno - 1 : node.end_lineno or node.lineno])
+
+
 def _dsl_aliases(tree: ast.Module) -> set[str]:
     aliases: set[str] = set()
     for statement in tree.body:
@@ -343,6 +363,10 @@ def _dsl_effect_call(
     else:
         effects.unknown_call = True
         return
+    required_arguments = max((*read_positions, *write_positions), default=-1) + 1
+    if len(call.args) < required_arguments:
+        effects.unknown_call = True
+        return
     for index in read_positions:
         if index < len(call.args):
             _read_expression(call.args[index], effects, dsl_alias)
@@ -455,7 +479,7 @@ def _targets_in_list(
     targets: list[SharedLoadScheduleTarget] = []
     for candidate_index, statement in enumerate(statements):
         parts = _copy_parts(statement, global_buffers, shared_buffers, dsl_alias)
-        if parts is None:
+        if parts is None or not _is_isolated_statement(source, statement):
             continue
         source_node, destination_node, source_root, destination_root = parts
         prior_index = None
@@ -498,9 +522,9 @@ def _targets_in_list(
         ):
             continue
         insert_before = statements[insertion_index]
-        if statement.col_offset != insert_before.col_offset:
+        if statement.col_offset != insert_before.col_offset or not _starts_source_line(source, insert_before):
             continue
-        statement_text = _source_text(source, statement)
+        statement_block = _statement_line_block(source, statement)
         source_expr = _source_text(source, source_node)
         destination_expr = _source_text(source, destination_node)
         identity = f"{function_name}:{statement.lineno}:{insert_before.lineno}:{source_expr}:{destination_expr}"
@@ -515,7 +539,7 @@ def _targets_in_list(
                 destination_expr=destination_expr,
                 extent_expr="",
                 dsl_alias=dsl_alias,
-                original_statement_sha256=hashlib.sha256(statement_text.encode("utf-8")).hexdigest(),
+                original_statement_sha256=hashlib.sha256(statement_block.encode("utf-8")).hexdigest(),
             )
         )
     return targets
@@ -585,7 +609,7 @@ def rewrite_prefetch_shared_load(source: str, target: SharedLoadScheduleTarget) 
         ),
         None,
     )
-    if current is None or current.original_statement_sha256 != target.original_statement_sha256:
+    if current is None or current != target:
         raise ValueError("prefetch target is stale or no longer statically authorized")
     lines = source.splitlines(keepends=True)
     moved = lines[target.start_line - 1 : target.end_line]
