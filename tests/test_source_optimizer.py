@@ -18,8 +18,9 @@ from fastapi.testclient import TestClient
 from kernel_opt_agent.config_model import AppConfig
 from kernel_opt_agent.runner.local_runner import CommandResult
 from kernel_opt_agent.source_optimizer.analyzer import analyze_source, rewrite_copy_loop
-from kernel_opt_agent.source_optimizer.engine import run_source_optimization
+from kernel_opt_agent.source_optimizer.engine import inspect_source_optimization, run_source_optimization
 from kernel_opt_agent.source_optimizer.planner import choose_plan
+from kernel_opt_agent.source_optimizer.performance import assess_performance
 from kernel_opt_agent.server.app import _accepted_source_trial, _source_best_verification, app
 
 
@@ -435,6 +436,46 @@ class SourceEngineTests(unittest.TestCase):
         self.assertEqual(len(recheck["samples_ms"]), 3)
         self.assertTrue(trial.artifacts["performance_gate"]["baseline_recheck_passed"])
 
+    def test_rewrite_failure_is_recorded_without_losing_verified_baseline(self) -> None:
+        with patch("kernel_opt_agent.source_optimizer.engine.rewrite_source_target", side_effect=ValueError("stale target")):
+            _, results, result, original_hash = self._run("accept")
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.trials[0].status, "validation_failed")
+        self.assertIn("stale target", result.trials[0].decision_reason)
+        self.assertFalse(result.trials[0].artifacts["source_was_modified"])
+        self.assertEqual(result.best_source_sha256, original_hash)
+        self.assertIn("stale target", (results / "failed_cases.jsonl").read_text(encoding="utf-8"))
+
+    def test_prefetch_target_uses_its_own_rewriter_and_validation_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sample = root / "sample"
+            sample.mkdir()
+            entry = sample / "kernel.py"
+            source = PAGED_SOURCE.read_text(encoding="utf-8")
+            entry.write_text(source, encoding="utf-8")
+            (sample / "correctness.py").write_text("protected", encoding="utf-8")
+
+            class SchedulingFixtureRunner(FakeRunner):
+                def run(self, name, command):
+                    if name.startswith("benchmark"):
+                        text = (self.workspace / "kernel.py").read_text(encoding="utf-8")
+                        moved = text.index("T.copy(V[physical_block_idx") < text.index("T.clear(acc_s)")
+                        return self._result(name, command, stdout=f"BENCHMARK_RESULT latency_ms={5 if moved else 10}\n")
+                    return super().run(name, command)
+
+            config = _config(sample)
+            inspected_entry, analysis = inspect_source_optimization(config)
+            with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=lambda config, directory: SchedulingFixtureRunner(directory)):
+                result = run_source_optimization(config, root / "workspace", root / "results", analysis, inspected_entry)
+            trial = result.trials[0]
+            self.assertEqual(trial.optimization_name, "prefetch_shared_load")
+            self.assertEqual(trial.status, "accepted")
+            self.assertIn("low-confidence", trial.hypothesis)
+            self.assertTrue(trial.correctness.passed)
+            self.assertTrue(trial.artifacts["performance_gate"]["baseline_recheck_passed"])
+            self.assertEqual(entry.read_text(encoding="utf-8"), source)
+
     def test_protected_file_change_rejects_and_rolls_back(self) -> None:
         _, _, result, _ = self._run("protected_changed")
         self.assertEqual(result.trials[0].status, "validation_failed")
@@ -782,6 +823,16 @@ class SourceOptimizationApiTests(unittest.TestCase):
                 self.assertIsNone(_accepted_source_trial(results, invalid))
             invalid["trials"][0]["artifacts"]["performance_gate"].update({"decision": "accepted", "baseline_recheck_passed": False})
             self.assertIsNone(_accepted_source_trial(results, invalid))
+            invalid["trials"][0]["artifacts"]["performance_gate"] = None
+            self.assertIsNone(_accepted_source_trial(results, invalid))
+            valid = json.loads(json.dumps(source_result))
+            valid["trials"][0].update({
+                "baseline_latency_ms": [10] * 3, "candidate_latency_ms": [5] * 3,
+                "artifacts": {"performance_gate": assess_performance([10] * 3, [5] * 3, 1, baseline_recheck=[10] * 3).to_dict()},
+            })
+            self.assertIsNotNone(_accepted_source_trial(results, valid))
+            valid["trials"][0]["candidate_latency_ms"] = [6] * 3
+            self.assertIsNone(_accepted_source_trial(results, valid))
             baseline_result = {
                 "status": "completed",
                 "baseline_verified": True,

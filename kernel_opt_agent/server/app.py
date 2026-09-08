@@ -17,6 +17,7 @@ from kernel_opt_agent.hardware.hardware_info import CANONICAL_FIELDS, HardwareIn
 from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader, normalize_profile_name
 from kernel_opt_agent.main import WORKSPACE_ROOT
 from kernel_opt_agent.source_optimizer import read_source_result
+from kernel_opt_agent.source_optimizer.performance import saved_gate_is_accepted
 
 from .job_worker import JobWorker
 from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest
@@ -126,15 +127,13 @@ def _source_best_verification(
         return None, False, "accepted source trial is missing or has an invalid status"
     if (accepted.get("correctness") or {}).get("passed") is not True:
         return None, False, "accepted source trial did not pass correctness"
-    gate = (accepted.get("artifacts") or {}).get("performance_gate")
-    if gate is not None and (
-        not isinstance(gate, dict)
-        or gate.get("schema_version") != "v2.performance_gate.v1"
-        or gate.get("decision") != "accepted"
-        or gate.get("baseline_recheck_passed") is not True
-        or gate.get("codegen_status") in {"unchanged", "inconsistent"}
-    ):
-        return None, False, "accepted source trial did not pass its performance evidence gate"
+    artifacts = accepted.get("artifacts") or {}
+    if "performance_gate" in artifacts:
+        gate = artifacts["performance_gate"]
+        if not saved_gate_is_accepted(gate):
+            return None, False, "accepted source trial did not pass its performance evidence gate"
+        if gate["baseline_samples_ms"] != accepted.get("baseline_latency_ms") or gate["candidate_samples_ms"] != accepted.get("candidate_latency_ms"):
+            return None, False, "performance evidence gate does not match the accepted trial measurements"
     accepted_hash = accepted.get("source_after_sha256")
     if not accepted_hash or accepted_hash != best_hash:
         return None, False, "accepted source trial hash does not match the best source hash"

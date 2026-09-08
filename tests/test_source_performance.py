@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from kernel_opt_agent.source_optimizer.performance import CodegenEvidence, assess_performance, parse_codegen_evidence
+from kernel_opt_agent.source_optimizer.performance import CodegenEvidence, assess_performance, parse_codegen_evidence, saved_gate_is_accepted
 
 
 class PerformanceGateTests(unittest.TestCase):
@@ -60,6 +60,19 @@ class PerformanceGateTests(unittest.TestCase):
             self.assertEqual(parse_codegen_evidence(text).status, "inconsistent")
             gate = assess_performance([10] * 3, [5] * 3, 1, parse_codegen_evidence(text))
             self.assertEqual(gate.decision, "inconclusive")
+
+    def test_saved_gate_is_recomputed_before_download_acceptance(self):
+        gate = assess_performance([10] * 3, [5] * 3, 1, baseline_recheck=[10] * 3).to_dict()
+        self.assertTrue(saved_gate_is_accepted(gate))
+        self.assertFalse(saved_gate_is_accepted({**gate, "candidate_samples_ms": [11] * 3}))
+        self.assertFalse(saved_gate_is_accepted({**gate, "baseline_codegen_hash": "a" * 64, "candidate_codegen_hash": "a" * 64}))
+        self.assertFalse(saved_gate_is_accepted({**gate, "baseline_recheck_samples_ms": []}))
+        self.assertFalse(saved_gate_is_accepted({**gate, "threshold_percent": None}))
+        self.assertFalse(saved_gate_is_accepted({**gate, "threshold_percent": True}))
+        self.assertFalse(saved_gate_is_accepted({**gate, "codegen_status": "changed"}))
+        changed = {**gate, "codegen_status": "changed", "baseline_codegen_hash": "a" * 64, "candidate_codegen_hash": "b" * 64}
+        self.assertTrue(saved_gate_is_accepted(changed))
+        self.assertFalse(saved_gate_is_accepted({**changed, "codegen_status": "unavailable"}))
 
 
 if __name__ == "__main__":

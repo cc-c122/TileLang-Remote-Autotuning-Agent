@@ -98,7 +98,7 @@ def assess_performance(
     groups = [baseline, candidate]
     if baseline_recheck is not None:
         groups.append(baseline_recheck)
-    if not math.isfinite(threshold_percent) or threshold_percent < 0:
+    if isinstance(threshold_percent, bool) or not isinstance(threshold_percent, (float, int)) or not math.isfinite(threshold_percent) or threshold_percent < 0:
         gate.reason = "performance threshold is invalid"
         return gate
     if any(len(samples) < MINIMUM_REPEATS for samples in groups):
@@ -131,3 +131,29 @@ def assess_performance(
         else "preliminary timing screen passed; a baseline recheck is still required before publication"
     )
     return gate
+
+
+def saved_gate_is_accepted(gate: object) -> bool:
+    if not isinstance(gate, dict) or gate.get("schema_version") != "v2.performance_gate.v1":
+        return False
+    if gate.get("decision") != "accepted" or gate.get("baseline_recheck_passed") is not True:
+        return False
+    if not isinstance(gate.get("codegen_status"), str) or gate["codegen_status"] not in {"changed", "unavailable"}:
+        return False
+    try:
+        digests = []
+        for key in ("baseline_codegen_hash", "candidate_codegen_hash"):
+            value = gate.get(key)
+            if value is None:
+                digests.append(CodegenEvidence())
+            elif isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value):
+                digests.append(CodegenEvidence(value, "available"))
+            else:
+                return False
+        arrays = [gate[key] for key in ("baseline_samples_ms", "candidate_samples_ms", "baseline_recheck_samples_ms")]
+        if not all(isinstance(value, list) for value in arrays):
+            return False
+        reassessment = assess_performance(arrays[0], arrays[1], gate["threshold_percent"], *digests, arrays[2])
+        return reassessment.decision == "accepted" and reassessment.codegen_status == gate["codegen_status"]
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False

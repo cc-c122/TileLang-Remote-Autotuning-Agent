@@ -22,7 +22,7 @@ from kernel_opt_agent.profiler.mcprofiler import McProfilerCollectionRequest, co
 from kernel_opt_agent.redaction import configured_secret_values, redact_data, redact_text
 from kernel_opt_agent.sample_security import copy_safe_sample_contents, normalize_sample_path
 
-from .analyzer import AnalysisResult, CopyLoopTarget, analyze_source, rewrite_copy_loop, sha256_bytes, sha256_file
+from .analyzer import AnalysisResult, SourceOptimizationTarget, analyze_source, rewrite_source_target, sha256_bytes, sha256_file
 from .models import SourceOptimizationResult, SourceOptimizationTrial, SourceTrialCorrectness
 from .performance import CodegenEvidence, assess_performance, parse_codegen_evidence
 from .planner import SourcePlan, choose_plan
@@ -69,7 +69,7 @@ def inspect_source_optimization(config: AppConfig) -> tuple[Path | None, Analysi
     entry = sample.joinpath(*PurePosixPath(entry_name).parts) if sample.is_dir() else sample
     if not entry.is_file():
         return None, AnalysisResult((), "kernel entry file does not exist")
-    return entry, analyze_source(entry.read_text(encoding="utf-8"))
+    return entry, analyze_source(entry.read_bytes().decode("utf-8"))
 
 
 def _tree_hashes(root: Path) -> dict[str, str]:
@@ -503,7 +503,7 @@ def _append_report(results_dir: Path, result: SourceOptimizationResult) -> None:
     report_path.write_text(prior.rstrip() + "\n" + "\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _plans_for_targets(targets: tuple[CopyLoopTarget, ...], evidence_rows: list[dict[str, Any]], max_candidates: int, planning_client: Any | None) -> list[tuple[SourcePlan, str]]:
+def _plans_for_targets(targets: tuple[SourceOptimizationTarget, ...], evidence_rows: list[dict[str, Any]], max_candidates: int, planning_client: Any | None) -> list[tuple[SourcePlan, str]]:
     first, source = choose_plan(targets, evidence_rows, planning_client)
     plans = [(first, source)]
     selected = {first.target_id}
@@ -512,7 +512,7 @@ def _plans_for_targets(targets: tuple[CopyLoopTarget, ...], evidence_rows: list[
         if len(plans) >= max_candidates:
             break
         if target.target_id not in selected:
-            plans.append((SourcePlan(target_id=target.target_id, hypothesis="replace a verified elementwise copy loop with the TileLang bulk copy primitive", evidence_ids=evidence_ids), "rule_based"))
+            plans.append((SourcePlan(target_id=target.target_id, template=target.template, hypothesis=target.hypothesis, evidence_ids=evidence_ids), "rule_based"))
             selected.add(target.target_id)
     return plans
 
@@ -640,7 +640,25 @@ def run_source_optimization(
         copy_safe_sample_contents(candidate_dir, snapshot_dir)
         baseline_candidate_manifest = _tree_hashes(snapshot_dir)
         candidate_entry = candidate_dir.joinpath(*PurePosixPath(entry_name).parts)
-        candidate_source = rewrite_copy_loop(original_source, target)
+        try:
+            candidate_source = rewrite_source_target(original_source, target)
+        except Exception as exc:
+            trial = SourceOptimizationTrial(
+                trial_id=trial_id, optimization_name=target.template,
+                target_file=config.kernel.entry_file, target_function=target.function_name,
+                hypothesis=redact_source_text(config, plan.hypothesis) or "",
+                evidence_ids=plan.evidence_ids, source_before_sha256=baseline_hash,
+                status="validation_failed",
+                decision_reason=redact_source_text(config, f"source rewrite rejected: {type(exc).__name__}: {exc}"),
+                baseline_latency_ms=list(baseline_outcome.samples), baseline_median_latency_ms=baseline_median,
+                artifacts={"validation_stage": "source_rewrite", "baseline_logs": baseline_artifacts,
+                           "rollback_snapshot": str(snapshot_dir), "source_was_modified": False},
+            )
+            result.trials.append(trial)
+            write_source_result(results_dir, result, config)
+            if event_callback:
+                event_callback("source_trial_completed", f"{trial_id}: validation_failed: {trial.decision_reason}")
+            continue
         candidate_bytes = candidate_source.encode("utf-8")
         candidate_hash = sha256_bytes(candidate_bytes)
         diff = "".join(difflib.unified_diff(original_source.splitlines(keepends=True), candidate_source.splitlines(keepends=True), fromfile=config.kernel.entry_file, tofile=config.kernel.entry_file))
@@ -655,7 +673,7 @@ def run_source_optimization(
         candidate_manifest[entry_name] = candidate_hash
         trial = SourceOptimizationTrial(
             trial_id=trial_id,
-            optimization_name="parallel_copy_to_t_copy",
+            optimization_name=target.template,
             target_file=config.kernel.entry_file,
             target_function=target.function_name,
             hypothesis=redact_source_text(config, plan.hypothesis) or "",
@@ -666,7 +684,7 @@ def run_source_optimization(
             diff=diff,
             baseline_latency_ms=list(baseline_outcome.samples),
             baseline_median_latency_ms=baseline_median,
-            artifacts={"planner": {"source": plan_source, "attempts": plan.planning_attempts, "fallback_reason": redact_source_text(config, plan.fallback_reason)}, "baseline_logs": baseline_artifacts, "source_before": str(source_before_path), "source_after": str(source_after_path), "diff": str(diff_path), "rollback_snapshot": str(snapshot_dir)},
+            artifacts={"planner": {"source": plan_source, "attempts": plan.planning_attempts, "fallback_reason": redact_source_text(config, plan.fallback_reason), "confidence": target.confidence}, "baseline_logs": baseline_artifacts, "source_before": str(source_before_path), "source_after": str(source_after_path), "diff": str(diff_path), "rollback_snapshot": str(snapshot_dir)},
         )
         result.trials.append(trial)
         write_source_result(results_dir, result, config)

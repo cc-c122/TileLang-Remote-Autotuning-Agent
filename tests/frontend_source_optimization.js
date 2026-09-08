@@ -300,7 +300,7 @@ async (page) => {
   check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Failed baseline recheck blocks the best artifact download");
 
   const acceptedGate = sourceResultWithGate("accepted").trials[1].artifacts.performance_gate;
-  for (const [codegenStatus, label] of [["unchanged", "生成代码未变化"], ["inconsistent", "生成代码不一致"], ["unavailable", "生成代码不可用"]]) {
+  for (const [codegenStatus, label] of [["unchanged", "生成代码未变化"], ["inconsistent", "生成代码不一致"], ["unavailable", "生成代码状态与 hash 证据不一致"]]) {
     text = await renderResult(sourceResultWithGate("accepted", `codegen is ${codegenStatus}`, {artifacts: {performance_gate: {...acceptedGate, codegen_status: codegenStatus}}}));
     check(text.includes(label) && text.includes("未采纳") && text.includes("未接受源码修改"), `Accepted decision with ${codegenStatus} codegen is rejected`);
     check(await page.locator("#downloadBestKernelBtn").isDisabled(), `${codegenStatus} codegen cannot enable download`);
@@ -309,6 +309,14 @@ async (page) => {
   text = await renderResult(sourceResultWithGate("accepted", "equal codegen hashes", {artifacts: {performance_gate: {...acceptedGate, candidate_codegen_hash: acceptedGate.baseline_codegen_hash}}}));
   check(text.includes("生成代码 hash 相同") && text.includes("未采纳") && text.includes("未接受源码修改"), "Equal valid codegen hashes contradict an accepted decision");
   check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Equal codegen hashes cannot enable download");
+
+  text = await renderResult(sourceResultWithGate("accepted", "benchmark-only evidence", {artifacts: {performance_gate: {...acceptedGate, codegen_status: "unavailable", baseline_codegen_hash: null, candidate_codegen_hash: null}}}));
+  check(text.includes("已接受源码修改：accepted-1") && text.includes("未取得生成代码对比"), "Benchmark-only acceptance explicitly discloses missing codegen evidence");
+  check(!(await page.locator("#downloadBestKernelBtn").isDisabled()), "Unavailable codegen does not contradict a verified benchmark-only backend decision");
+
+  text = await renderResult(sourceResultWithGate("accepted", "missing changed hash", {artifacts: {performance_gate: {...acceptedGate, candidate_codegen_hash: null}}}));
+  check(text.includes("生成代码变化缺少 hash 证据") && text.includes("未接受源码修改"), "Changed codegen requires both valid hashes");
+  check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Incomplete changed codegen cannot enable download");
 
   for (const decision of ["no_improvement", "inconclusive", "codegen_unchanged"]) {
     text = await renderResult(sourceResultWithGate(decision));

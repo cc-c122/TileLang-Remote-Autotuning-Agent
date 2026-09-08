@@ -3478,8 +3478,10 @@
       let acceptanceIssue = "";
       if (valid && decision === "accepted") {
         if (gate.baseline_recheck_passed !== true) acceptanceIssue = "基线复测未通过";
-        else if (codegenStatus !== "changed") acceptanceIssue = performanceGateCodegenLabel(codegenStatus);
+        else if (["unchanged", "inconsistent"].includes(codegenStatus)) acceptanceIssue = performanceGateCodegenLabel(codegenStatus);
         else if (baselineCodegenHash && candidateCodegenHash && baselineCodegenHash === candidateCodegenHash) acceptanceIssue = "生成代码 hash 相同";
+        else if (codegenStatus === "changed" && (!baselineCodegenHash || !candidateCodegenHash)) acceptanceIssue = "生成代码变化缺少 hash 证据";
+        else if (codegenStatus === "unavailable" && baselineCodegenHash && candidateCodegenHash) acceptanceIssue = "生成代码状态与 hash 证据不一致";
       }
       return {
         present: true,
@@ -4193,6 +4195,9 @@
         decision = acceptedPerformanceGate.present
           ? `<div class="alert ok">已接受源码修改：${escapeHtml(acceptedId)}。best 仅来自后端明确接受、performance gate 通过、correctness 通过、测量数组有效且源码 hash 一致的 trial。</div>`
           : `<div class="alert ok">已接受源码修改：${escapeHtml(acceptedId)}。旧结果未提供 performance_gate；当前仅按 accepted_trial_id、correctness、测量数组与源码 hash 的原有完整性校验兼容展示，不代表已完成 codegen 或计时漂移校验。</div>`;
+        if (acceptedPerformanceGate.present && acceptedPerformanceGate.codegenStatus === "unavailable") {
+          decision += `<div class="alert">未取得生成代码对比；收益结论仅来自 correctness 与 benchmark 复测，不代表已验证生成代码发生变化。</div>`;
+        }
       } else if (sourceBestInvalid) {
         decision = sourceBestVerificationNotice(results, task);
       } else if (acceptedId && acceptedTrial && acceptedPerformanceGate.present && !acceptedPerformanceGate.valid) {
