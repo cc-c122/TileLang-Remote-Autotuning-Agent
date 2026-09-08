@@ -105,7 +105,32 @@ def _dsl_aliases(tree: ast.Module) -> set[str]:
             for item in statement.names:
                 if item.name == "language":
                     aliases.add(item.asname or item.name)
-    return aliases
+    valid: set[str] = set()
+    for alias in aliases:
+        rebound = False
+        for statement in tree.body:
+            if isinstance(statement, ast.Import):
+                for item in statement.names:
+                    bound = item.asname or item.name.split(".")[0]
+                    if bound == alias and item.name not in {"tilelang.language", "mctilelang.language", "mcTileLang.language"}:
+                        rebound = True
+            elif isinstance(statement, ast.ImportFrom):
+                for item in statement.names:
+                    bound = item.asname or item.name
+                    if bound == alias and not (statement.module in _DSL_MODULES and item.name == "language"):
+                        rebound = True
+            elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                rebound = rebound or statement.name == alias
+            else:
+                rebound = rebound or any(
+                    isinstance(child, ast.Name)
+                    and isinstance(child.ctx, (ast.Store, ast.Del))
+                    and child.id == alias
+                    for child in ast.walk(statement)
+                )
+        if not rebound:
+            valid.add(alias)
+    return valid
 
 
 def _function_binds_name(node: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> bool:
@@ -173,13 +198,28 @@ def _has_buffer_aliasing(
     shared_buffers: set[str],
     dsl_alias: str,
 ) -> bool:
+    def contains_bare_buffer(value: ast.AST) -> bool:
+        if isinstance(value, ast.Name):
+            return value.id in buffers
+        if isinstance(value, ast.Subscript):
+            return any(isinstance(item, ast.Slice) for item in ast.walk(value.slice)) and _root_name(value) in buffers
+        if isinstance(value, ast.Attribute) and _root_name(value.value) in buffers:
+            return True
+        return any(contains_bare_buffer(child) for child in ast.iter_child_nodes(value))
+
     def is_alias_value(value: ast.AST) -> bool:
         if isinstance(value, ast.Name):
             return value.id in buffers
         if isinstance(value, ast.Subscript) and _root_name(value) in buffers:
             return any(isinstance(item, ast.Slice) for item in ast.walk(value.slice))
+        if isinstance(value, ast.Attribute) and _root_name(value.value) in buffers:
+            return True
         if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
             return any(is_alias_value(item) for item in value.elts)
+        if isinstance(value, ast.Dict):
+            return any(is_alias_value(item) for item in [*value.keys, *value.values] if item is not None)
+        if isinstance(value, ast.Call):
+            return any(contains_bare_buffer(item) for item in [*value.args, *(keyword.value for keyword in value.keywords)])
         return False
 
     shared_allocations: dict[str, int] = {name: 0 for name in shared_buffers}
@@ -198,10 +238,31 @@ def _has_buffer_aliasing(
                 shared_allocations[target.id] += 1
             else:
                 return True
+    known_buffer_calls = {
+        "clear",
+        "copy",
+        "fill",
+        "gemm",
+        "reduce_max",
+        "reduce_sum",
+    }
+    for child in ast.walk(node):
+        if isinstance(child, ast.Return) and child.value is not None and contains_bare_buffer(child.value):
+            return True
+        if not isinstance(child, ast.Call):
+            continue
+        name = _call_name(child.func)
+        if name and name[0] == dsl_alias and name[1] in known_buffer_calls:
+            continue
+        if any(contains_bare_buffer(item) for item in [*child.args, *(keyword.value for keyword in child.keywords)]):
+            return True
     return any(count != 1 for count in shared_allocations.values())
 
 
 def _read_expression(node: ast.AST, effects: _Effects, dsl_alias: str) -> None:
+    if isinstance(node, ast.NamedExpr):
+        effects.unsupported_control = True
+        return
     if isinstance(node, ast.Name):
         if isinstance(node.ctx, ast.Load) and node.id != dsl_alias:
             effects.reads.add(node.id)
@@ -210,6 +271,8 @@ def _read_expression(node: ast.AST, effects: _Effects, dsl_alias: str) -> None:
         root = _root_name(node)
         if root:
             effects.reads.add(root)
+        else:
+            _read_expression(node.value, effects, dsl_alias)
         _read_expression(node.slice, effects, dsl_alias)
         return
     if isinstance(node, ast.Call):
@@ -233,6 +296,8 @@ def _read_expression(node: ast.AST, effects: _Effects, dsl_alias: str) -> None:
 def _write_target(node: ast.AST, effects: _Effects, global_buffers: set[str], dsl_alias: str) -> None:
     if isinstance(node, ast.Name):
         effects.writes.add(node.id)
+        if node.id in global_buffers:
+            effects.global_writes.add(node.id)
         return
     if isinstance(node, ast.Subscript):
         root = _root_name(node)
@@ -339,7 +404,7 @@ def _copy_parts(
     source, destination = call.args[:2]
     source_root = _root_name(source)
     destination_root = _root_name(destination)
-    if source_root not in global_buffers or destination_root not in shared_buffers:
+    if source_root not in global_buffers or not isinstance(destination, ast.Name) or destination_root not in shared_buffers:
         return None
     return source, destination, source_root, destination_root
 
@@ -402,7 +467,7 @@ def _targets_in_list(
             continue
         source_effects = _Effects()
         _read_expression(source_node, source_effects, dsl_alias)
-        if source_effects.unknown_call or source_effects.synchronization:
+        if source_effects.unknown_call or source_effects.synchronization or source_effects.unsupported_control:
             continue
         dependencies = source_effects.reads - {source_root}
         insertion_index = prior_index + 1
@@ -461,17 +526,27 @@ def find_prefetch_shared_load_targets(source: str, tree: ast.Module | None = Non
     aliases = _dsl_aliases(tree)
     targets: list[SharedLoadScheduleTarget] = []
 
-    def visit_functions(statements: list[ast.stmt], stack: tuple[str, ...]) -> None:
+    def visit_functions(
+        statements: list[ast.stmt],
+        stack: tuple[str, ...],
+        inherited_shadows: frozenset[str],
+    ) -> None:
         for node in statements:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             function_stack = (*stack, node.name)
             dsl_alias = _is_prim_func(node, aliases)
+            local_shadows = frozenset(alias for alias in aliases if _function_binds_name(node, alias))
             nested_scope = any(
                 child is not node and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda))
                 for child in ast.walk(node)
             )
-            if dsl_alias is not None and not isinstance(node, ast.AsyncFunctionDef) and not nested_scope:
+            if (
+                dsl_alias is not None
+                and dsl_alias not in inherited_shadows
+                and not isinstance(node, ast.AsyncFunctionDef)
+                and not nested_scope
+            ):
                 global_buffers = _global_buffers(node, dsl_alias)
                 shared_buffers = _shared_buffers(node, dsl_alias)
                 if global_buffers and shared_buffers and not _has_buffer_aliasing(
@@ -488,9 +563,9 @@ def find_prefetch_shared_load_targets(source: str, tree: ast.Module | None = Non
                                 dsl_alias,
                             )
                         )
-            visit_functions(node.body, function_stack)
+            visit_functions(node.body, function_stack, inherited_shadows | local_shadows)
 
-    visit_functions(tree.body, ())
+    visit_functions(tree.body, (), frozenset())
     return tuple(sorted(targets, key=lambda item: (item.start_line, item.target_id)))
 
 

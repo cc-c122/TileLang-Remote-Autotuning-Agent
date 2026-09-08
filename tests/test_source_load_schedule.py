@@ -38,6 +38,7 @@ def main(
 
 
 def _prefetch_targets(source: str) -> list[SharedLoadScheduleTarget]:
+    ast.parse(source)
     return [
         target
         for target in analyze_source(source).targets
@@ -76,8 +77,11 @@ class SourceLoadScheduleTests(unittest.TestCase):
         for crossed in (
             "custom_compute(acc)",
             "Output[0, 0] = acc[0, 0]",
+            "T.copy(acc, Output)",
             "T.barrier()",
             "T.async_wait()",
+            "value = unknown_call()[0]",
+            "if (offset := 1):\n            T.clear(acc)",
         ):
             with self.subTest(crossed=crossed):
                 self.assertEqual(_prefetch_targets(_kernel(crossed)), [])
@@ -91,10 +95,34 @@ class SourceLoadScheduleTests(unittest.TestCase):
         self.assertEqual(_prefetch_targets(aliased), [])
         sliced_alias = _kernel().replace("    offset = 0", "    alias = B[:, :]\n    offset = 0")
         self.assertEqual(_prefetch_targets(sliced_alias), [])
+        view_alias = _kernel().replace("    offset = 0", "    alias = T.some_view(B_shared)\n    offset = 0")
+        self.assertEqual(_prefetch_targets(view_alias), [])
+        container_alias = _kernel().replace("    offset = 0", "    aliases = [B_shared]\n    offset = 0")
+        self.assertEqual(_prefetch_targets(container_alias), [])
         rebound = _kernel().replace("    offset = 0", "    B = A\n    offset = 0")
         self.assertEqual(_prefetch_targets(rebound), [])
         shadowed = _kernel().replace("    offset = 0", "    T = object()\n    offset = 0")
         self.assertEqual(_prefetch_targets(shadowed), [])
+        module_shadowed = _kernel().replace("\n@T.prim_func", "\nT = object()\n\n@T.prim_func")
+        self.assertEqual(_prefetch_targets(module_shadowed), [])
+
+        nested_body = "\n".join("    " + line if line else line for line in _kernel().splitlines()[2:])
+        outer_shadowed = _kernel().splitlines()[0] + "\n\ndef factory(T):\n" + nested_body + "\n"
+        self.assertEqual(_prefetch_targets(outer_shadowed), [])
+
+    def test_shared_slice_destination_and_buffer_return_are_rejected(self) -> None:
+        sliced_destination = _kernel().replace(
+            "T.copy(B[offset, :], B_shared)",
+            "T.copy(B[offset, :], B_shared[offset, :])",
+        )
+        self.assertEqual(_prefetch_targets(sliced_destination), [])
+        walrus_source = _kernel().replace(
+            "T.copy(B[offset, :], B_shared)",
+            "T.copy(B[(offset := 1), :], B_shared)",
+        )
+        self.assertEqual(_prefetch_targets(walrus_source), [])
+        returned = _kernel() + "    return B_shared\n"
+        self.assertEqual(_prefetch_targets(returned), [])
 
     def test_candidate_cannot_cross_a_control_domain(self) -> None:
         source = _kernel().replace(
