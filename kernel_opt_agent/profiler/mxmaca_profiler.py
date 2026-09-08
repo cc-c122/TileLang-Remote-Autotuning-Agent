@@ -20,7 +20,11 @@ class MxmacaProfiler(BaseProfiler):
             parsed_case = parse_mcprofiler_case(case_path)
             public_case = parsed_case.to_dict()
             metric_map = parsed_case.metric_map()
+            benchmark_metrics = parse_benchmark_output(run_context.get("benchmark_stdout") or "")
             return ProfilerResult(
+                latency_ms=benchmark_metrics.get("latency"),
+                tflops=benchmark_metrics.get("tflops"),
+                estimated_hbm_bandwidth=benchmark_metrics.get("estimated_hbm_bandwidth"),
                 vl1_hit_rate=_observation_value(metric_map, "vl1_hit_rate"),
                 l2c_hit_rate=_observation_value(metric_map, "l2c_hit_rate"),
                 dnoc_read_average_latency=_observation_value(metric_map, "dnoc_read_average_latency"),
@@ -32,6 +36,7 @@ class MxmacaProfiler(BaseProfiler):
                 observations=parsed_case.observations,
                 raw_artifact_refs=public_case["artifacts"],
                 raw_logs={
+                    "benchmark_stdout": run_context.get("benchmark_stdout") or "",
                     "mcprofiler_metadata": str(redact_mcprofiler_sensitive(parsed_case.metadata)),
                     "mcprofiler_warnings": "\n".join(redact_mcprofiler_sensitive(parsed_case.warnings)),
                     "unknown_field_count": str(len(parsed_case.unknown_rows)),

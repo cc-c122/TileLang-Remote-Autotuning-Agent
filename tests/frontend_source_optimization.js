@@ -185,6 +185,7 @@ async (page) => {
   }, "baseline_only");
   check(text.includes("保留 baseline") && text.includes("safe source boundary could not be determined"), "Unavailable optimization preserves baseline and shows the backend reason");
   check(text.includes("无法安全进入源码优化"), "Safety refusal is explicit");
+  check(text.includes("不表示算子没有优化空间") && text.includes("核对 entry_file"), "Unavailable source target is explained without claiming the operator has no optimization space");
 
   text = await renderResult({schema_version: "v2.source_optimization.v1", status: "failed", reason: "source planner failed", accepted_trial_id: null, trials: []});
   check(text.includes("失败") && text.includes("source planner failed") && text.includes("保留 baseline"), "Failed source optimization shows its reason and retains baseline");
@@ -247,12 +248,104 @@ async (page) => {
   };
   text = await renderResult(acceptedSourceOptimization);
   check(text.includes("已接受源码修改：accepted-1") && text.includes("22.7%"), "Accepted trial is the only source of an optimized result claim");
+  check(text.includes("旧结果未提供 performance_gate") && !text.includes("performance gate 通过"), "Legacy accepted result is compatible without claiming the new gate ran");
   check(!(await page.locator("#downloadBestKernelBtn").isDisabled()), "Missing source_best_verified keeps the legacy integrity checks");
   const acceptedMetrics = await page.locator("#apiResultsPanel > .compare-grid > .result-card .metric-main").allInnerTexts();
   check(acceptedMetrics[0] === "1.1" && acceptedMetrics[1] === "0.85" && acceptedMetrics[2] === "22.7%", "Accepted summary uses only that trial's measurement arrays and improvement");
   check(await page.locator("#apiResultsPanel .source-trial[open]").count() === 1, "Only the accepted trial is expanded by default");
   check((await page.locator("#apiResultsPanel .source-trial[open]").innerText()).includes("accepted vector load"), "The accepted trial is the default expanded change");
   check(text.includes("回滚状态未返回") && !text.includes("回滚已验证\n"), "Null rollback state is not presented as rollback success");
+
+  const gateLabels = {
+    accepted: "已验证提升",
+    no_improvement: "实测未提升",
+    inconclusive: "测量证据不足",
+    codegen_unchanged: "生成代码未变化",
+  };
+  const sourceResultWithGate = (decision, reason = `gate says ${decision}`, trialOverrides = {}) => ({
+    ...acceptedSourceOptimization,
+    trials: acceptedSourceOptimization.trials.map((trial) => trial.trial_id === "accepted-1" ? {
+      ...trial,
+      improvement_percent: 20,
+      artifacts: {
+        performance_gate: {
+          schema_version: "v2.performance_gate.v1",
+          decision,
+          reason,
+          baseline_codegen_hash: "c".repeat(64),
+          candidate_codegen_hash: "d".repeat(64),
+          codegen_status: decision === "codegen_unchanged" ? "unchanged" : "changed",
+          baseline_recheck_passed: true,
+          median_improvement_percent: 20,
+          conservative_improvement_percent: decision === "accepted" ? 18 : null,
+          baseline_samples_ms: [1.2, 1, 1.1],
+          candidate_samples_ms: [0.9, 0.8, 0.85],
+          baseline_recheck_samples_ms: [1.1, 1.05, 1.15],
+          threshold_percent: 1,
+          minimum_repeats: 3,
+          uncertainty: decision === "inconclusive" ? ["timing drift"] : [],
+        },
+      },
+      ...trialOverrides,
+    } : trial),
+  });
+
+  text = await renderResult(sourceResultWithGate("accepted"));
+  check(text.includes("已验证提升") && text.includes("已接受源码修改：accepted-1"), "Accepted performance gate preserves a fully verified source result");
+  check(!(await page.locator("#downloadBestKernelBtn").isDisabled()), "Accepted performance gate enables download only after all existing checks pass");
+  check(text.includes("baseline 复测") && text.includes("通过") && text.includes("median: 20%") && text.includes("conservative: 18%"), "Performance gate summary shows the backend recheck and measured improvements");
+
+  text = await renderResult(sourceResultWithGate("accepted", "baseline recheck failed", {artifacts: {performance_gate: {...sourceResultWithGate("accepted").trials[1].artifacts.performance_gate, baseline_recheck_passed: false}}}));
+  check(text.includes("基线复测未通过") && text.includes("未采纳") && text.includes("未接受源码修改"), "Accepted decision without a passing baseline recheck is not accepted");
+  check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Failed baseline recheck blocks the best artifact download");
+
+  const acceptedGate = sourceResultWithGate("accepted").trials[1].artifacts.performance_gate;
+  for (const [codegenStatus, label] of [["unchanged", "生成代码未变化"], ["inconsistent", "生成代码不一致"], ["unavailable", "生成代码状态与 hash 证据不一致"]]) {
+    text = await renderResult(sourceResultWithGate("accepted", `codegen is ${codegenStatus}`, {artifacts: {performance_gate: {...acceptedGate, codegen_status: codegenStatus}}}));
+    check(text.includes(label) && text.includes("未采纳") && text.includes("未接受源码修改"), `Accepted decision with ${codegenStatus} codegen is rejected`);
+    check(await page.locator("#downloadBestKernelBtn").isDisabled(), `${codegenStatus} codegen cannot enable download`);
+  }
+
+  text = await renderResult(sourceResultWithGate("accepted", "equal codegen hashes", {artifacts: {performance_gate: {...acceptedGate, candidate_codegen_hash: acceptedGate.baseline_codegen_hash}}}));
+  check(text.includes("生成代码 hash 相同") && text.includes("未采纳") && text.includes("未接受源码修改"), "Equal valid codegen hashes contradict an accepted decision");
+  check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Equal codegen hashes cannot enable download");
+
+  text = await renderResult(sourceResultWithGate("accepted", "benchmark-only evidence", {artifacts: {performance_gate: {...acceptedGate, codegen_status: "unavailable", baseline_codegen_hash: null, candidate_codegen_hash: null}}}));
+  check(text.includes("已接受源码修改：accepted-1") && text.includes("未取得生成代码对比"), "Benchmark-only acceptance explicitly discloses missing codegen evidence");
+  check(!(await page.locator("#downloadBestKernelBtn").isDisabled()), "Unavailable codegen does not contradict a verified benchmark-only backend decision");
+
+  text = await renderResult(sourceResultWithGate("accepted", "missing changed hash", {artifacts: {performance_gate: {...acceptedGate, candidate_codegen_hash: null}}}));
+  check(text.includes("生成代码变化缺少 hash 证据") && text.includes("未接受源码修改"), "Changed codegen requires both valid hashes");
+  check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Incomplete changed codegen cannot enable download");
+
+  for (const decision of ["no_improvement", "inconclusive", "codegen_unchanged"]) {
+    text = await renderResult(sourceResultWithGate(decision));
+    check(text.includes(gateLabels[decision]) && text.includes("20%") && text.includes("未采纳"), `${decision} preserves measured improvement but marks it unaccepted`);
+    check(text.includes("accepted_trial_id 与 performance_gate 决定冲突") && text.includes("未接受源码修改"), `${decision} overrides contradictory accepted fields`);
+    check(await page.locator("#downloadBestKernelBtn").isDisabled(), `${decision} cannot enable the best artifact download`);
+    const gateMetrics = await page.locator("#apiResultsPanel > .compare-grid > .result-card .metric-main").allInnerTexts();
+    check(gateMetrics[1] === "1" && gateMetrics[2] === "未接受源码修改", `${decision} keeps baseline instead of promoting positive improvement`);
+  }
+
+  text = await renderResult(sourceResultWithGate("codegen_unchanged", "generated source hash stayed equal", {status: "no_improvement"}));
+  check(text.includes("无收益") && text.includes("生成代码未变化") && text.includes("未采纳"), "Rejected gate keeps the existing no_improvement trial status");
+
+  for (const malformedGate of [
+    {schema_version: "future.performance_gate", decision: "accepted", reason: "unknown schema", baseline_recheck_passed: true},
+    {schema_version: "v2.performance_gate.v1", decision: "future_decision", reason: "unknown decision", baseline_recheck_passed: true},
+    null,
+  ]) {
+    const malformed = {
+      ...acceptedSourceOptimization,
+      trials: acceptedSourceOptimization.trials.map((trial) => trial.trial_id === "accepted-1" ? {...trial, improvement_percent: 20, artifacts: {performance_gate: malformedGate}} : trial),
+    };
+    text = await renderResult(malformed);
+    check(text.includes("门禁结果无效") && text.includes("未采纳") && text.includes("未接受源码修改"), "Malformed performance gate is displayed and rejected conservatively");
+    check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Malformed performance gate cannot enable download");
+  }
+
+  text = await renderResult(sourceResultWithGate("inconclusive", "insufficient <img src=x onerror=alert(1)> evidence"));
+  check(text.includes("insufficient <img") && await page.locator("#apiResultsPanel img").count() === 0, "Performance gate reason is HTML-escaped");
 
   text = await renderResult(acceptedSourceOptimization, "source_optimization", {source_best_verified: true, source_best_verification_error: null});
   check(text.includes("已接受源码修改：accepted-1") && !(await page.locator("#downloadBestKernelBtn").isDisabled()), "Explicit source_best_verified=true preserves a valid accepted result");
@@ -292,6 +385,35 @@ async (page) => {
   }, rejectedTask);
   const rejectedTaskRowText = await page.locator("#taskListPanel tbody tr").innerText();
   check(rejectedTaskRowText.includes("当前 best 验证失败") && !rejectedTaskRowText.includes("10%"), "Task summary suppresses stale source improvement after verification failure");
+
+  await page.evaluate((taskValue) => {
+    state.taskList = [taskValue];
+    renderTaskList();
+  }, {...task("pending-source-verification", "source_optimization"), status: "running", source_best_verified: false, improvement_percent: 20});
+  const pendingVerificationRowText = await page.locator("#taskListPanel tbody tr").innerText();
+  check(pendingVerificationRowText.includes("等待结果核验") && !pendingVerificationRowText.includes("当前 best 验证失败") && !pendingVerificationRowText.includes("20%"), "Pending source verification is not presented as a terminal failure");
+
+  await page.evaluate((taskValue) => {
+    state.taskList = [taskValue];
+    renderTaskList();
+  }, {...task("unverified-positive-improvement", "source_optimization"), status: "completed", improvement_percent: 20});
+  const unverifiedTaskRowText = await page.locator("#taskListPanel tbody tr").innerText();
+  check(unverifiedTaskRowText.includes("源码结果待详情核验") && !unverifiedTaskRowText.includes("20%"), "Task list never promotes a positive source improvement number without verification");
+
+  await page.evaluate((taskValue) => {
+    state.taskList = [taskValue];
+    renderTaskList();
+  }, {...task("verified-baseline-only", "source_optimization"), status: "completed", source_best_verified: true, source_accepted_trial_id: null, improvement_percent: 20});
+  check(!(await page.locator("#taskListPanel tbody tr").innerText()).includes("20%"), "Verified baseline alone does not imply accepted source improvement in the task list");
+
+  await page.evaluate((taskValue) => {
+    state.taskList = [taskValue];
+    renderTaskList();
+  }, {...task("verified-accepted-source", "source_optimization"), status: "completed", source_best_verified: true, source_accepted_trial_id: "accepted-1", source_performance_decision: "accepted", improvement_percent: 20});
+  check((await page.locator("#taskListPanel tbody tr").innerText()).includes("20%"), "Task list shows source improvement only with an accepted trial id and verified artifact");
+
+  check(await page.evaluate(() => eventLabel("baseline_recheck_started")) === "正在复测原版，检查计时漂移", "Baseline recheck event has an accurate Chinese label");
+  check(await page.evaluate(() => eventLabel("source_trial_completed")) === "候选验证结束", "Source trial completion event has an accurate Chinese label");
 
   const noImprovementResults = resultFixture({
     schema_version: "v2.source_optimization.v1",
@@ -370,7 +492,7 @@ async (page) => {
   await renderResult({schema_version: "v2.source_optimization.v1", status: "cancelled", reason: "user requested cancellation", accepted_trial_id: null, trials: []});
   check((await page.locator("#apiResultsPanel").innerText()).includes("已取消"), "Cancelled source optimization uses the backend status");
 
-  await renderResult(acceptedSourceOptimization);
+  await renderResult(sourceResultWithGate("accepted"));
   await page.evaluate(() => { state.warnings = []; renderAlerts(); });
 
   for (const [name, width, height] of [["desktop", 1440, 1000], ["mobile", 390, 844]]) {

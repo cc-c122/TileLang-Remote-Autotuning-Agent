@@ -106,7 +106,8 @@ class ProfilerPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
-    type: Literal["dummy"] = "dummy"
+    type: Literal["dummy", "mxmaca"] = "dummy"
+    auto_collect: bool = False
 
 
 class PatchingPayload(BaseModel):
@@ -153,6 +154,14 @@ class TaskCreateRequest(BaseModel):
     patching: PatchingPayload = Field(default_factory=PatchingPayload)
     runner: RunnerPayload = Field(default_factory=RunnerPayload)
     optimization: OptimizationPayload = Field(default_factory=OptimizationPayload)
+
+    @model_validator(mode="after")
+    def validate_profiler_runner(self) -> "TaskCreateRequest":
+        if self.profiler.auto_collect and self.profiler.type != "mxmaca":
+            raise ValueError("profiler.auto_collect requires profiler.type=mxmaca")
+        if self.profiler.auto_collect and self.runner.type != "ssh":
+            raise ValueError("profiler.auto_collect requires runner.type=ssh")
+        return self
 
 
 class HardwareResolveRequest(BaseModel):

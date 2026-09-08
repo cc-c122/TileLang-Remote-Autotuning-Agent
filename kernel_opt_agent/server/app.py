@@ -17,6 +17,7 @@ from kernel_opt_agent.hardware.hardware_info import CANONICAL_FIELDS, HardwareIn
 from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader, normalize_profile_name
 from kernel_opt_agent.main import WORKSPACE_ROOT
 from kernel_opt_agent.source_optimizer import read_source_result
+from kernel_opt_agent.source_optimizer.performance import saved_gate_is_accepted
 
 from .job_worker import JobWorker
 from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest
@@ -126,6 +127,13 @@ def _source_best_verification(
         return None, False, "accepted source trial is missing or has an invalid status"
     if (accepted.get("correctness") or {}).get("passed") is not True:
         return None, False, "accepted source trial did not pass correctness"
+    artifacts = accepted.get("artifacts") or {}
+    if "performance_gate" in artifacts:
+        gate = artifacts["performance_gate"]
+        if not saved_gate_is_accepted(gate):
+            return None, False, "accepted source trial did not pass its performance evidence gate"
+        if gate["baseline_samples_ms"] != accepted.get("baseline_latency_ms") or gate["candidate_samples_ms"] != accepted.get("candidate_latency_ms"):
+            return None, False, "performance evidence gate does not match the accepted trial measurements"
     accepted_hash = accepted.get("source_after_sha256")
     if not accepted_hash or accepted_hash != best_hash:
         return None, False, "accepted source trial hash does not match the best source hash"
@@ -160,6 +168,8 @@ def _task_payload(task: Any) -> dict[str, Any]:
     if source_mode and not source_best_verified:
         best_row = None
         improvement = None
+    latest_source = accepted or next(reversed(source_optimization.get("trials", [])), {})
+    latest_gate = (latest_source.get("artifacts") or {}).get("performance_gate") or {}
     payload.update(
         {
             "current_iteration": int(max([item for item in iterations if item is not None], default=0)),
@@ -168,6 +178,8 @@ def _task_payload(task: Any) -> dict[str, Any]:
             "baseline_latency": source_baseline_latency if accepted is not None else (None if source_mode and not source_best_verified else _numeric(baseline.get("latency"))),
             "improvement_percent": improvement,
             "source_best_verified": source_best_verified if source_mode else None,
+            "source_accepted_trial_id": accepted.get("trial_id") if accepted is not None and source_best_verified else None,
+            "source_performance_decision": latest_gate.get("decision") if isinstance(latest_gate, dict) else None,
             "source_best_verification_error": source_error if source_mode else None,
             "current_stage": latest_event.get("type") or task.status,
             "latest_message": latest_event.get("message") or task.status,
@@ -196,6 +208,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "experiments.jsonl",
         "summary.csv",
         "profiler_results.jsonl",
+        "mcprofiler_collection.jsonl",
         "metric_observations.jsonl",
         "diagnosis.jsonl",
         "diagnoses.jsonl",
@@ -213,6 +226,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
     evidence_summary = _read_jsonl(results_dir / "metric_observations.jsonl")
     diagnoses = _read_jsonl(results_dir / "diagnoses.jsonl")
     profiler_rows = _read_jsonl(results_dir / "profiler_results.jsonl")
+    profiler_collections = _read_jsonl(results_dir / "mcprofiler_collection.jsonl")
     status = profiler_status(profiler_rows, evidence_summary)
     payload = {
         "results_dir": str(results_dir),
@@ -227,6 +241,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "diagnoses": diagnoses,
         "profiler_status": status,
         "profiler_available": status == "profiler_metrics_available",
+        "profiler_collections": profiler_collections,
         "source_optimization": source_optimization,
         "source_best_verified": source_best_verified if source_mode else None,
         "source_best_verification_error": source_error if source_mode else None,
@@ -292,7 +307,10 @@ def health() -> dict[str, Any]:
         "ok": True,
         "service": "tilelang-agent",
         "mode": "local-runner",
-        "capabilities": {"source_optimization": True},
+        "capabilities": {
+            "source_optimization": True,
+            "mcprofiler_auto_collection": True,
+        },
     }
 
 

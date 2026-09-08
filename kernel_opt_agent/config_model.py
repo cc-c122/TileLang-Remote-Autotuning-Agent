@@ -103,6 +103,12 @@ class ProfilerConfig(BaseModel):
     command: str | None = None
     timeout_seconds: int = Field(default=120, gt=0)
     log_paths: list[str] = Field(default_factory=list)
+    auto_collect: bool = False
+    mcprofiler_executable: str = "mcProfiler"
+    mcprofiler_server_executable: str = "profiler_server"
+    metrics: list[str] = Field(default_factory=list)
+    kernel_names: list[str] = Field(default_factory=list)
+    service_port: int | None = Field(default=None, ge=1024, le=65535)
 
 
 class PatchingConfig(BaseModel):

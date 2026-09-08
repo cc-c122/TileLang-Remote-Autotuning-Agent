@@ -102,7 +102,8 @@ class ProfilerRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
-    type: Literal["dummy"] = "dummy"
+    type: Literal["dummy", "mxmaca"] = "dummy"
+    auto_collect: bool = False
 
 
 class PatchingRequest(BaseModel):
