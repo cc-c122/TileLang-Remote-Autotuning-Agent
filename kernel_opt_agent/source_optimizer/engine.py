@@ -24,6 +24,7 @@ from kernel_opt_agent.sample_security import copy_safe_sample_contents, normaliz
 
 from .analyzer import AnalysisResult, CopyLoopTarget, analyze_source, rewrite_copy_loop, sha256_bytes, sha256_file
 from .models import SourceOptimizationResult, SourceOptimizationTrial, SourceTrialCorrectness
+from .performance import CodegenEvidence, assess_performance, parse_codegen_evidence
 from .planner import SourcePlan, choose_plan
 
 
@@ -125,6 +126,7 @@ class _ExecutionOutcome:
         self.logs: dict[str, str] = {}
         self.stage_hashes: dict[str, dict[str, str]] = {}
         self.runner: Any | None = None
+        self.codegen = CodegenEvidence()
 
 
 def _execute_version(
@@ -139,6 +141,12 @@ def _execute_version(
 ) -> _ExecutionOutcome:
     outcome = _ExecutionOutcome()
     entry_name = normalize_sample_path(config.kernel.entry_file)
+
+    def run_command(name: str, command: str) -> Any:
+        assert outcome.runner is not None
+        if hasattr(outcome.runner, "run_cancellable"):
+            return outcome.runner.run_cancellable(name, command, should_cancel, timeout_seconds=config.search.timeout_seconds)
+        return outcome.runner.run(name, command)
 
     def audit(stage: str) -> bool:
         assert outcome.runner is not None
@@ -161,8 +169,9 @@ def _execute_version(
         if config.kernel.build_command:
             if event_callback:
                 event_callback("build_started", f"{label}: running build command")
-            build = outcome.runner.run("build", config.kernel.build_command)
+            build = run_command("build", config.kernel.build_command)
             outcome.logs["build"] = build.stdout + build.stderr
+            outcome.codegen = parse_codegen_evidence(outcome.logs["build"])
             if not audit("after_build"):
                 return outcome
             if build.returncode != 0:
@@ -175,7 +184,7 @@ def _execute_version(
             return outcome
         if event_callback:
             event_callback("correctness_started", f"{label}: running strict correctness gate")
-        correctness = outcome.runner.run("correctness", config.kernel.correctness_command)
+        correctness = run_command("correctness", config.kernel.correctness_command)
         outcome.logs["correctness"] = correctness.stdout + correctness.stderr
         strict_match = CORRECTNESS_STRICT_RE.search(correctness.stdout + "\n" + correctness.stderr)
         parsed_correctness = parse_correctness(correctness.stdout, correctness.stderr, correctness.returncode)
@@ -197,7 +206,7 @@ def _execute_version(
                 return outcome
             if event_callback:
                 event_callback("benchmark_started", f"{label}: benchmark repeat {index + 1}/{repeats}")
-            benchmark = outcome.runner.run(f"benchmark_{index + 1}", config.kernel.run_command)
+            benchmark = run_command(f"benchmark_{index + 1}", config.kernel.run_command)
             outcome.logs[f"benchmark_{index + 1}"] = benchmark.stdout + benchmark.stderr
             if not audit(f"after_benchmark_{index + 1}"):
                 return outcome
@@ -443,6 +452,7 @@ def _update_best_config(results_dir: Path, trial: SourceOptimizationTrial) -> No
         "latency_ms": trial.candidate_median_latency_ms,
         "latency_samples_ms": trial.candidate_latency_ms,
         "improvement_percent": trial.improvement_percent,
+        "performance_gate": trial.artifacts.get("performance_gate"),
     }
     path.write_text(yaml.safe_dump(payload, sort_keys=True), encoding="utf-8")
 
@@ -475,6 +485,20 @@ def _append_report(results_dir: Path, result: SourceOptimizationResult) -> None:
         improvement = "" if trial.improvement_percent is None else f"{trial.improvement_percent:.3f}%"
         rollback = "not_applicable" if trial.rollback_verified is None else str(trial.rollback_verified).lower()
         lines.append(f"| {trial.trial_id} | {trial.optimization_name} | {trial.status} | {trial.baseline_median_latency_ms or ''} | {trial.candidate_median_latency_ms or ''} | {improvement} | {rollback} |")
+    for trial in result.trials:
+        gate = trial.artifacts.get("performance_gate")
+        if isinstance(gate, dict):
+            lines += [
+                "", f"### Performance Evidence: {trial.trial_id}",
+                f"- Decision: {gate.get('decision')}",
+                f"- Reason: {gate.get('reason')}",
+                f"- Generated source comparison: {gate.get('codegen_status')}",
+                f"- Baseline generated source SHA-256: `{gate.get('baseline_codegen_hash') or 'unknown'}`",
+                f"- Candidate generated source SHA-256: `{gate.get('candidate_codegen_hash') or 'unknown'}`",
+                f"- Baseline recheck samples (ms): {gate.get('baseline_recheck_samples_ms', [])}",
+                f"- Conservative observed improvement: {gate.get('conservative_improvement_percent')}%",
+                *[f"- Uncertainty: {item}" for item in gate.get("uncertainty", [])],
+            ]
     lines += ["", "The source optimizer used a statically authorized structural template. Local fixture tests validate the mechanism only; they are not evidence of target GPU performance."]
     report_path.write_text(prior.rstrip() + "\n" + "\n".join(lines) + "\n", encoding="utf-8")
 
@@ -675,17 +699,63 @@ def run_source_optimization(
         if outcome.samples:
             trial.candidate_median_latency_ms = statistics.median(outcome.samples)
             trial.improvement_percent = ((baseline_median - trial.candidate_median_latency_ms) / baseline_median * 100.0) if baseline_median > 0 else None
-        if outcome.status == "benchmark_ok" and trial.improvement_percent is not None and trial.improvement_percent >= config.source_optimization.min_improvement_percent:
-            trial.status = "accepted"
-            trial.decision_reason = "strict correctness passed and measured median improvement met the configured threshold"
-            candidates.append((trial, source_after_path))
-        elif outcome.status == "benchmark_ok":
-            trial.status = "no_improvement"
-            trial.decision_reason = "candidate median improvement did not meet the configured threshold"
+        if outcome.status == "benchmark_ok" and restored and not cancelled():
+            gate = assess_performance(
+                baseline_outcome.samples, outcome.samples, config.source_optimization.min_improvement_percent,
+                baseline_outcome.codegen, outcome.codegen, require_recheck=False,
+            )
+            if gate.decision == "accepted":
+                recheck_dir = candidate_root / "baseline_recheck" / "workspace"
+                copy_safe_sample_contents(baseline_snapshot, recheck_dir)
+                if event_callback:
+                    event_callback("baseline_recheck_started", f"{trial_id}: rerunning original source to check timing drift")
+                recheck = _execute_version(
+                    config, recheck_dir, baseline_manifest, config.source_optimization.benchmark_repeats,
+                    cancelled, event_callback, f"{trial_id} baseline recheck", keep_runner=True,
+                )
+                recheck_restored, recheck_error, recheck_hashes = _restore_execution_workspace(
+                    config, recheck.runner, baseline_snapshot, baseline_manifest,
+                )
+                _close_runner(recheck.runner)
+                trial.artifacts["baseline_recheck"] = {
+                    "status": recheck.status, "source_sha256": recheck.execution_hash,
+                    "samples_ms": list(recheck.samples), "correctness": recheck.correctness.model_dump(mode="json"),
+                    "logs": _save_logs(candidate_root / "baseline_recheck" / "logs", recheck.logs),
+                    "stage_hashes": recheck.stage_hashes,
+                    "rollback": {"verified": recheck_restored, "hashes": recheck_hashes, "error": recheck_error},
+                }
+                gate = assess_performance(
+                    baseline_outcome.samples, outcome.samples, config.source_optimization.min_improvement_percent,
+                    baseline_outcome.codegen, outcome.codegen, recheck.samples,
+                )
+                if recheck.status != "benchmark_ok" or not recheck_restored:
+                    gate.decision = "inconclusive"
+                    gate.baseline_recheck_passed = False
+                    gate.reason = f"baseline recheck failed: {recheck.status}: {recheck.error or recheck_error}"
+                elif recheck.codegen.status == "inconsistent" or (
+                    baseline_outcome.codegen.sha256 and recheck.codegen.sha256 != baseline_outcome.codegen.sha256
+                ):
+                    gate.decision = "inconclusive"
+                    gate.baseline_recheck_passed = False
+                    gate.reason = "original source generated inconsistent code during baseline recheck"
+                if not recheck_restored:
+                    restored, rollback_error, rollback_hashes = recheck_restored, recheck_error, recheck_hashes
+            trial.artifacts["performance_gate"] = gate.to_dict()
+            trial.status = "accepted" if gate.decision == "accepted" else "no_improvement"
+            trial.decision_reason = gate.reason
+            if trial.status == "accepted":
+                candidates.append((trial, source_after_path))
+        elif cancelled():
+            trial.status = "cancelled"
+            trial.decision_reason = "cancel requested; verified baseline retained"
         else:
             trial.status = outcome.status  # type: ignore[assignment]
             trial.decision_reason = outcome.error
 
+        if cancelled():
+            trial.status = "cancelled"
+            trial.decision_reason = "cancel requested; verified baseline retained"
+            candidates = [item for item in candidates if item[0].trial_id != trial.trial_id]
         trial.rollback_verified = restored
         trial.artifacts["rollback"] = {"verified": restored, "hashes": rollback_hashes, "error": rollback_error}
         if not restored:
@@ -694,6 +764,9 @@ def run_source_optimization(
             rollback_failed = True
             candidates = [item for item in candidates if item[0].trial_id != trial.trial_id]
             break
+        write_source_result(results_dir, result, config)
+        if event_callback:
+            event_callback("source_trial_completed", f"{trial_id}: {trial.status}: {trial.decision_reason}")
 
     accepted: SourceOptimizationTrial | None = None
     if cancelled():

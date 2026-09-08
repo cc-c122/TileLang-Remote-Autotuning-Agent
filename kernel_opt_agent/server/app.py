@@ -126,6 +126,15 @@ def _source_best_verification(
         return None, False, "accepted source trial is missing or has an invalid status"
     if (accepted.get("correctness") or {}).get("passed") is not True:
         return None, False, "accepted source trial did not pass correctness"
+    gate = (accepted.get("artifacts") or {}).get("performance_gate")
+    if gate is not None and (
+        not isinstance(gate, dict)
+        or gate.get("schema_version") != "v2.performance_gate.v1"
+        or gate.get("decision") != "accepted"
+        or gate.get("baseline_recheck_passed") is not True
+        or gate.get("codegen_status") in {"unchanged", "inconsistent"}
+    ):
+        return None, False, "accepted source trial did not pass its performance evidence gate"
     accepted_hash = accepted.get("source_after_sha256")
     if not accepted_hash or accepted_hash != best_hash:
         return None, False, "accepted source trial hash does not match the best source hash"
@@ -160,6 +169,8 @@ def _task_payload(task: Any) -> dict[str, Any]:
     if source_mode and not source_best_verified:
         best_row = None
         improvement = None
+    latest_source = accepted or next(reversed(source_optimization.get("trials", [])), {})
+    latest_gate = (latest_source.get("artifacts") or {}).get("performance_gate") or {}
     payload.update(
         {
             "current_iteration": int(max([item for item in iterations if item is not None], default=0)),
@@ -168,6 +179,8 @@ def _task_payload(task: Any) -> dict[str, Any]:
             "baseline_latency": source_baseline_latency if accepted is not None else (None if source_mode and not source_best_verified else _numeric(baseline.get("latency"))),
             "improvement_percent": improvement,
             "source_best_verified": source_best_verified if source_mode else None,
+            "source_accepted_trial_id": accepted.get("trial_id") if accepted is not None and source_best_verified else None,
+            "source_performance_decision": latest_gate.get("decision") if isinstance(latest_gate, dict) else None,
             "source_best_verification_error": source_error if source_mode else None,
             "current_stage": latest_event.get("type") or task.status,
             "latest_message": latest_event.get("message") or task.status,

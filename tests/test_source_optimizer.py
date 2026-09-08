@@ -65,7 +65,7 @@ def _config(sample: Path, **source_options: object) -> AppConfig:
             "source_optimization": {
                 "enabled": True,
                 "max_candidates": 1,
-                "benchmark_repeats": 2,
+                "benchmark_repeats": 3,
                 "min_improvement_percent": 1.0,
                 **source_options,
             },
@@ -85,6 +85,14 @@ class FakeRunner:
         command = command or ""
         entry = self.workspace / "kernel.py"
         changed = "TL.copy(" in entry.read_text(encoding="utf-8")
+        recheck = self.workspace.parent.name == "baseline_recheck"
+        if name == "build" and self.mode == "same_codegen":
+            return self._result(name, command, stdout=f"GENERATED_SOURCE_SHA256={'a' * 64}\n")
+        if name == "build" and self.mode == "codegen_recheck_changed":
+            digest = ("c" if recheck else "b" if changed else "a") * 64
+            return self._result(name, command, stdout=f"GENERATED_SOURCE_SHA256={digest}\n")
+        if name == "build" and recheck and self.mode == "baseline_recheck_failed":
+            return self._result(name, command, 1, stderr="control compilation failed")
         if name.startswith("source_hash"):
             digest = hashlib.sha256(entry.read_bytes()).hexdigest()
             return self._result(name, command, stdout=f"SOURCE_SHA256={digest}\n")
@@ -106,6 +114,10 @@ class FakeRunner:
             if changed and self.mode == "entry_mutation":
                 entry.write_text("# mutated after correctness\n", encoding="utf-8")
             latency = 12.0 if changed and self.mode == "regressed" else (5.0 if changed else 10.0)
+            if recheck and self.mode == "baseline_drift":
+                latency = 4.0
+            if changed and self.mode == "noise" and name == "benchmark_3":
+                latency = 12.0
             if changed and self.mode == "zero_latency":
                 latency = 0.0
             suffix = f" secret={os.environ.get('OPENAI_API_KEY', '')}" if self.mode == "secret_output" else ""
@@ -390,6 +402,34 @@ class SourceEngineTests(unittest.TestCase):
         self.assertEqual(result.trials[0].status, "no_improvement")
         self.assertEqual(result.best_source_sha256, original_hash)
         self.assertIsNone(result.accepted_trial_id)
+
+    def test_codegen_and_measurement_gates_prevent_false_best_publication(self) -> None:
+        for mode, decision in (
+            ("same_codegen", "codegen_unchanged"),
+            ("noise", "inconclusive"),
+            ("baseline_drift", "inconclusive"),
+            ("baseline_recheck_failed", "inconclusive"),
+            ("codegen_recheck_changed", "inconclusive"),
+        ):
+            with self.subTest(mode=mode):
+                _, results, result, baseline_hash = self._run(mode)
+                trial = result.trials[0]
+                self.assertEqual(trial.status, "no_improvement")
+                self.assertEqual(trial.artifacts["performance_gate"]["decision"], decision)
+                self.assertTrue(trial.rollback_verified)
+                self.assertIsNone(result.accepted_trial_id)
+                self.assertEqual(hashlib.sha256((results / "best_kernel.py").read_bytes()).hexdigest(), baseline_hash)
+                self.assertIn(decision, (results / "report.md").read_text(encoding="utf-8"))
+
+    def test_accepted_candidate_has_correctness_and_hash_audited_baseline_recheck(self) -> None:
+        _, _, result, original_hash = self._run("accept")
+        trial = result.trials[0]
+        self.assertEqual(trial.status, "accepted")
+        recheck = trial.artifacts["baseline_recheck"]
+        self.assertEqual(recheck["source_sha256"], original_hash)
+        self.assertTrue(recheck["correctness"]["passed"])
+        self.assertEqual(len(recheck["samples_ms"]), 3)
+        self.assertTrue(trial.artifacts["performance_gate"]["baseline_recheck_passed"])
 
     def test_protected_file_change_rejects_and_rolls_back(self) -> None:
         _, _, result, _ = self._run("protected_changed")
@@ -729,6 +769,15 @@ class SourceOptimizationApiTests(unittest.TestCase):
                 ],
             }
             self.assertIsNotNone(_accepted_source_trial(results, source_result))
+            for decision in ("codegen_unchanged", "inconclusive", "no_improvement"):
+                invalid = json.loads(json.dumps(source_result))
+                invalid["trials"][0]["artifacts"] = {"performance_gate": {
+                    "schema_version": "v2.performance_gate.v1", "decision": decision,
+                    "baseline_recheck_passed": True,
+                }}
+                self.assertIsNone(_accepted_source_trial(results, invalid))
+            invalid["trials"][0]["artifacts"]["performance_gate"].update({"decision": "accepted", "baseline_recheck_passed": False})
+            self.assertIsNone(_accepted_source_trial(results, invalid))
             baseline_result = {
                 "status": "completed",
                 "baseline_verified": True,
@@ -844,6 +893,8 @@ class SourceOptimizationApiTests(unittest.TestCase):
             self.assertEqual(task["baseline_latency"], accepted["baseline_median_latency_ms"])
             self.assertNotEqual(task["baseline_latency"], 999.0)
             self.assertEqual(task["improvement_percent"], accepted["improvement_percent"])
+            self.assertEqual(task["source_accepted_trial_id"], accepted["trial_id"])
+            self.assertEqual(task["source_performance_decision"], "accepted")
             self.assertTrue(task["source_best_verified"])
             self.assertIsNone(task["source_best_verification_error"])
             self.assertTrue(result["source_best_verified"])
