@@ -185,6 +185,7 @@ async (page) => {
   }, "baseline_only");
   check(text.includes("保留 baseline") && text.includes("safe source boundary could not be determined"), "Unavailable optimization preserves baseline and shows the backend reason");
   check(text.includes("无法安全进入源码优化"), "Safety refusal is explicit");
+  check(text.includes("不表示算子没有优化空间") && text.includes("核对 entry_file"), "Unavailable source target is explained without claiming the operator has no optimization space");
 
   text = await renderResult({schema_version: "v2.source_optimization.v1", status: "failed", reason: "source planner failed", accepted_trial_id: null, trials: []});
   check(text.includes("失败") && text.includes("source planner failed") && text.includes("保留 baseline"), "Failed source optimization shows its reason and retains baseline");

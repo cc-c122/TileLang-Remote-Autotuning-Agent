@@ -2744,6 +2744,18 @@
       return "";
     }
 
+    function pastedCommandLabel(command) {
+      const match = String(command || "").match(/^\s*((?:build|correctness|benchmark|run)\s*(?:command|命令)|(?:构建|正确性|性能测试|基准测试)\s*命令)\s*[:：]/i);
+      return match ? match[1].trim() : "";
+    }
+
+    function commandLabelValidationError(command, fieldName) {
+      const pastedLabel = pastedCommandLabel(command);
+      return pastedLabel
+        ? `${fieldName} 命令开头包含字段标签“${pastedLabel}:”；请只填写冒号后的实际命令。`
+        : "";
+    }
+
     function commandValidationError() {
       const entryFile = el.v2EntryFile.value.trim() || "kernel.py";
       const paths = isUploadSourceMode()
@@ -2755,6 +2767,10 @@
       if (!buildCommand) return "build 命令不能为空。";
       if (!correctnessCommand) return "correctness 命令不能为空。";
       if (!benchmarkCommand) return "benchmark 命令不能为空。";
+      const pastedLabelError = commandLabelValidationError(buildCommand, "build")
+        || commandLabelValidationError(correctnessCommand, "correctness")
+        || commandLabelValidationError(benchmarkCommand, "benchmark");
+      if (pastedLabelError) return pastedLabelError;
       if (buildCommand === "python -m py_compile kernel.py" && entryFile !== "kernel.py") {
         return `默认 build 命令指向 kernel.py，但当前 entry_file 是 ${entryFile}；请在高级命令设置中填写实际命令。`;
       }
@@ -2782,6 +2798,9 @@
       el.v2OptimizationMaxCandidates.setCustomValidity(optimizationError && (!Number.isInteger(optimization.max_candidates) || optimization.max_candidates < 1) ? optimizationError : "");
       el.v2BenchmarkRepeats.setCustomValidity(optimizationError && (!Number.isInteger(optimization.benchmark_repeats) || optimization.benchmark_repeats < 1) ? optimizationError : "");
       el.v2MinImprovementPercent.setCustomValidity(optimizationError && (!Number.isFinite(optimization.min_improvement_percent) || optimization.min_improvement_percent < 0) ? optimizationError : "");
+      el.v2BuildCommand.setCustomValidity(commandLabelValidationError(el.v2BuildCommand.value, "build"));
+      el.v2CorrectnessCommand.setCustomValidity(commandLabelValidationError(el.v2CorrectnessCommand.value, "correctness"));
+      el.v2BenchmarkCommand.setCustomValidity(commandLabelValidationError(el.v2BenchmarkCommand.value, "benchmark"));
       el.startOptimizationBtn.disabled = state.taskSubmitting || !!error;
       if (!state.taskSubmitting) el.startOptimizationBtn.textContent = startActionLabel();
       el.startValidationMessage.textContent = state.taskSubmitting
@@ -3206,6 +3225,7 @@
         const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/results`);
         state.task = payload.task || state.task;
         state.taskResults = payload.results || payload || null;
+        renderTaskDetail();
         renderApiResults();
         activateView("resultsView");
       } catch (error) {
@@ -3257,7 +3277,7 @@
       el.taskListPanel.innerHTML = `<table>
         <thead><tr><th>task_id</th><th>项目</th><th>状态</th><th>结果</th><th>最新消息</th></tr></thead>
         <tbody>
-          ${state.taskList.map((task) => `<tr class="click-row" data-task-id="${escapeHtml(task.task_id)}"><td>${escapeHtml(shortId(task.task_id))}</td><td>${escapeHtml(display(task.project_name))}</td><td>${taskStatusBadge(task.status)}</td><td>${task.execution_mode === "source_optimization" && task.source_best_verified === false ? "当前 best 验证失败" : task.improvement_percent === null || task.improvement_percent === undefined ? "未返回提升数据" : `${formatNumber(task.improvement_percent)}%`}</td><td>${escapeHtml(display(task.latest_message))}</td></tr>`).join("")}
+          ${state.taskList.map((task) => `<tr class="click-row" data-task-id="${escapeHtml(task.task_id)}"><td>${escapeHtml(shortId(task.task_id))}</td><td>${escapeHtml(display(task.project_name))}</td><td>${taskStatusBadge(task.status, task)}</td><td>${task.execution_mode === "source_optimization" && task.source_best_verified === false ? "当前 best 验证失败" : ["completed", "success", "done"].includes(String(task.status || "").toLowerCase()) && taskCompletionVerification(task) === "failed" ? "基线未通过" : task.improvement_percent === null || task.improvement_percent === undefined ? "未返回提升数据" : `${formatNumber(task.improvement_percent)}%`}</td><td>${escapeHtml(display(task.latest_message))}</td></tr>`).join("")}
         </tbody>
       </table>`;
       el.taskListPanel.querySelectorAll("[data-task-id]").forEach((row) => {
@@ -3390,6 +3410,56 @@
       return `<div class="alert bad">当前 best 产物验证失败：${escapeHtml(reason)} 历史 trial 和 diff 仅供审计，不代表当前可下载产物已验证。</div>`;
     }
 
+    function taskResultSummary(results) {
+      if (Array.isArray(results?.summary_table)) return results.summary_table;
+      if (Array.isArray(results?.summary)) return results.summary;
+      return [];
+    }
+
+    function taskBaselineRow(results) {
+      const summary = taskResultSummary(results);
+      return summary.find((row) => String(pick(row?.trial_id, row?.candidate_id, "")).toLowerCase() === "baseline") || summary[0] || null;
+    }
+
+    function taskCompletionVerification(task, results = null) {
+      if (task?.source_best_verified === false || results?.source_best_verified === false || task?.error) return "failed";
+      const baseline = taskBaselineRow(results);
+      if (task?.execution_mode === "source_optimization" && results) {
+        const sourceOptimization = sourceOptimizationPayload(results);
+        if (acceptedSourceTrialVerified(sourceOptimization, results, task) || sourceBaselineArtifactVerified(sourceOptimization, baseline)) return "verified";
+      }
+      if (baseline) {
+        const status = String(baseline.status || "").trim().toLowerCase();
+        if (status && status !== "benchmark_ok") return "failed";
+        if (baseline.correctness?.passed === true && status === "benchmark_ok") return "verified";
+        if (baseline.correctness?.passed === false) return "failed";
+        return "unknown";
+      }
+      const latency = numeric(task?.baseline_latency);
+      if (latency !== null && latency > 0) return "verified";
+      if (task && Object.prototype.hasOwnProperty.call(task, "baseline_latency") && task.baseline_latency === null) return "failed";
+      return "unknown";
+    }
+
+    function taskCompletionNotice(task, results = null) {
+      if (String(task?.status || "").trim().toLowerCase() !== "completed") return "";
+      const verification = taskCompletionVerification(task, results);
+      if (task?.source_best_verified === false || results?.source_best_verified === false) return "";
+      if (verification === "failed") {
+        return `<div class="alert bad">任务流程已结束，但 correctness 或 benchmark 没有产出有效 baseline；不能视为优化成功。请查看失败原因和原始日志。</div>`;
+      }
+      if (verification === "unknown") {
+        return `<div class="alert warn">任务流程已结束，但后端没有返回可核验的 baseline correctness 与 benchmark 结果；当前结果不标记为成功。</div>`;
+      }
+      return "";
+    }
+
+    function executionModeReasonNotice(task) {
+      const reason = typeof task?.execution_mode_reason === "string" ? task.execution_mode_reason.trim() : "";
+      if (!reason) return "";
+      return `<div class="alert warn">执行模式说明：${escapeHtml(display(reason))} 请核对 entry_file 是否指向实际算子源码。</div>`;
+    }
+
     function renderTaskDetail() {
       const task = state.task;
       if (!task) {
@@ -3419,16 +3489,21 @@
             ? display(pick(task.best_latency, task.baseline_latency, baseline?.latency, baseline?.objective_value))
             : "未确认";
       const attemptedCount = sourceMode ? pick(task.total_trials, sourceOptimizationTrials(sourceOptimization).length || null) : pick(task.total_trials, summary.length || null);
-      const currentStage = eventLabel(task.current_stage || latestEvent?.type || task.status);
+      const statusPresentation = taskStatusPresentation(task.status, task, state.taskResults);
+      const taskCompleted = ["completed", "success", "done"].includes(String(task.status || "").trim().toLowerCase());
+      const completionVerification = taskCompleted ? taskCompletionVerification(task, state.taskResults) : "unknown";
+      const currentStage = taskCompleted ? statusPresentation.label : eventLabel(task.current_stage || latestEvent?.type || task.status);
       const latestEventText = pick(task.latest_message, eventMessage(latestEvent), latestEventLabel(latestEvent));
-      el.taskStatus.textContent = task.status || "暂无任务";
+      el.taskStatus.textContent = statusPresentation.label;
       el.taskDetailPanel.innerHTML = `
         <div class="compare-grid">
-          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>执行模式</div><div>${executionModeBadge(executionMode)}</div><div>状态</div><div>${taskStatusBadge(task.status)}</div></div></article>
+          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>执行模式</div><div>${executionModeBadge(executionMode)}</div><div>状态</div><div>${taskStatusBadge(task.status, task, state.taskResults)}</div></div></article>
           <article class="result-card"><div class="metric-label">${sourceMode ? "已尝试次数" : "已尝试 trial"}</div><div class="metric-main">${escapeHtml(display(attemptedCount))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>${baselineOnly ? "源码优化" : "current best latency"}</div><div>${baselineOnly ? "未执行" : sourceMode ? escapeHtml(sourceCurrentBest) : escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
-          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : sourceMode ? "源码修改决定" : "性能提升"}</div><div class="metric-main ${acceptedVerified ? "good" : ""}">${baselineOnly ? "仅基线测量" : sourceMode ? sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? "已接受源码修改" : sourceOptimization && !["running", "unknown"].includes(sourceOptimizationStatus(sourceOptimization)) ? "保留 baseline" : "等待后端决定" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : sourceMode ? "源码修改决定" : "性能提升"}</div><div class="metric-main ${acceptedVerified ? "good" : ""}">${baselineOnly ? completionVerification === "failed" ? "基线验证未通过" : completionVerification === "unknown" && taskCompleted ? "基线结果待核验" : "仅基线测量" : sourceMode ? sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? "已接受源码修改" : sourceOptimization && !["running", "unknown"].includes(sourceOptimizationStatus(sourceOptimization)) ? "保留 baseline" : "等待后端决定" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
         </div>
         ${executionModeNotice(executionMode)}
+        ${executionModeReasonNotice(task)}
+        ${taskCompletionNotice(task, state.taskResults)}
         ${sourceMode ? sourceBestVerificationNotice(state.taskResults, task) : ""}
         ${state.cancellationPending ? `<div class="alert warn">取消请求已提交，仍在等待后端确认终态。</div>` : ""}
         ${task.error ? `<div class="empty">失败原因：${escapeHtml(task.error)}</div>` : ""}
@@ -3844,7 +3919,7 @@
         <div class="section-head"><h2>源码优化结果</h2>${sourceOptimizationStatusBadge(sourceOptimization, results, task)}</div>
         ${schemaValid ? "" : `<div class="alert warn">source_optimization schema_version 缺失或不匹配，以下字段按兼容方式展示。</div>`}
         ${decision}
-        ${status === "unavailable" ? `<div class="alert warn">当前 sample 无法安全进入源码优化，已按后端结果保留 baseline。</div>` : ""}
+        ${status === "unavailable" ? `<div class="alert warn">后端没有在本次 entry_file 中识别到当前实现可安全修改的目标，因此当前 sample 无法安全进入源码优化，本次未执行源码修改并保留 baseline。这不表示算子没有优化空间；请核对 entry_file 是否指向实际算子源码。</div>` : ""}
         <div class="source-trials">${trials.length ? trials.map((trial) => renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified)).join("") : `<div class="empty">暂无源码候选记录。</div>`}</div>
       </section>`;
     }
@@ -3856,7 +3931,7 @@
         el.apiResultsPanel.innerHTML = `<div class="empty">暂无结果，任务完成后展示 best kernel 和 report。</div>`;
         return;
       }
-      el.apiResultsStatus.textContent = state.task?.status || "已读取";
+      el.apiResultsStatus.textContent = taskStatusPresentation(state.task?.status, state.task, results).label;
       const reportMarkdown = pick(results.report_markdown, results.report);
       el.downloadReportBtn.disabled = !reportMarkdown;
       const summary = Array.isArray(results.summary_table) ? results.summary_table : (Array.isArray(results.summary) ? results.summary : []);
@@ -3874,7 +3949,8 @@
       const acceptedTrialId = typeof sourceOptimization?.accepted_trial_id === "string" ? sourceOptimization.accepted_trial_id.trim() : "";
       const sourceBaselineVerified = sourceMode && !sourceBestInvalid && sourceBaselineArtifactVerified(sourceOptimization, baseline);
       const bestTrialId = sourceMode ? sourceBestInvalid ? "当前 best 已失效" : acceptedVerified ? acceptedTrialId : sourceBaselineVerified ? "无，保留 baseline" : "无，baseline 待核验" : pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
-      const baselineSucceeded = baselineOnly && !!benchmarkBest;
+      const baselineVerification = baselineOnly ? taskCompletionVerification(state.task, results) : "unknown";
+      const baselineSucceeded = baselineOnly && baselineVerification === "verified";
       const fallbackBaselineLatency = pick(state.task?.baseline_latency, baseline.latency, baseline.objective_value);
       const acceptedBaselineLatency = acceptedVerified ? sourceMeasurementMedian(acceptedTrial?.baseline_latency_ms) : null;
       const acceptedCandidateLatency = acceptedVerified ? sourceMeasurementMedian(acceptedTrial?.candidate_latency_ms) : null;
@@ -3889,7 +3965,8 @@
       const shapeResultsHtml = renderShapeResults(results);
       el.apiResultsPanel.innerHTML = `
         ${executionModeNotice(executionMode)}
-        ${baselineOnly && !baselineSucceeded ? `<div class="alert bad">correctness 或 benchmark 未通过，本次没有已验证的基线性能结果。</div>` : ""}
+        ${baselineOnly && baselineVerification === "failed" ? `<div class="alert bad">correctness 或 benchmark 未通过，本次没有已验证的基线性能结果。</div>` : ""}
+        ${baselineOnly && baselineVerification === "unknown" ? `<div class="alert warn">后端没有返回可核验的 baseline correctness 与 benchmark 结果；当前结果不标记为成功，也不开放 kernel 下载。</div>` : ""}
         ${sourceMode && !acceptedVerified && !sourceBaselineVerified ? `<div class="alert warn">未能同时确认 baseline correctness、benchmark、终态和同源 hash；当前 baseline 产物不开放下载。</div>` : ""}
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(baselineLatency))}</div></article>
@@ -4425,12 +4502,25 @@
       return `<span class="badge ${kind}">${escapeHtml(text)}</span>`;
     }
 
-    function taskStatusBadge(status) {
+    function taskStatusPresentation(status, task = null, results = null) {
       const text = display(status);
       const normalized = text.toLowerCase();
-      const ok = ["completed", "success", "done"].includes(normalized);
-      const warn = ["pending", "running", "waiting", "cancelled"].includes(normalized);
-      return `<span class="badge ${ok ? "ok" : warn ? "warn" : "bad"}">${escapeHtml(text)}</span>`;
+      if (["completed", "success", "done"].includes(normalized)) {
+        if (task?.source_best_verified === false || results?.source_best_verified === false) {
+          return { kind: "bad", label: "已结束，结果验证失败" };
+        }
+        const verification = taskCompletionVerification(task, results);
+        if (verification === "verified") return { kind: "ok", label: "已完成" };
+        if (verification === "failed") return { kind: "bad", label: "已结束，基线未通过" };
+        return { kind: "warn", label: "已结束，结果待核验" };
+      }
+      if (["pending", "running", "waiting", "cancelled"].includes(normalized)) return { kind: "warn", label: text };
+      return { kind: "bad", label: text };
+    }
+
+    function taskStatusBadge(status, task = null, results = null) {
+      const presentation = taskStatusPresentation(status, task, results);
+      return `<span class="badge ${presentation.kind}">${escapeHtml(presentation.label)}</span>`;
     }
 
     function executionModeBadge(mode) {
