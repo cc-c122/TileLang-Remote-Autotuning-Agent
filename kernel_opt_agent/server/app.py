@@ -196,6 +196,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "experiments.jsonl",
         "summary.csv",
         "profiler_results.jsonl",
+        "mcprofiler_collection.jsonl",
         "metric_observations.jsonl",
         "diagnosis.jsonl",
         "diagnoses.jsonl",
@@ -213,6 +214,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
     evidence_summary = _read_jsonl(results_dir / "metric_observations.jsonl")
     diagnoses = _read_jsonl(results_dir / "diagnoses.jsonl")
     profiler_rows = _read_jsonl(results_dir / "profiler_results.jsonl")
+    profiler_collections = _read_jsonl(results_dir / "mcprofiler_collection.jsonl")
     status = profiler_status(profiler_rows, evidence_summary)
     payload = {
         "results_dir": str(results_dir),
@@ -227,6 +229,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "diagnoses": diagnoses,
         "profiler_status": status,
         "profiler_available": status == "profiler_metrics_available",
+        "profiler_collections": profiler_collections,
         "source_optimization": source_optimization,
         "source_best_verified": source_best_verified if source_mode else None,
         "source_best_verification_error": source_error if source_mode else None,
@@ -292,7 +295,10 @@ def health() -> dict[str, Any]:
         "ok": True,
         "service": "tilelang-agent",
         "mode": "local-runner",
-        "capabilities": {"source_optimization": True},
+        "capabilities": {
+            "source_optimization": True,
+            "mcprofiler_auto_collection": True,
+        },
     }
 
 

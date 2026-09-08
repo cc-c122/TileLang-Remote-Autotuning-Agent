@@ -18,7 +18,8 @@ from kernel_opt_agent.benchmark.correctness import parse_correctness
 from kernel_opt_agent.benchmark.parser import parse_benchmark
 from kernel_opt_agent.config_model import AppConfig, resolve_path
 from kernel_opt_agent.main import build_runner, command_failure_status
-from kernel_opt_agent.redaction import redact_data, redact_text
+from kernel_opt_agent.profiler.mcprofiler import McProfilerCollectionRequest, collect_remote_mcprofiler_case
+from kernel_opt_agent.redaction import configured_secret_values, redact_data, redact_text
 from kernel_opt_agent.sample_security import copy_safe_sample_contents, normalize_sample_path
 
 from .analyzer import AnalysisResult, CopyLoopTarget, analyze_source, rewrite_copy_loop, sha256_bytes, sha256_file
@@ -270,6 +271,86 @@ def _save_logs(artifact_dir: Path, logs: dict[str, str]) -> dict[str, str]:
     return paths
 
 
+def _shape_id(config: AppConfig) -> str | None:
+    field = config.hardware.fields.get("shape_id")
+    if isinstance(field, dict):
+        field = field.get("value")
+    return str(field) if field not in (None, "") else None
+
+
+def _collect_source_profiler(
+    config: AppConfig,
+    results_dir: Path,
+    outcome: _ExecutionOutcome,
+    source_trial_id: str,
+    source_sha256: str,
+    should_cancel: Callable[[], bool],
+    event_callback: Callable[[str, str], None] | None,
+) -> dict[str, Any] | None:
+    if not (
+        config.profiler.enabled
+        and config.profiler.type == "mxmaca"
+        and config.profiler.auto_collect
+        and outcome.status == "benchmark_ok"
+        and outcome.runner is not None
+    ):
+        return None
+    if event_callback:
+        event_callback("profiling_started", f"{source_trial_id}: collecting mcProfiler evidence")
+    metrics = tuple(config.profiler.metrics) if config.profiler.metrics else ()
+    request_kwargs: dict[str, Any] = {
+        "target_command": config.profiler.command or config.kernel.run_command,
+        "case_name": source_trial_id.replace(":", "-")[:96],
+        "source_trial_id": source_trial_id,
+        "source_sha256": source_sha256,
+        "shape_id": _shape_id(config),
+        "kernel_names": tuple(config.profiler.kernel_names),
+        "executable": config.profiler.mcprofiler_executable,
+        "server_executable": config.profiler.mcprofiler_server_executable,
+        "service_port": config.profiler.service_port,
+        "timeout_seconds": config.profiler.timeout_seconds,
+    }
+    if metrics:
+        request_kwargs["metrics"] = metrics
+    try:
+        collection = collect_remote_mcprofiler_case(
+            outcome.runner,
+            results_dir,
+            McProfilerCollectionRequest(**request_kwargs),
+            should_cancel=should_cancel,
+            redactor=lambda value: _redact_value(config, value),
+            secret_values=tuple(configured_secret_values(config)),
+            append_imported_records=True,
+        )
+        payload = collection.to_dict(lambda value: _redact_value(config, value))
+    except Exception as exc:
+        payload = _redact_value(
+            config,
+            {
+                "schema_version": "v2.mcprofiler_collection.v1",
+                "status": "failed",
+                "reason_category": "adapter_exception",
+                "message": f"mcProfiler collection adapter failed: {type(exc).__name__}: {exc}",
+                "source_trial_id": source_trial_id,
+                "source_sha256": source_sha256,
+                "shape_id": _shape_id(config),
+                "metrics_requested": list(metrics),
+                "available_metrics": {},
+                "artifact_manifest": [],
+                "fallback": "benchmark_log",
+                "execution_manifest": {
+                    "target_command_sha256": sha256_bytes(request_kwargs["target_command"].encode("utf-8")),
+                    "credentials_forwarded_to_vendor": False,
+                },
+            },
+        )
+        with (results_dir / "mcprofiler_collection.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str) + "\n")
+    if event_callback and payload.get("status") == "collected":
+        event_callback("profiler_parsed", f"{source_trial_id}: mcProfiler Case parsed")
+    return payload
+
+
 def _append_csv(path: Path, row: dict[str, Any], default_fields: list[str]) -> None:
     fields = default_fields
     if path.is_file():
@@ -438,18 +519,6 @@ def run_source_optimization(
         _append_report(results_dir, result)
         return result
 
-    evidence_rows: list[dict[str, Any]] = []
-    evidence_path = results_dir / "metric_observations.jsonl"
-    if evidence_path.is_file():
-        for line in evidence_path.read_text(encoding="utf-8").splitlines():
-            try:
-                row = json.loads(line)
-                if row.get("available") is True and row.get("evidence_id"):
-                    evidence_rows.append(_redact_value(config, row))
-            except json.JSONDecodeError:
-                pass
-    plans = _plans_for_targets(analysis.targets, evidence_rows, config.source_optimization.max_candidates, planning_client)
-
     trials_root = workspace / "source_trials"
     _assert_within(trials_root, workspace)
     trials_root.mkdir(parents=True, exist_ok=True)
@@ -473,14 +542,64 @@ def run_source_optimization(
         write_source_result(results_dir, result)
         _append_report(results_dir, result)
         return result
+    baseline_collection = _collect_source_profiler(
+        config,
+        results_dir,
+        baseline_outcome,
+        "source-baseline",
+        baseline_hash,
+        cancelled,
+        event_callback,
+    )
+    if baseline_collection is not None:
+        baseline_ok, baseline_error, baseline_hashes = _audit_runner(baseline_outcome.runner, baseline_manifest)
+        baseline_outcome.stage_hashes["after_profiler"] = baseline_hashes
+        if not baseline_ok:
+            baseline_outcome.status = "validation_failed"
+            baseline_outcome.error = baseline_error
+            restored, rollback_error, rollback_hashes = _restore_execution_workspace(
+                config, baseline_outcome.runner, baseline_snapshot, baseline_manifest
+            )
+            _close_runner(baseline_outcome.runner)
+            baseline_artifacts = _save_logs(trials_root / "baseline" / "logs", baseline_outcome.logs)
+            baseline_artifacts["profiler_collection"] = baseline_collection
+            baseline_artifacts["rollback"] = {
+                "verified": restored,
+                "error": rollback_error,
+                "hashes": rollback_hashes,
+            }
+            result.status = "failed"
+            result.reason = f"source optimization baseline profiler audit failed: {baseline_error}"
+            result = _sanitized_result(config, result)
+            write_source_result(results_dir, result)
+            _append_report(results_dir, result)
+            return result
     _close_runner(baseline_outcome.runner)
     baseline_artifacts = _save_logs(trials_root / "baseline" / "logs", baseline_outcome.logs)
+    if baseline_collection is not None:
+        baseline_artifacts["profiler_collection"] = baseline_collection
     result.baseline_verified = True
     (results_dir / "best_kernel.py").write_bytes(original_bytes)
     if not (results_dir / "best_config.yaml").is_file():
         (results_dir / "best_config.yaml").write_text("{}\n", encoding="utf-8")
     baseline_best_config_bytes = (results_dir / "best_config.yaml").read_bytes()
     baseline_median = statistics.median(baseline_outcome.samples)
+    evidence_rows: list[dict[str, Any]] = []
+    evidence_path = results_dir / "metric_observations.jsonl"
+    if evidence_path.is_file():
+        for line in evidence_path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+                if row.get("available") is True and row.get("evidence_id"):
+                    evidence_rows.append(_redact_value(config, row))
+            except json.JSONDecodeError:
+                pass
+    plans = _plans_for_targets(
+        analysis.targets,
+        evidence_rows,
+        config.source_optimization.max_candidates,
+        planning_client,
+    )
     candidates: list[tuple[SourceOptimizationTrial, Path]] = []
     rollback_failed = False
 
@@ -530,6 +649,22 @@ def run_source_optimization(
         if event_callback:
             event_callback("source_trial_started", f"{trial_id}: controlled source candidate started")
         outcome = _execute_version(config, candidate_dir, candidate_manifest, config.source_optimization.benchmark_repeats, cancelled, event_callback, trial_id, keep_runner=True)
+        candidate_collection = _collect_source_profiler(
+            config,
+            results_dir,
+            outcome,
+            trial_id,
+            candidate_hash,
+            cancelled,
+            event_callback,
+        )
+        if candidate_collection is not None:
+            trial.artifacts["profiler_collection"] = candidate_collection
+            candidate_ok, candidate_error, candidate_hashes = _audit_runner(outcome.runner, candidate_manifest)
+            outcome.stage_hashes["after_profiler"] = candidate_hashes
+            if not candidate_ok:
+                outcome.status = "validation_failed"
+                outcome.error = candidate_error
         restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, outcome.runner, snapshot_dir, baseline_candidate_manifest)
         _close_runner(outcome.runner)
         trial.execution_source_sha256 = outcome.execution_hash

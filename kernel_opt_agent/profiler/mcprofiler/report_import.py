@@ -9,16 +9,21 @@ from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
 from kernel_opt_agent.profiler.mcprofiler import parse_mcprofiler_case
 
 
-def import_report(case_dir: Path, out_dir: Path) -> dict:
+def import_report(case_dir: Path, out_dir: Path, source_trial_id: str | None = None) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     parsed = parse_mcprofiler_case(case_dir)
     result = MxmacaProfiler().collect({"mcprofiler_case_path": str(case_dir)})
-    evidence_records = profiler_observations_to_evidence(result, parsed.metadata.get("case_name") or case_dir.name)
+    evidence_records = profiler_observations_to_evidence(
+        result,
+        source_trial_id or parsed.metadata.get("case_name") or case_dir.name,
+    )
     diagnoses = diagnose_from_evidence_records(evidence_records)
     parsed_payload = parsed.to_dict()
     evidence_payload = [item.to_dict() for item in evidence_records]
     diagnosis_payload = [item.to_dict() for item in diagnoses]
     (out_dir / "parsed_mcprofiler_case.json").write_text(json.dumps(parsed_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    with (out_dir / "profiler_results.jsonl").open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(result.to_dict(), ensure_ascii=False, default=str) + "\n")
     with (out_dir / "metric_observations.jsonl").open("w", encoding="utf-8") as handle:
         for item in evidence_payload:
             handle.write(json.dumps(item, ensure_ascii=False, default=str) + "\n")
@@ -26,6 +31,8 @@ def import_report(case_dir: Path, out_dir: Path) -> dict:
         for item in diagnosis_payload:
             handle.write(json.dumps(item, ensure_ascii=False, default=str) + "\n")
     return {
+        "collection_status": "imported",
+        "collection_mode": "report_import",
         "metadata": parsed_payload["metadata"],
         "artifact_id": parsed_payload["artifacts"].get("artifact_id"),
         "evidence_count": len(evidence_payload),

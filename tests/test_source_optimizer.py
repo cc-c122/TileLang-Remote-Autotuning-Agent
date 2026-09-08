@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import yaml
@@ -249,6 +250,125 @@ class SourceEngineTests(unittest.TestCase):
                 should_cancel=cancel,
             )
         return root, results, result, original_hash
+
+    def test_mcprofiler_baseline_evidence_precedes_planning_and_candidates_are_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sample = root / "sample"
+            sample.mkdir()
+            entry = sample / "kernel.py"
+            entry.write_text(_source(), encoding="utf-8")
+            (sample / "correctness.py").write_text("protected", encoding="utf-8")
+            config = _config(sample)
+            config.profiler.enabled = True
+            config.profiler.type = "mxmaca"
+            config.profiler.auto_collect = True
+            results = root / "results"
+            results.mkdir()
+            calls = []
+            target = analyze_source(entry.read_text(encoding="utf-8")).targets[0]
+            planner = RecordingPlanner(
+                {
+                    "target_id": target.target_id,
+                    "template": "parallel_copy_to_t_copy",
+                    "hypothesis": "use baseline profiler evidence",
+                    "evidence_ids": ["ev_baseline"],
+                }
+            )
+
+            def fake_collect(runner, results_dir, request, **kwargs):
+                calls.append(request)
+                payload = {
+                    "schema_version": "v2.mcprofiler_collection.v1",
+                    "status": "collected",
+                    "reason_category": "none",
+                    "source_trial_id": request.source_trial_id,
+                    "source_sha256": request.source_sha256,
+                    "shape_id": request.shape_id,
+                    "metrics_requested": list(request.metrics),
+                    "available_metrics": {"l2c_hit_rate": True},
+                    "artifact_manifest": [{"sha256": "b" * 64, "source": "mcprofiler_auto_collection"}],
+                    "fallback": "benchmark_log",
+                }
+                with (results_dir / "mcprofiler_collection.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(payload) + "\n")
+                if request.source_trial_id == "source-baseline":
+                    with (results_dir / "metric_observations.jsonl").open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps({
+                            "evidence_id": "ev_baseline",
+                            "metric": "l2c_hit_rate",
+                            "value": 46.1,
+                            "available": True,
+                            "source_trial_id": "source-baseline",
+                        }) + "\n")
+                return SimpleNamespace(
+                    status="collected",
+                    reason_category="none",
+                    to_dict=lambda redactor=None: payload if redactor is None else redactor(payload),
+                )
+
+            with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=lambda config, trial_dir: FakeRunner(trial_dir)), patch(
+                "kernel_opt_agent.source_optimizer.engine.collect_remote_mcprofiler_case",
+                side_effect=fake_collect,
+            ):
+                result = run_source_optimization(
+                    config,
+                    root / "workspace",
+                    results,
+                    analyze_source(entry.read_text(encoding="utf-8")),
+                    entry,
+                    planning_client=planner,
+                )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(calls[0].source_trial_id, "source-baseline")
+            self.assertEqual(calls[0].source_sha256, hashlib.sha256(entry.read_bytes()).hexdigest())
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(calls[1].source_trial_id.startswith("source-"))
+            self.assertEqual(calls[1].source_sha256, result.trials[0].source_after_sha256)
+            self.assertIn("ev_baseline", planner.messages[0][0]["content"])
+            rows = [json.loads(line) for line in (results / "mcprofiler_collection.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([row["source_trial_id"] for row in rows], ["source-baseline", calls[1].source_trial_id])
+
+    def test_unavailable_mcprofiler_does_not_stop_source_optimization(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sample = root / "sample"
+            sample.mkdir()
+            entry = sample / "kernel.py"
+            entry.write_text(_source(), encoding="utf-8")
+            (sample / "correctness.py").write_text("protected", encoding="utf-8")
+            config = _config(sample)
+            config.profiler.enabled = True
+            config.profiler.type = "mxmaca"
+            config.profiler.auto_collect = True
+            results = root / "results"
+            results.mkdir()
+
+            with patch(
+                "kernel_opt_agent.source_optimizer.engine.build_runner",
+                side_effect=lambda config, trial_dir: FakeRunner(trial_dir),
+            ):
+                result = run_source_optimization(
+                    config,
+                    root / "workspace",
+                    results,
+                    analyze_source(entry.read_text(encoding="utf-8")),
+                    entry,
+                )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(len(result.trials), 1)
+            rows = [
+                json.loads(line)
+                for line in (results / "mcprofiler_collection.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(rows), 2)
+            self.assertEqual([row["source_trial_id"] for row in rows][0], "source-baseline")
+            self.assertTrue(rows[1]["source_trial_id"].startswith("source-"))
+            self.assertTrue(all(row["status"] == "unsupported" for row in rows))
+            self.assertTrue(all(row["reason_category"] == "runner_unsupported" for row in rows))
+            self.assertTrue(all(row["fallback"] == "benchmark_log" for row in rows))
 
     def test_build_and_correctness_failures_rollback_original_hash(self) -> None:
         for mode, status in (

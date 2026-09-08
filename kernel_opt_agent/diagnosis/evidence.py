@@ -54,6 +54,7 @@ class EvidenceRecord:
     available: bool
     confidence: str
     parse_warnings: list[str] = field(default_factory=list)
+    source_trial_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return redact_sensitive(
@@ -68,6 +69,7 @@ class EvidenceRecord:
                 "available": self.available,
                 "confidence": self.confidence,
                 "parse_warnings": self.parse_warnings,
+                "source_trial_id": self.source_trial_id,
             }
         )
 
@@ -101,6 +103,7 @@ def observation_to_evidence(
         available=observation.available,
         confidence=observation.confidence,
         parse_warnings=list(observation.parse_warnings),
+        source_trial_id=trial_id,
     )
 
 
