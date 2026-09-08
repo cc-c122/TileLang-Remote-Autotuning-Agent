@@ -78,6 +78,7 @@ class SSHRunner:
                 allow_agent=True,
             )
         self.sftp = self.client.open_sftp()
+        self.sftp.get_channel().settimeout(self.timeout_seconds)
         self._mkdir_p(self.info.remote_workspace)
         self._ensure_workspace_marker(self.info.remote_workspace)
 
@@ -283,8 +284,14 @@ class SSHRunner:
         remote_path = posixpath.join(self.info.remote_workspace, normalized)
         root_item = self.sftp.lstat(remote_path)
         files: list[tuple[str, Path, int]] = []
+        visited = 0
+        total_bytes = 0
 
         def inspect(remote: str, local: Path, item: object) -> None:
+            nonlocal visited, total_bytes
+            visited += 1
+            if visited > max_files * 4 or len(local.relative_to(local_path.resolve()).parts) > 64:
+                raise ValueError("remote artifact directory limits exceeded")
             if stat.S_ISLNK(item.st_mode):
                 raise ValueError(f"refusing to download remote symlink: {remote}")
             if stat.S_ISDIR(item.st_mode):
@@ -294,16 +301,24 @@ class SSHRunner:
                     target.relative_to(local_path.resolve())
                     inspect(posixpath.join(remote, name), target, entry)
                 return
+            if not stat.S_ISREG(item.st_mode):
+                raise ValueError(f"refusing non-regular remote artifact: {remote}")
             size = int(getattr(item, "st_size", 0) or 0)
+            if size < 0:
+                raise ValueError("remote artifact has an invalid size")
             files.append((remote, local, size))
+            total_bytes += size
             if len(files) > max_files:
                 raise ValueError(f"remote artifact contains more than {max_files} files")
-            if sum(file_size for _, _, file_size in files) > max_bytes:
+            if total_bytes > max_bytes:
                 raise ValueError(f"remote artifact exceeds {max_bytes} bytes")
 
         inspect(remote_path, local_path.resolve(), root_item)
         transferred = 0
         for remote, local, _ in files:
+            current = self.sftp.lstat(remote)
+            if not stat.S_ISREG(current.st_mode):
+                raise ValueError("remote artifact changed type before transfer")
             local.parent.mkdir(parents=True, exist_ok=True)
             with self.sftp.open(remote, "rb") as source, local.open("wb") as target:
                 while True:
@@ -319,6 +334,8 @@ class SSHRunner:
         assert self.sftp is not None
         normalized = self._assert_no_symlink_components(relative_path)
         remote_path = posixpath.join(self.info.remote_workspace, normalized)
+        if not stat.S_ISREG(self.sftp.lstat(remote_path).st_mode):
+            raise ValueError(f"refusing to hash non-regular remote artifact: {relative_path}")
         digest = hashlib.sha256()
         with self.sftp.open(remote_path, "rb") as handle:
             for chunk in iter(lambda: handle.read(64 * 1024), b""):
@@ -410,10 +427,10 @@ class SSHRunner:
                 "test -r \"/proc/$pid/environ\" || exit 1; "
                 f"tr '\\0' '\\n' < \"/proc/$pid/environ\" | grep -Fx {shlex.quote('KERNEL_AGENT_PROCESS_TOKEN=' + process_token)} >/dev/null || exit 1; "
                 "kill -TERM -- \"-$pid\" 2>/dev/null || true; "
-                "i=0; while kill -0 \"$pid\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; "
-                "if kill -0 \"$pid\" 2>/dev/null; then kill -KILL -- \"-$pid\" 2>/dev/null || true; "
-                "i=0; while kill -0 \"$pid\" 2>/dev/null && [ \"$i\" -lt 20 ]; do sleep 0.1; i=$((i+1)); done; fi; "
-                f"kill -0 \"$pid\" 2>/dev/null && exit 1; rm -f {shlex.quote(pid_file)}; exit 0"
+                "i=0; while kill -0 -- \"-$pid\" 2>/dev/null && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i+1)); done; "
+                "if kill -0 -- \"-$pid\" 2>/dev/null; then kill -KILL -- \"-$pid\" 2>/dev/null || true; "
+                "i=0; while kill -0 -- \"-$pid\" 2>/dev/null && [ \"$i\" -lt 20 ]; do sleep 0.1; i=$((i+1)); done; fi; "
+                f"kill -0 -- \"-$pid\" 2>/dev/null && exit 1; rm -f {shlex.quote(pid_file)}; exit 0"
             )
             stop_guard = validate(stop_command, self.info.remote_workspace, self.info.remote_workspace, self.denied_commands)
             if not stop_guard.allowed:

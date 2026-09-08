@@ -211,6 +211,20 @@ class McProfilerCollectionTests(unittest.TestCase):
             )
             self.assertEqual((oversized.status, oversized.reason_category), ("failed", "artifact_download_failed"))
 
+    def test_changed_report_is_not_imported_as_execution_evidence(self) -> None:
+        class ChangedReportRunner(FakeRemoteCollectionRunner):
+            def download(self, relative_path, local_path, **kwargs):
+                super().download(relative_path, local_path, **kwargs)
+                report = next(local_path.rglob("report_dumped_result.json"))
+                report.write_text("{}", encoding="utf-8")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            results = root / "results"
+            outcome = collect_remote_mcprofiler_case(ChangedReportRunner(root / "remote"), results, self.request())
+            self.assertEqual((outcome.status, outcome.reason_category), ("failed", "artifact_hash_mismatch"))
+            self.assertFalse((results / "metric_observations.jsonl").exists())
+
     def test_unsupported_tool_and_missing_report_are_explicit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -406,6 +420,7 @@ class McProfilerCollectionTests(unittest.TestCase):
         self.assertEqual(result.error_message, "command cancelled")
         self.assertEqual(len(client.commands), 2)
         self.assertIn("kill -TERM --", client.commands[1])
+        self.assertIn('kill -0 --', client.commands[1])
         self.assertIn("KERNEL_AGENT_PROCESS_TOKEN", client.commands[1])
         self.assertIn("task workspace", client.commands[1])
 
@@ -428,6 +443,8 @@ class McProfilerCollectionTests(unittest.TestCase):
             def listdir_attr(self, path: str):
                 if self.mode == "windows_name":
                     return [Attr("C:\\escape.txt", stat.S_IFREG, 1)]
+                if self.mode == "fifo":
+                    return [Attr("pipe", stat.S_IFIFO)]
                 return [Attr("large.bin", stat.S_IFREG, 10)]
 
         runner = SSHRunner(
@@ -445,6 +462,9 @@ class McProfilerCollectionTests(unittest.TestCase):
             runner.sftp = SFTP("large")
             with self.assertRaisesRegex(ValueError, "exceeds 5 bytes"):
                 runner.download("case", target, max_bytes=5)
+            runner.sftp = SFTP("fifo")
+            with self.assertRaisesRegex(ValueError, "non-regular"):
+                runner.download("case", target)
 
     def test_ssh_timeout_preserves_timeout_when_process_stop_is_unverified(self) -> None:
         class Channel:

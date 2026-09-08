@@ -356,6 +356,8 @@ def collect_remote_mcprofiler_case(
     }
     if execution.guard_denied:
         return finish("failed", "guard_denied", execution.error_message or execution.stderr or "collection command denied", logs=log_paths, execution_manifest=execution_manifest)
+    if "stop could not be verified" in (execution.error_message or ""):
+        return finish("failed", "cleanup_unverified", execution.error_message, logs=log_paths, execution_manifest=execution_manifest)
     if execution.returncode == 130 or (should_cancel and should_cancel()):
         return finish("cancelled", "cancelled", "official mcProfiler collection was cancelled", logs=log_paths, execution_manifest=execution_manifest)
     if execution.timeout:
@@ -396,8 +398,17 @@ def collect_remote_mcprofiler_case(
             shutil.rmtree(local_case)
         return finish("failed", "artifact_download_failed", f"mcProfiler Case download failed: {type(exc).__name__}: {exc}", logs=log_paths, execution_manifest=execution_manifest)
     if _contains_secret(local_case, secret_values):
+        local_case.resolve().relative_to((results_dir / "mcprofiler_cases").resolve())
         shutil.rmtree(local_case)
         return finish("failed", "secret_detected", "downloaded mcProfiler artifacts contained a configured secret and were removed", logs=log_paths, execution_manifest=execution_manifest)
+
+    downloaded_report = local_case.joinpath(*posixpath.relpath(report_path, case_root).split("/"))
+    try:
+        downloaded_report.resolve().relative_to(local_case.resolve())
+        if not downloaded_report.is_file() or _sha256(downloaded_report) != report_hashes[report_path]:
+            return finish("failed", "artifact_hash_mismatch", "downloaded report differs from the report inspected on the execution runner", logs=log_paths, execution_manifest=execution_manifest)
+    except (OSError, ValueError):
+        return finish("failed", "artifact_hash_mismatch", "downloaded report could not be verified", logs=log_paths, execution_manifest=execution_manifest)
 
     try:
         from kernel_opt_agent.profiler.mcprofiler.report_import import import_report
