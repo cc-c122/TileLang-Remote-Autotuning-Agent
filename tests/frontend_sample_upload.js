@@ -79,8 +79,8 @@ async (page) => {
         best_kernel: "# Baseline fixture, not hardware evidence",
         best_config: {},
         report_markdown: "# Fixture report",
-        summary_table: [{status: "benchmark_ok", latency: 1.25, objective_value: 1.25}],
-        best_row: {status: "benchmark_ok", latency: 1.25, objective_value: 1.25},
+        summary_table: [{trial_id: "baseline", status: "benchmark_ok", latency: 1.25, objective_value: 1.25, correctness: {passed: true, max_error: 0}}],
+        best_row: {trial_id: "baseline", status: "benchmark_ok", latency: 1.25, objective_value: 1.25, correctness: {passed: true, max_error: 0}},
         improvement_percent: 0,
         failed_cases: [],
         evidence_summary: [],
@@ -214,6 +214,20 @@ async (page) => {
   check(await page.locator("#startOptimizationBtn").isDisabled(), "Empty benchmark command disables submission");
   check((await page.locator("#startValidationMessage").innerText()).includes("benchmark 命令不能为空"), "Empty benchmark command shows a Chinese error");
   await setRunnableCommands();
+  const labeledCommandCases = [
+    ["#v2BuildCommand", "build command: timeout 60s python demo.py", "python -m py_compile kernel.py", "build"],
+    ["#v2CorrectnessCommand", "correctness command: timeout 60s python demo.py", "python -c \"print('CORRECTNESS_RESULT status=PASS max_error=0 reason=ok')\"", "correctness"],
+    ["#v2BenchmarkCommand", "benchmark command: timeout 60s python demo.py", "python -c \"print('BENCHMARK_RESULT latency_ms=1.25')\"", "benchmark"],
+  ];
+  for (const [selector, labeledValue, validValue, fieldName] of labeledCommandCases) {
+    const tasksBeforeLabel = taskRequests.length;
+    await page.locator(selector).fill(labeledValue);
+    check(await page.locator("#startOptimizationBtn").isDisabled(), `${fieldName} field label blocks submission`);
+    check((await page.locator("#startValidationMessage").innerText()).includes("只填写冒号后的实际命令"), `${fieldName} field label gets an actionable Chinese error`);
+    await page.evaluate(() => startOptimization());
+    check(taskRequests.length === tasksBeforeLabel, `${fieldName} field label cannot bypass validation through JavaScript`);
+    await page.locator(selector).fill(validValue);
+  }
   const inlineTasksBefore = taskRequests.length;
   await page.locator("#startOptimizationBtn").click();
   await page.waitForFunction(() => state.activeTaskId && state.task);
@@ -316,6 +330,39 @@ async (page) => {
   await page.locator("#downloadBestKernelBtn").click();
   await page.waitForTimeout(100);
   check(downloads.length === downloadCount + 1 && downloads.at(-1) === "best_kernel", "Best artifact button calls the download API");
+
+  await page.evaluate(() => {
+    state.task = {
+      task_id: "completed-without-baseline",
+      project_name: "failed-baseline-fixture",
+      status: "completed",
+      execution_mode: "baseline_only",
+      execution_mode_reason: "no statically verified source target found in entry file",
+      baseline_latency: null,
+      best_latency: null,
+      events: [],
+    };
+    state.taskResults = {
+      summary_table: [{trial_id: "baseline", status: "build_failed", correctness: {passed: false}}],
+      best_row: null,
+      best_kernel: null,
+      best_config: null,
+      report_markdown: "# Failed baseline fixture",
+      failed_cases: [{status: "build_failed", reason: "fixture command failed"}],
+      evidence_summary: [],
+      diagnoses: [],
+      profiler_available: false,
+    };
+    renderTaskDetail();
+    renderApiResults();
+  });
+  check((await page.locator("#taskStatus").innerText()) === "已结束，基线未通过", "Completed task without a valid baseline is not presented as successful");
+  check((await page.locator("#taskDetailPanel .result-card").first().locator(".metric-main").innerText()) === "已结束，基线未通过", "Completed is removed from the prominent current-stage value after baseline failure");
+  check((await page.locator("#taskDetailPanel .result-card").nth(2).locator(".metric-main").innerText()) === "基线验证未通过", "Run conclusion reflects the failed baseline instead of a neutral completed state");
+  check((await page.locator("#taskDetailPanel").innerText()).includes("不能视为优化成功"), "Task detail explains that terminal completion is not optimization success");
+  check((await page.locator("#taskDetailPanel").innerText()).includes("核对 entry_file"), "Execution-mode downgrade points the user to entry_file");
+  check((await page.locator("#apiResultsPanel").innerText()).includes("本次没有已验证的基线性能结果"), "Results keep failed baseline evidence explicit");
+  check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Failed baseline cannot enable the kernel download");
 
   healthAvailable = false;
   await page.reload();
