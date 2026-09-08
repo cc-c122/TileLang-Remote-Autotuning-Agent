@@ -276,6 +276,31 @@
       font-weight: 760;
     }
 
+    .profiler-option {
+      display: grid;
+      gap: 5px;
+      margin-top: 12px;
+    }
+
+    .profiler-option[hidden] { display: none; }
+
+    .profiler-toggle {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      cursor: pointer;
+      color: #344054;
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .profiler-toggle input {
+      width: 16px;
+      height: 16px;
+      margin: 2px 0 0;
+      flex: 0 0 auto;
+    }
+
     input, select, textarea {
       width: 100%;
       min-width: 0;
@@ -1314,7 +1339,7 @@
               <button class="secondary" type="button" data-view-target="settingsView">去设置</button>
             </div>
             <details style="margin-top:12px">
-              <summary>高级命令设置</summary>
+              <summary>高级运行设置</summary>
               <div class="form-grid three" style="margin-top:12px">
                 <div class="field">
                   <label for="v2BuildCommand">build command</label>
@@ -1343,6 +1368,13 @@
                   <label for="v2MinImprovementPercent">最低提升门槛 (%)</label>
                   <input id="v2MinImprovementPercent" type="number" min="0" step="0.1" value="1.0" disabled>
                 </div>
+              </div>
+              <div id="mcProfilerAutoCollectionField" class="profiler-option" hidden>
+                <label class="profiler-toggle" for="v2McProfilerAutoCollect">
+                  <input id="v2McProfilerAutoCollect" type="checkbox">
+                  <span>自动采集 mcProfiler</span>
+                </label>
+                <div id="mcProfilerAutoCollectionHint" class="muted">可选采集。远端未安装或采集不可用时，任务会保留 benchmark + 日志分析，不会伪造 profiler 指标。</div>
               </div>
             </details>
           </section>
@@ -1611,6 +1643,8 @@
       "hbm_bandwidth_GBps",
     ];
     const SOURCE_OPTIMIZATION_STATUSES = new Set(["not_requested", "unavailable", "running", "completed", "failed", "cancelled"]);
+    const MCPROFILER_COLLECTION_SCHEMA = "v2.mcprofiler_collection.v1";
+    const MCPROFILER_COLLECTION_STATUSES = new Set(["collected", "imported", "unsupported", "failed", "cancelled"]);
     const SOURCE_TRIAL_STATUSES = new Set(["proposed", "running", "validation_failed", "build_failed", "correctness_failed", "benchmark_failed", "no_improvement", "accepted", "cancelled"]);
     const PERFORMANCE_GATE_SCHEMA_VERSION = "v2.performance_gate.v1";
     const PERFORMANCE_GATE_DECISIONS = new Set(["accepted", "no_improvement", "inconclusive", "codegen_unchanged"]);
@@ -1649,7 +1683,7 @@
     const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
-    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, apiHealthy: false, apiError: "", apiCapabilities: { sourceOptimization: false, declared: false }, sourceOptimizationChoiceTouched: false, hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, settingsEnv: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskList: [], taskPollTimer: null, eventPollTimer: null, sampleFiles: [], sampleUploadId: null, sampleUploadStage: "empty", sampleUploadError: "", sampleUploadVersion: 0, sampleUploadedVersion: null, sampleUploadedEntryFile: "", sampleSourceMode: "inline", taskSubmitting: false, cancellationPending: false };
+    const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, apiHealthy: false, apiError: "", apiCapabilities: { sourceOptimization: false, declared: false, mcProfilerAutoCollection: false }, sourceOptimizationChoiceTouched: false, hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, settingsEnv: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskList: [], taskPollTimer: null, eventPollTimer: null, sampleFiles: [], sampleUploadId: null, sampleUploadStage: "empty", sampleUploadError: "", sampleUploadVersion: 0, sampleUploadedVersion: null, sampleUploadedEntryFile: "", sampleSourceMode: "inline", taskSubmitting: false, cancellationPending: false };
     const el = {
       alerts: document.getElementById("alerts"),
       apiHealthStatus: document.getElementById("apiHealthStatus"),
@@ -1697,6 +1731,8 @@
       v2TimeoutSeconds: document.getElementById("v2TimeoutSeconds"),
       v2ProfilerEnabled: document.getElementById("v2ProfilerEnabled"),
       v2ProfilerType: document.getElementById("v2ProfilerType"),
+      v2McProfilerAutoCollect: document.getElementById("v2McProfilerAutoCollect"),
+      mcProfilerAutoCollectionField: document.getElementById("mcProfilerAutoCollectionField"),
       v2PatchingEnabled: document.getElementById("v2PatchingEnabled"),
       v2SampleFile: document.getElementById("v2SampleFile"),
       v2SampleDirectory: document.getElementById("v2SampleDirectory"),
@@ -1772,6 +1808,11 @@
     el.v2Backend.addEventListener("input", renderHardwareEditor);
     el.resolveHardwareBtn.addEventListener("click", resolveHardwareProfile);
     el.startOptimizationBtn.addEventListener("click", startOptimization);
+    el.v2RunnerType.addEventListener("change", () => {
+      el.v2McProfilerAutoCollect.checked = false;
+      syncMcProfilerAutoCollectionUi();
+    });
+    el.v2McProfilerAutoCollect.addEventListener("change", updateStartButtonState);
     el.v2ExecutionIntent.addEventListener("change", () => {
       state.sourceOptimizationChoiceTouched = true;
       syncSourceOptimizationUi();
@@ -1800,6 +1841,7 @@
     });
     loadSettings();
     syncSourceOptimizationUi();
+    syncMcProfilerAutoCollectionUi();
     updateSampleSourceUi();
     renderHardwareEditor();
     updateStartButtonState();
@@ -2711,6 +2753,24 @@
       updateStartButtonState();
     }
 
+    function mcProfilerAutoCollectionAvailable() {
+      return state.apiCapabilities.mcProfilerAutoCollection === true;
+    }
+
+    function mcProfilerAutoCollectionRequested() {
+      return mcProfilerAutoCollectionAvailable()
+        && el.v2RunnerType.value === "ssh"
+        && el.v2McProfilerAutoCollect.checked;
+    }
+
+    function syncMcProfilerAutoCollectionUi() {
+      const visible = state.apiHealthy && mcProfilerAutoCollectionAvailable() && el.v2RunnerType.value === "ssh";
+      el.mcProfilerAutoCollectionField.hidden = !visible;
+      el.v2McProfilerAutoCollect.disabled = !visible;
+      if (!visible) el.v2McProfilerAutoCollect.checked = false;
+      updateStartButtonState();
+    }
+
     function readBudgetInputs() {
       return {
         max_iterations: Number(el.v2MaxIterations.value),
@@ -2937,22 +2997,27 @@
         }
         state.apiHealthy = true;
         state.apiError = "";
-        const sourceOptimizationCapability = payload?.capabilities?.source_optimization;
+        const capabilities = payload?.capabilities && typeof payload.capabilities === "object" ? payload.capabilities : {};
+        const sourceOptimizationCapability = capabilities.source_optimization;
+        const mcProfilerAutoCollectionCapability = capabilities.mcprofiler_auto_collection;
         state.apiCapabilities = {
           sourceOptimization: sourceOptimizationCapability === true,
           declared: typeof sourceOptimizationCapability === "boolean",
+          mcProfilerAutoCollection: mcProfilerAutoCollectionCapability === true,
         };
         el.apiHealthStatus.className = "chip ok";
         el.apiHealthStatus.textContent = "API：已连接";
         syncSourceOptimizationUi({ preferSource: sourceOptimizationCapability === true });
+        syncMcProfilerAutoCollectionUi();
         await loadSettingsFromApi({ silent: true });
         await loadTaskList();
         renderAlerts();
       } catch (error) {
         state.apiHealthy = false;
         state.apiError = error.message || "后端服务未启动，请确认本地服务已开启。";
-        state.apiCapabilities = { sourceOptimization: false, declared: false };
+        state.apiCapabilities = { sourceOptimization: false, declared: false, mcProfilerAutoCollection: false };
         syncSourceOptimizationUi();
+        syncMcProfilerAutoCollectionUi();
         el.apiHealthStatus.className = "chip bad";
         el.apiHealthStatus.textContent = "API：未启动";
         renderTaskWaiting(state.apiError);
@@ -3078,10 +3143,9 @@
           timeout_seconds: budget.timeout_seconds,
           objective: "latency",
         },
-        profiler: {
-          enabled: false,
-          type: "dummy",
-        },
+        profiler: mcProfilerAutoCollectionRequested()
+          ? { enabled: true, type: "mxmaca", auto_collect: true }
+          : { enabled: true, type: "dummy" },
         patching: {
           enabled: false,
           run_controlled_trial: false,
@@ -3587,6 +3651,121 @@
       return summary;
     }
 
+    function profilerCollectionStatusBadge(record) {
+      if (record?.schema_version !== MCPROFILER_COLLECTION_SCHEMA) return `<span class="badge warn">schema 未识别</span>`;
+      const status = typeof record?.status === "string" ? record.status.trim().toLowerCase() : "";
+      if (!MCPROFILER_COLLECTION_STATUSES.has(status)) return `<span class="badge warn">未知状态：${escapeHtml(display(status || "未返回"))}</span>`;
+      const labels = {
+        collected: "已采集",
+        imported: "已导入",
+        unsupported: "当前环境不支持",
+        failed: "采集失败",
+        cancelled: "已取消",
+      };
+      const kind = status === "collected" || status === "imported" ? "ok" : status === "failed" ? "bad" : "warn";
+      return `<span class="badge ${kind}">${labels[status]}</span>`;
+    }
+
+    function profilerCollectionMetrics(record) {
+      const requested = Array.isArray(record?.metrics_requested) ? record.metrics_requested : [];
+      const available = record?.available_metrics && typeof record.available_metrics === "object" && !Array.isArray(record.available_metrics)
+        ? record.available_metrics
+        : {};
+      const observations = Array.isArray(record?.metric_observations) ? record.metric_observations.filter((item) => item && typeof item === "object") : [];
+      const names = new Set();
+      requested.forEach((name) => { if (typeof name === "string" && name.trim()) names.add(name.trim()); });
+      Object.keys(available).forEach((name) => { if (name.trim()) names.add(name.trim()); });
+      observations.forEach((item) => {
+        if (typeof item.metric_name === "string" && item.metric_name.trim()) names.add(item.metric_name.trim());
+      });
+      return Array.from(names).map((name) => {
+        const observation = observations.find((item) => item.metric_name === name) || null;
+        const hasValue = !!observation
+          && Object.prototype.hasOwnProperty.call(observation, "value")
+          && observation.value !== null
+          && observation.value !== undefined
+          && observation.value !== "";
+        return {
+          name,
+          hasValue,
+          value: hasValue ? observation.value : null,
+          unit: observation?.unit,
+          source: observation?.source,
+          available: Object.prototype.hasOwnProperty.call(available, name) ? available[name] : undefined,
+        };
+      });
+    }
+
+    function profilerMetricAvailability(metric) {
+      if (metric.hasValue) return `<span class="badge ok">有数值</span>`;
+      if (metric.available === true) return `<span class="badge warn">可用标记，数值未返回</span>`;
+      if (metric.available === false) return `<span class="badge warn">缺失</span>`;
+      return `<span class="badge warn">未声明</span>`;
+    }
+
+    function profilerCollectionMetricTable(record) {
+      const metrics = profilerCollectionMetrics(record);
+      if (!metrics.length) return `<div class="empty">后端未返回请求指标或指标观测。</div>`;
+      return `<div class="table-wrap"><table><thead><tr><th>指标</th><th>值</th><th>单位</th><th>来源</th><th>可用性</th></tr></thead><tbody>${metrics.map((metric) => `<tr><td>${escapeHtml(display(metric.name))}</td><td>${metric.hasValue ? escapeHtml(display(metric.value)) : "未返回数值"}</td><td>${escapeHtml(display(metric.unit))}</td><td>${escapeHtml(display(metric.source))}</td><td>${profilerMetricAvailability(metric)}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+
+    function profilerCollectionFallback(value) {
+      if (value === "benchmark_log") return "benchmark + 日志分析";
+      return display(value);
+    }
+
+    function renderProfilerCollection(record, index) {
+      const schemaValid = record?.schema_version === MCPROFILER_COLLECTION_SCHEMA;
+      const status = typeof record?.status === "string" ? record.status.trim().toLowerCase() : "";
+      const statusKnown = MCPROFILER_COLLECTION_STATUSES.has(status);
+      const missingCount = profilerCollectionMetrics(record).filter((metric) => !metric.hasValue).length;
+      const collectionName = pick(record?.case_name, record?.collection_id, `采集记录 ${index + 1}`);
+      const sourceHash = typeof record?.source_sha256 === "string" && record.source_sha256.trim()
+        ? record.source_sha256.trim().slice(0, 12)
+        : "未返回";
+      const advanced = {
+        collection_id: record?.collection_id ?? null,
+        case_name: record?.case_name ?? null,
+        metrics_requested: Array.isArray(record?.metrics_requested) ? record.metrics_requested : [],
+        available_metrics: record?.available_metrics ?? {},
+        artifact_manifest: Array.isArray(record?.artifact_manifest) ? record.artifact_manifest : [],
+        logs: record?.logs ?? null,
+        warnings: Array.isArray(record?.warnings) ? record.warnings : [],
+        execution_manifest: record?.execution_manifest ?? record?.command_audit ?? null,
+      };
+      return `<details class="source-trial" ${index === 0 ? "open" : ""}>
+        <summary><span>${escapeHtml(display(collectionName))}</span><span>${profilerCollectionStatusBadge(record)}</span></summary>
+        <div class="source-trial-body">
+          ${schemaValid ? "" : `<div class="alert warn">schema_version 未识别，以下内容仅按兼容字段保守展示。</div>`}
+          ${schemaValid && !statusKnown ? `<div class="alert warn">后端返回了未知采集状态，前端不会将它解释为采集成功。</div>` : ""}
+          ${schemaValid && status === "collected" && missingCount ? `<div class="alert warn">采集完成不代表所有指标可用；${missingCount} 个指标没有显式数值。</div>` : ""}
+          <div class="kv">
+            <div>reason category</div><div>${escapeHtml(display(record?.reason_category))}</div>
+            <div>原因说明</div><div>${escapeHtml(display(record?.message))}</div>
+            <div>source trial</div><div>${escapeHtml(display(record?.source_trial_id))}</div>
+            <div>source SHA 摘要</div><div>${escapeHtml(sourceHash)}</div>
+            <div>shape</div><div>${escapeHtml(display(record?.shape_id))}</div>
+            <div>降级分析</div><div>${escapeHtml(profilerCollectionFallback(record?.fallback))}</div>
+          </div>
+          <h3>指标可用性</h3>
+          ${profilerCollectionMetricTable(record)}
+          <details style="margin-top:10px"><summary>采集产物与审计信息</summary><pre>${escapeHtml(JSON.stringify(redactObject(advanced), null, 2))}</pre></details>
+        </div>
+      </details>`;
+    }
+
+    function renderProfilerCollections(results) {
+      const rows = Array.isArray(results?.profiler_collections) ? results.profiler_collections.filter((item) => item && typeof item === "object") : [];
+      const successCount = rows.filter((item) => item.schema_version === MCPROFILER_COLLECTION_SCHEMA && ["collected", "imported"].includes(String(item.status || "").toLowerCase())).length;
+      const failureCount = rows.filter((item) => item.schema_version === MCPROFILER_COLLECTION_SCHEMA && String(item.status || "").toLowerCase() === "failed").length;
+      const summaryKind = failureCount ? successCount ? "warn" : "bad" : successCount ? "ok" : "warn";
+      return `<section class="section">
+        <div class="section-head"><h2>mcProfiler 采集</h2><span class="badge ${summaryKind}">${rows.length ? `${rows.length} 条记录` : "未采集"}</span></div>
+        <p class="section-kicker">采集状态只说明 mcProfiler 接入过程；它不证明所有指标可用，也不影响源码 best 的 correctness 与性能验证门禁。</p>
+        ${rows.length ? `<div class="source-trials">${rows.map(renderProfilerCollection).join("")}</div>` : `<div class="empty">本次任务未采集 mcProfiler；这不是任务错误。</div>`}
+      </section>`;
+    }
+
     function evidenceRecordsFromSummary(summary) {
       if (!summary) return [];
       if (Array.isArray(summary)) return summary.filter((item) => item && typeof item === "object");
@@ -4072,6 +4251,7 @@
           <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${baselineSucceeded || sourceMode && acceptedVerified && numeric(sourceImprovement) !== null && numeric(sourceImprovement) >= 0 || !sourceMode && !baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${baselineOnly ? baselineSucceeded ? "基线验证完成" : "基线验证未通过" : sourceMode ? sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? sourceImprovement === null || sourceImprovement === undefined ? "未采集" : `${formatNumber(sourceImprovement)}%` : "未接受源码修改" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
         </div>
         ${renderSourceOptimization(results, executionMode, state.task)}
+        ${renderProfilerCollections(results)}
         ${shapeResultsHtml || renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable)}
         <h3>${baselineOnly ? baselineSucceeded ? "已验证基线 kernel" : "基线 kernel 未通过验证" : sourceMode && !acceptedVerified ? sourceBaselineVerified ? "最终 kernel（baseline）" : "baseline kernel 待核验" : verifiedArtifact ? "best kernel" : "尚无 best kernel"}</h3>
         <pre>${escapeHtml(verifiedArtifact ? results.best_kernel || "等待结果文件：best_kernel.py" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
