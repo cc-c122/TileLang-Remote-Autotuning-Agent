@@ -201,13 +201,17 @@ class SourceAnalyzerTests(unittest.TestCase):
         shadowed_shape = _source().replace("def factory():", "def factory(shape):")
         self.assertFalse(analyze_source(shadowed_shape).targets)
 
-    def test_paged_attention_regression_finds_only_output_partial_copy(self) -> None:
+    def test_paged_attention_regression_finds_copy_and_prefetch_targets(self) -> None:
         analysis = analyze_source(PAGED_SOURCE.read_text(encoding="utf-8"))
-        self.assertEqual(len(analysis.targets), 1)
-        target = analysis.targets[0]
-        self.assertEqual(target.function_name, "flashattn.main")
-        self.assertIn("Output_partial", target.source_expr)
-        self.assertEqual(target.destination_expr, "po_local")
+        copy_targets = [item for item in analysis.targets if item.template == "parallel_copy_to_t_copy"]
+        prefetch_targets = [item for item in analysis.targets if item.template == "prefetch_shared_load"]
+        self.assertEqual(len(copy_targets), 1)
+        self.assertEqual(len(prefetch_targets), 1)
+        self.assertEqual(copy_targets[0].function_name, "flashattn.main")
+        self.assertIn("Output_partial", copy_targets[0].source_expr)
+        self.assertEqual(copy_targets[0].destination_expr, "po_local")
+        self.assertIn("V[physical_block_idx", prefetch_targets[0].source_expr)
+        self.assertEqual(prefetch_targets[0].destination_expr, "V_shared")
 
     def test_invalid_llm_selection_retries_once_then_uses_rule_fallback(self) -> None:
         analysis = analyze_source(_source())

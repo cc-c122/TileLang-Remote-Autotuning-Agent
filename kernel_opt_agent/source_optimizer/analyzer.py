@@ -5,6 +5,12 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from .load_schedule import (
+    SharedLoadScheduleTarget,
+    find_prefetch_shared_load_targets,
+    rewrite_prefetch_shared_load,
+)
+
 
 @dataclass(frozen=True)
 class CopyLoopTarget:
@@ -17,11 +23,17 @@ class CopyLoopTarget:
     destination_expr: str
     extent_expr: str
     dsl_alias: str
+    template: str = "parallel_copy_to_t_copy"
+    hypothesis: str = "replace a verified elementwise copy loop with the TileLang bulk copy primitive"
+    confidence: str = "medium"
+
+
+SourceOptimizationTarget = CopyLoopTarget | SharedLoadScheduleTarget
 
 
 @dataclass(frozen=True)
 class AnalysisResult:
-    targets: tuple[CopyLoopTarget, ...]
+    targets: tuple[SourceOptimizationTarget, ...]
     reason: str | None = None
 
 
@@ -278,16 +290,31 @@ def analyze_source(source: str) -> AnalysisResult:
         return AnalysisResult((), f"entry source is not valid Python: {exc.msg}")
     analyzer = _Analyzer(source)
     analyzer.visit(tree)
-    targets = tuple(sorted(analyzer.targets, key=lambda item: (item.start_line, item.target_id)))
+    targets: tuple[SourceOptimizationTarget, ...] = tuple(
+        sorted(
+            [*analyzer.targets, *find_prefetch_shared_load_targets(source, tree)],
+            key=lambda item: (item.start_line, item.target_id),
+        )
+    )
     if not targets:
-        return AnalysisResult((), "no statically verified direct 1D T.Parallel copy loop was found")
+        return AnalysisResult((), "no statically verified source optimization target was found")
     return AnalysisResult(targets)
 
 
 def rewrite_copy_loop(source: str, target: CopyLoopTarget) -> str:
+    if target.template != "parallel_copy_to_t_copy":
+        raise ValueError("target is not a parallel_copy_to_t_copy target")
     lines = source.splitlines(keepends=True)
     replacement = f"{target.indent}{target.dsl_alias}.copy({target.source_expr}, {target.destination_expr})\n"
     lines[target.start_line - 1 : target.end_line] = [replacement]
     rewritten = "".join(lines)
     ast.parse(rewritten)
     return rewritten
+
+
+def rewrite_source_target(source: str, target: SourceOptimizationTarget) -> str:
+    if target.template == "parallel_copy_to_t_copy" and isinstance(target, CopyLoopTarget):
+        return rewrite_copy_loop(source, target)
+    if target.template == "prefetch_shared_load" and isinstance(target, SharedLoadScheduleTarget):
+        return rewrite_prefetch_shared_load(source, target)
+    raise ValueError(f"unsupported or mismatched source optimization target: {target.template}")
