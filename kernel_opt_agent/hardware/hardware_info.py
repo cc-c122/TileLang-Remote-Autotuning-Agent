@@ -29,6 +29,15 @@ CANONICAL_FIELDS = [
     "max_registers_per_thread",
     "vector_alignment_bytes",
     "supported_dtypes",
+    "device_id",
+    "device_uuid",
+    "pci_bus_id",
+    "sm_count",
+    "cu_count",
+    "runtime_multiprocessor_count",
+    "total_memory_bytes",
+    "available_memory_bytes",
+    "python_executable",
 ]
 
 
@@ -38,6 +47,8 @@ class HardwareField:
     source: Source = "unknown"
     confidence: Confidence = "unknown"
     notes: str = "not detected"
+    unit: str | None = None
+    detected_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +56,8 @@ class HardwareField:
             "source": self.source,
             "confidence": self.confidence,
             "notes": self.notes,
+            "unit": self.unit,
+            "detected_at": self.detected_at,
         }
 
 
