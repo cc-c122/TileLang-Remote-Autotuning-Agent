@@ -1026,6 +1026,10 @@
     }
 
     .hardware-card .table-wrap { width: 100%; }
+    .device-identity { margin: 12px 0; overflow-wrap: anywhere; }
+    .connection-feedback { margin-top: 12px; overflow-wrap: anywhere; }
+    .fingerprint-confirmation input { width: auto; margin-right: 8px; }
+    [hidden] { display: none !important; }
 
     .action-bar {
       display: grid;
@@ -1279,20 +1283,30 @@
           <section class="section">
             <div class="step-title">
               <span class="step-num">2.</span>
-              <h2>选择 GPU</h2>
+              <h2>识别 GPU</h2>
             </div>
-            <div class="gpu-row">
-              <div class="field">
-                <label for="v2GpuModel">GPU 型号</label>
-                <input id="v2GpuModel" value="Metax C500" placeholder="例如 Metax C500 / 沐曦 C500 / NVIDIA H100" autocomplete="off">
-              </div>
-              <div class="field">
-                <label for="v2Backend">backend</label>
-                <input id="v2Backend" value="unknown" placeholder="unknown / cuda / tilelang" autocomplete="off">
-              </div>
+            <div class="inline-actions">
+              <span id="remoteHardwareStatus" class="chip">GPU：尚未识别</span>
               <button id="resolveHardwareBtn" class="secondary" type="button">解析硬件参数</button>
+              <button class="secondary" type="button" data-view-target="settingsView">连接设置</button>
             </div>
-            <p class="section-kicker">系统会优先使用用户输入、内置 profile 和后端可用探测结果；未知字段会保持为空，用户可手动修改。</p>
+            <div id="deviceIdentity" class="device-identity">远程 GPU 由 SSH 连接后的实际探测结果确定。</div>
+            <div id="deviceSelectionField" class="field" hidden>
+              <label for="gpuDeviceSelect">选择远程 GPU</label>
+              <select id="gpuDeviceSelect"></select>
+            </div>
+            <div id="hardwareDetectionMessage" class="connection-feedback" role="status" aria-live="polite"></div>
+            <div class="form-grid" style="margin-top:12px">
+              <div class="field">
+                <label for="v2GpuModel">人工声明 GPU 型号（可选）</label>
+                <input id="v2GpuModel" placeholder="无需预先填写 GPU 型号" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="v2Backend">人工声明 backend（可选）</label>
+                <input id="v2Backend" placeholder="unknown / cuda / mxmaca" autocomplete="off">
+              </div>
+            </div>
+            <p class="settings-note">人工声明不会替代实际探测到的设备身份。未知参数保持未知，可在硬件参数表中修改。</p>
           </section>
 
           <section class="section hardware-card">
@@ -1475,16 +1489,36 @@
               <span class="muted">SSH / LLM 长期设置</span>
             </div>
             <div class="settings-group">
-              <div class="settings-group-head"><span>远程 SSH</span><span class="chip ok" id="sshStatus">SSH：未填写</span></div>
+              <div class="settings-group-head"><span>远程 SSH</span><span class="chip" id="sshStatus">SSH：未连接</span></div>
               <div class="settings-grid">
-                <div class="field"><label for="settingSshHost">Host</label><input id="settingSshHost" placeholder="ssh.modelforge.com" autocomplete="off"></div>
-                <div class="field"><label for="settingSshPort">Port</label><input id="settingSshPort" type="number" value="22"></div>
-                <div class="field"><label for="settingSshUsername">Username</label><input id="settingSshUsername" placeholder="ubuntu" autocomplete="off"></div>
-                <div class="field"><label for="settingAuthType">Auth</label><select id="settingAuthType"><option value="password">password</option><option value="key">key</option></select></div>
-                <div class="field"><label for="settingPasswordEnv">Password Env</label><input id="settingPasswordEnv" value="KERNEL_AGENT_SSH_PASSWORD" autocomplete="off"></div>
-                <div class="field"><label for="settingKeyPath">Key Path</label><input id="settingKeyPath" placeholder="~/.ssh/id_rsa" autocomplete="off"></div>
+                <div class="field"><label for="settingSshHost">SSH 地址</label><input id="settingSshHost" placeholder="容器 SSH 地址" autocomplete="off"></div>
+                <div class="field"><label for="settingSshPort">端口</label><input id="settingSshPort" type="number" min="1" max="65535" value="22"></div>
+                <div class="field"><label for="settingSshUsername">用户名</label><input id="settingSshUsername" placeholder="ubuntu" autocomplete="off"></div>
                 <div class="field"><label for="settingRemoteWorkspace">Workspace</label><input id="settingRemoteWorkspace" placeholder="/tmp/kernel_opt_workspace" autocomplete="off"></div>
+                <div id="sshPasswordField" class="field"><label for="settingSshPassword">SSH 密码</label><input id="settingSshPassword" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="sshPasswordHint"></div>
               </div>
+              <p id="sshPasswordHint" class="muted">密码仅用于本次连接，提交后清空。</p>
+              <div id="hostKeyConfirmation" class="connection-feedback" hidden>
+                <p>首次连接此主机，请与容器提供方核对主机公钥指纹：</p>
+                <code id="hostKeyFingerprint"></code>
+                <p class="fingerprint-confirmation"><label><input id="confirmHostKey" type="checkbox">我已独立核对该指纹，允许连接</label></p>
+                <p class="muted">密码已清空。核对后请重新输入密码，再点击“连接并识别硬件”。</p>
+              </div>
+              <div class="inline-actions">
+                <button id="connectSshBtn" type="button">连接并识别硬件</button>
+                <button id="disconnectSshBtn" class="secondary" type="button" disabled>断开连接</button>
+              </div>
+              <div id="sshConnectionMessage" class="connection-feedback" role="status" aria-live="polite">尚未连接。刷新页面后需要重新连接。</div>
+              <details id="advancedSshSettings" style="margin-top:12px">
+                <summary>高级 SSH 设置</summary>
+                <div class="settings-grid" style="margin-top:12px">
+                  <div class="field"><label for="settingAuthType">认证方式</label><select id="settingAuthType"><option value="password">密码</option><option value="key">密钥路径</option></select></div>
+                  <div class="field"><label for="settingPasswordEnv">后端密码环境变量名</label><input id="settingPasswordEnv" value="KERNEL_AGENT_SSH_PASSWORD" autocomplete="off"></div>
+                  <div class="field"><label for="settingKeyPath">后端密钥路径</label><input id="settingKeyPath" placeholder="~/.ssh/id_rsa" autocomplete="off"></div>
+                </div>
+                <div class="inline-actions"><span class="chip" id="passwordEnvStatus">SSH password env：未检查</span><button id="testConnectionBtn" class="secondary" type="button">测试已保存的后端认证设置</button></div>
+                <p id="savedConnectionTestStatus" class="muted">该测试不创建本页任务会话。</p>
+              </details>
             </div>
             <div class="settings-group">
               <div class="settings-group-head"><span>LLM API</span><span class="chip ok" id="llmStatus">LLM：未填写</span></div>
@@ -1495,17 +1529,15 @@
               </div>
             </div>
             <div class="status-grid">
-              <span class="chip" id="passwordEnvStatus">SSH password env：未检查</span>
               <span class="chip" id="apiKeyEnvStatus">LLM API key env：未检查</span>
-              <span class="chip" id="connectionStatus">SSH 连接：未测试</span>
+              <span class="chip" id="connectionStatus">SSH 连接：未连接</span>
             </div>
             <div class="save-row">
               <button id="loadSettingsBtn" class="secondary" type="button">读取后端设置</button>
               <button id="saveSettingsBtn" type="button">保存设置</button>
-              <button id="testConnectionBtn" class="secondary" type="button">测试远程连接</button>
               <button id="clearSettingsBtn" class="secondary" type="button">清空浏览器设置</button>
             </div>
-            <div class="settings-note" style="margin-top:12px">页面不显示真实 password 或 API key，只保存环境变量名或 key path。</div>
+            <div class="settings-note" style="margin-top:12px">仅保存地址、workspace 和 SSH / LLM 非密钥设置。SSH 密码提交后清空，不写入浏览器存储或下载文件。会话仅在本页内存中保留，刷新后需要重新连接。断开连接不会取消已提交任务。</div>
           </section>
         </section>
 
@@ -1645,6 +1677,27 @@
     const SOURCE_OPTIMIZATION_STATUSES = new Set(["not_requested", "unavailable", "running", "completed", "failed", "cancelled"]);
     const MCPROFILER_COLLECTION_SCHEMA = "v2.mcprofiler_collection.v1";
     const MCPROFILER_COLLECTION_STATUSES = new Set(["collected", "imported", "unsupported", "failed", "cancelled"]);
+    const HARDWARE_IDENTITY_FIELDS = new Set(["target_name", "backend", "device_id", "device_uuid", "pci_bus_id", "device_count"]);
+    const SSH_ERROR_MESSAGES = {
+      auth_failed: "SSH 认证失败，请检查用户名和密码后重新连接。",
+      connection_timeout: "SSH 连接超时，请检查地址、端口和容器状态后重试。",
+      ssh_connection_failed: "SSH 连接失败，请检查地址、端口和容器状态。",
+      ssh_session_expired: "SSH 会话已过期，请重新连接并识别硬件。",
+      ssh_session_not_found: "SSH 会话已失效，服务可能已重启，请重新连接。",
+      host_key_confirmation_required: "请核对主机公钥指纹，重新输入密码后再连接。",
+      host_key_changed: "主机公钥指纹发生变化，已阻止连接。请先向容器提供方核实。",
+      host_key_mismatch: "主机公钥指纹不匹配，已阻止连接。请先核实主机身份。",
+      password_required: "请输入本次连接使用的 SSH 密码。",
+      ssh_host_and_username_required: "请填写 SSH 地址和用户名。",
+      key_path_required: "请在高级 SSH 设置中填写后端密钥路径。",
+      selected_device_changed: "所选 GPU 的实际身份已变化，请重新识别并选择设备。",
+      selected_device_not_found: "所选 GPU 当前不可见，请重新识别并选择设备。",
+      device_selection_required: "请选择一块已识别的 GPU 后再提交任务。",
+      stable_device_identity_unavailable: "无法核实 GPU 的稳定身份，暂不能提交远程任务。",
+      gpu_detection_failed: "没有可用的 GPU 识别结果，请检查远端运行时并重新识别。",
+      execution_device_mismatch: "任务执行设备与所选 GPU 不一致，请重新识别硬件。",
+      credential_in_task_payload: "任务内容包含连接凭据，后端已拒绝提交。",
+    };
     const SOURCE_TRIAL_STATUSES = new Set(["proposed", "running", "validation_failed", "build_failed", "correctness_failed", "benchmark_failed", "no_improvement", "accepted", "cancelled"]);
     const PERFORMANCE_GATE_SCHEMA_VERSION = "v2.performance_gate.v1";
     const PERFORMANCE_GATE_DECISIONS = new Set(["accepted", "no_improvement", "inconclusive", "codegen_unchanged"]);
@@ -1680,10 +1733,22 @@
     const SENSITIVE_UPLOAD_SEGMENTS = new Set([".git", ".ssh", ".env"]);
     const SENSITIVE_UPLOAD_BASENAME_RE = /^(?:\.env(?:\..*)?|\.envrc|authorized_keys|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|credentials?|secrets?)(?:\..*)?$|\.(?:pem|key|p12|pfx|ppk)$/i;
     const WINDOWS_RESERVED_UPLOAD_NAMES = new Set(["aux", "con", "nul", "prn", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"]);
-    const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key)/i;
+    const SENSITIVE_KEY_RE = /(api[_-]?key|token|password|passwd|secret|credential|authorization|bearer|private[_-]?key|session_id)/i;
     const SENSITIVE_VALUE_RE = /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
 
     const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, apiHealthy: false, apiError: "", apiCapabilities: { sourceOptimization: false, declared: false, mcProfilerAutoCollection: false }, sourceOptimizationChoiceTouched: false, hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, settingsEnv: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskList: [], taskPollTimer: null, eventPollTimer: null, sampleFiles: [], sampleUploadId: null, sampleUploadStage: "empty", sampleUploadError: "", sampleUploadVersion: 0, sampleUploadedVersion: null, sampleUploadedEntryFile: "", sampleSourceMode: "inline", taskSubmitting: false, cancellationPending: false };
+    state.sshSession = null;
+    state.sshStatus = "disconnected";
+    state.sshMessage = "尚未连接。刷新页面后需要重新连接。";
+    state.sshVersion = 0;
+    state.sessionExpiryTimer = null;
+    state.hostKeyFingerprint = "";
+    state.remoteDevices = [];
+    state.selectedDeviceId = "";
+    state.hardwareDetectionStatus = "idle";
+    state.hardwareResolving = false;
+    state.hardwareWarnings = [];
+    state.settingsEdited = false;
     const el = {
       alerts: document.getElementById("alerts"),
       apiHealthStatus: document.getElementById("apiHealthStatus"),
@@ -1714,6 +1779,11 @@
       reloadBtn: document.getElementById("reloadBtn"),
       v2ProjectName: document.getElementById("v2ProjectName"),
       v2GpuModel: document.getElementById("v2GpuModel"),
+      remoteHardwareStatus: document.getElementById("remoteHardwareStatus"),
+      deviceIdentity: document.getElementById("deviceIdentity"),
+      gpuDeviceSelect: document.getElementById("gpuDeviceSelect"),
+      deviceSelectionField: document.getElementById("deviceSelectionField"),
+      hardwareDetectionMessage: document.getElementById("hardwareDetectionMessage"),
       v2Backend: document.getElementById("v2Backend"),
       v2BuildCommand: document.getElementById("v2BuildCommand"),
       v2BenchmarkCommand: document.getElementById("v2BenchmarkCommand"),
@@ -1770,6 +1840,15 @@
       saveSettingsBtn: document.getElementById("saveSettingsBtn"),
       loadSettingsBtn: document.getElementById("loadSettingsBtn"),
       testConnectionBtn: document.getElementById("testConnectionBtn"),
+      connectSshBtn: document.getElementById("connectSshBtn"),
+      disconnectSshBtn: document.getElementById("disconnectSshBtn"),
+      settingSshPassword: document.getElementById("settingSshPassword"),
+      sshPasswordField: document.getElementById("sshPasswordField"),
+      sshConnectionMessage: document.getElementById("sshConnectionMessage"),
+      hostKeyConfirmation: document.getElementById("hostKeyConfirmation"),
+      hostKeyFingerprint: document.getElementById("hostKeyFingerprint"),
+      confirmHostKey: document.getElementById("confirmHostKey"),
+      savedConnectionTestStatus: document.getElementById("savedConnectionTestStatus"),
       downloadSettingsBtn: document.getElementById("downloadSettingsBtn"),
       clearSettingsBtn: document.getElementById("clearSettingsBtn"),
       settingsOutput: document.getElementById("settingsOutput"),
@@ -1804,8 +1883,22 @@
     el.v2SampleText.addEventListener("input", updateStartButtonState);
     el.clearSampleFilesBtn.addEventListener("click", clearSampleFiles);
     el.sampleFileList.addEventListener("click", removeSelectedSampleFile);
-    el.v2GpuModel.addEventListener("input", renderHardwareEditor);
-    el.v2Backend.addEventListener("input", renderHardwareEditor);
+    [el.v2GpuModel, el.v2Backend].forEach((input) => input.addEventListener("input", () => { renderHardwareEditor(); renderRemoteHardware(); }));
+    el.v2RunnerType.addEventListener("change", () => {
+      state.hardwareOverrides = {};
+      state.resolvedHardware = null;
+      state.hardwareResolveError = "";
+      renderHardwareEditor();
+      renderRemoteHardware();
+      updateStartButtonState();
+      if (el.v2RunnerType.value === "ssh" && sessionIsActive()) resolveHardwareProfile();
+    });
+    el.gpuDeviceSelect.addEventListener("change", () => {
+      state.selectedDeviceId = el.gpuDeviceSelect.value;
+      state.hardwareOverrides = {};
+      state.resolvedHardware = null;
+      resolveHardwareProfile();
+    });
     el.resolveHardwareBtn.addEventListener("click", resolveHardwareProfile);
     el.startOptimizationBtn.addEventListener("click", startOptimization);
     el.v2RunnerType.addEventListener("change", () => {
@@ -1834,10 +1927,22 @@
     el.saveSettingsBtn.addEventListener("click", saveSettings);
     el.loadSettingsBtn.addEventListener("click", loadSettingsFromApi);
     el.testConnectionBtn.addEventListener("click", testRemoteConnection);
+    el.connectSshBtn.addEventListener("click", connectAndIdentifyHardware);
+    el.disconnectSshBtn.addEventListener("click", disconnectSshSession);
     el.downloadSettingsBtn.addEventListener("click", downloadSettings);
     el.clearSettingsBtn.addEventListener("click", clearSettings);
     ["settingSshHost", "settingSshPort", "settingSshUsername", "settingAuthType", "settingPasswordEnv", "settingKeyPath", "settingRemoteWorkspace", "settingLlmBaseUrl", "settingLlmModel", "settingApiKeyEnv"].forEach((id) => {
-      document.getElementById(id).addEventListener("input", () => { updateSettingStatus(); renderSettingsOutput(); });
+      document.getElementById(id).addEventListener("input", () => {
+        state.settingsEdited = true;
+        if (id.startsWith("settingSsh") || ["settingAuthType", "settingKeyPath", "settingRemoteWorkspace"].includes(id)) {
+          state.hostKeyFingerprint = "";
+          el.confirmHostKey.checked = false;
+          if (state.sshSession || state.sshStatus === "connecting") disconnectSshSession("连接信息已修改，请重新连接并识别硬件。");
+        }
+        updateSettingStatus();
+        renderSettingsOutput();
+        updateStartButtonState();
+      });
     });
     loadSettings();
     syncSourceOptimizationUi();
@@ -1847,6 +1952,10 @@
     updateStartButtonState();
     renderTaskWaiting("暂无任务，提交验证任务后这里会显示进度。");
     renderTaskList();
+    renderSshConnection();
+    renderRemoteHardware();
+    window.addEventListener("pageshow", () => { el.settingSshPassword.value = ""; });
+    window.addEventListener("pagehide", () => { el.settingSshPassword.value = ""; });
     checkApiHealth();
 
     function activateView(targetId) {
@@ -2166,6 +2275,7 @@
       setSettingValue("settingLlmBaseUrl", state.settings.llm_base_url || "https://api.openai.com/v1");
       setSettingValue("settingLlmModel", state.settings.llm_model || "gpt-4o-mini");
       setSettingValue("settingApiKeyEnv", state.settings.api_key_env || "OPENAI_API_KEY");
+      state.settings = readSettings();
       updateSettingStatus();
       renderSettingsOutput();
     }
@@ -2173,6 +2283,7 @@
     async function loadSettingsFromApi(options = {}) {
       try {
         const payload = await apiFetch("/api/settings");
+        if (options.silent && state.settingsEdited) return;
         applySettingsPayload(payload.settings || {});
         if (!options.silent) addOneShotWarning("已从后端读取设置。页面不会显示明文 password 或 API key。");
       } catch (error) {
@@ -2209,27 +2320,177 @@
         await saveSettings();
         const payload = await apiFetch("/api/settings/test-connection", { method: "POST" });
         if (payload.settings) applySettingsPayload(payload.settings);
-        const success = payload.success === true || (payload.ok === true && payload.failure !== true);
-        const message = payload.reason || payload.error_message || "后端未返回原因";
-        el.connectionStatus.className = `chip ${success ? "ok" : "bad"}`;
-        el.connectionStatus.textContent = `SSH 连接：${success ? "成功" : "失败"}`;
-        addOneShotWarning(`${success ? "远程连接测试成功" : "远程连接测试失败"}：${message}`);
+        const success = payload.success === true;
+        el.savedConnectionTestStatus.textContent = success
+          ? "后端认证设置测试成功。此测试不创建本页会话；提交远程任务仍需连接并识别硬件。"
+          : "后端认证设置测试失败，请检查环境变量、密钥路径和连接配置。";
       } catch (error) {
-        el.connectionStatus.className = "chip bad";
-        el.connectionStatus.textContent = "SSH 连接：失败";
-        addOneShotWarning(`远程连接测试失败：${error.message}`);
+        el.savedConnectionTestStatus.textContent = "后端认证设置测试失败，请检查后端服务和连接配置。";
       } finally {
         el.testConnectionBtn.disabled = false;
-        el.testConnectionBtn.textContent = "测试远程连接";
+        el.testConnectionBtn.textContent = "测试已保存的后端认证设置";
         updateSettingStatus();
         renderAlerts();
       }
     }
 
     function clearSettings() {
+      disconnectSshSession();
+      el.settingSshPassword.value = "";
       localStorage.removeItem(V2_SETTINGS_KEY);
       state.settings = {};
       loadSettings();
+    }
+
+    function currentRemoteDevice() {
+      return state.remoteDevices.find((device) => device.device_id === state.selectedDeviceId) || null;
+    }
+
+    function sessionIsActive() {
+      return !!state.sshSession && Date.now() < state.sshSession.expiresAt;
+    }
+
+    function clearSessionState(status, message) {
+      state.sshVersion += 1;
+      window.clearTimeout(state.sessionExpiryTimer);
+      state.sessionExpiryTimer = null;
+      state.sshSession = null;
+      state.sshStatus = status;
+      state.sshMessage = message;
+      state.remoteDevices = [];
+      state.selectedDeviceId = "";
+      state.hardwareDetectionStatus = "idle";
+      state.hardwareResolving = false;
+      state.hardwareWarnings = [];
+      state.hardwareOverrides = {};
+      state.resolvedHardware = null;
+      state.hardwareResolveError = "";
+      renderSshConnection();
+      renderRemoteHardware();
+      renderHardwareEditor();
+      updateStartButtonState();
+    }
+
+    function renderSshConnection() {
+      const labels = {disconnected: "未连接", connecting: "连接中", connected: "已连接", expired: "会话已过期", failed: "连接失败", host_key: "待核对主机指纹", disconnecting: "正在断开"};
+      const label = labels[state.sshStatus] || "未连接";
+      const kind = state.sshStatus === "connected" ? "ok" : state.sshStatus === "failed" ? "bad" : "warn";
+      for (const node of [el.sshStatus, el.startSshStatus, el.connectionStatus]) {
+        node.className = `chip ${kind}`;
+        node.textContent = `SSH：${label}`;
+      }
+      el.sshConnectionMessage.textContent = state.sshMessage;
+      const busy = ["connecting", "disconnecting"].includes(state.sshStatus);
+      el.connectSshBtn.disabled = busy || state.hardwareResolving;
+      el.connectSshBtn.textContent = state.sshStatus === "connecting" ? "正在连接 SSH" : state.hardwareResolving ? "正在识别硬件" : "连接并识别硬件";
+      el.disconnectSshBtn.disabled = !state.sshSession || busy;
+      el.sshPasswordField.hidden = inputValue("settingAuthType") === "key";
+      if (el.sshPasswordField.hidden) el.settingSshPassword.value = "";
+      el.hostKeyConfirmation.hidden = !state.hostKeyFingerprint;
+      el.hostKeyFingerprint.textContent = state.hostKeyFingerprint;
+    }
+
+    async function disconnectSshSession(message = "已断开 SSH 连接。已提交任务仍会继续，取消任务请使用任务详情中的取消按钮。") {
+      if (typeof message !== "string") message = "已断开 SSH 连接。已提交任务仍会继续，取消任务请使用任务详情中的取消按钮。";
+      el.settingSshPassword.value = "";
+      const sessionId = state.sshSession?.id;
+      clearSessionState(sessionId ? "disconnecting" : "disconnected", message);
+      const version = state.sshVersion;
+      let confirmed = true;
+      try {
+        if (sessionId) await apiFetch(`/api/ssh/sessions/${encodeURIComponent(sessionId)}`, {method: "DELETE", privateRequest: true});
+      } catch (error) {
+        confirmed = false;
+      }
+      if (version !== state.sshVersion) return;
+      state.sshStatus = "disconnected";
+      state.sshMessage = confirmed ? message : "本页已断开；后端暂未确认，会话将在服务端到期释放。已提交任务的状态不受此操作影响。";
+      renderSshConnection();
+    }
+
+    function handleSessionError(error) {
+      if (["ssh_session_expired", "ssh_session_not_found"].includes(error.code)) {
+        clearSessionState("expired", SSH_ERROR_MESSAGES[error.code]);
+        return true;
+      }
+      return false;
+    }
+
+    async function connectAndIdentifyHardware() {
+      if (["connecting", "disconnecting"].includes(state.sshStatus) || state.hardwareResolving) return;
+      const settings = readSettings();
+      let validation = "";
+      if (!settings.ssh_host || !settings.ssh_username || !settings.remote_workspace) validation = "请填写 SSH 地址、用户名和 workspace。";
+      else if (!Number.isInteger(settings.ssh_port) || settings.ssh_port < 1 || settings.ssh_port > 65535) validation = "SSH 端口必须是 1 到 65535 的整数。";
+      else if (!settings.remote_workspace.startsWith("/")) validation = "远程 workspace 必须是绝对路径。";
+      else if (settings.auth_type === "password" && !el.settingSshPassword.value) validation = "请输入本次连接使用的 SSH 密码。";
+      else if (settings.auth_type === "key" && !settings.key_path) validation = SSH_ERROR_MESSAGES.key_path_required;
+      else if (state.hostKeyFingerprint && !el.confirmHostKey.checked) validation = "请先独立核对主机指纹并勾选确认。";
+      if (validation) {
+        state.sshMessage = validation;
+        renderSshConnection();
+        return;
+      }
+      const previousId = state.sshSession?.id;
+      clearSessionState("connecting", "正在建立真实 SSH 会话，等待后端认证结果。");
+      el.v2RunnerType.value = "ssh";
+      const version = state.sshVersion;
+      const request = {ssh: settingsApiPayload().ssh};
+      if (state.hostKeyFingerprint && el.confirmHostKey.checked) request.ssh.host_key_fingerprint = state.hostKeyFingerprint;
+      if (settings.auth_type === "password") request.password = el.settingSshPassword.value;
+      el.settingSshPassword.value = "";
+      const pending = apiFetch("/api/ssh/sessions", {method: "POST", body: request, privateRequest: true, timeoutMs: 70000});
+      // apiFetch serializes synchronously; discard plaintext before awaiting SSH.
+      delete request.password;
+      if (previousId) apiFetch(`/api/ssh/sessions/${encodeURIComponent(previousId)}`, {method: "DELETE", privateRequest: true}).catch(() => {});
+      try {
+        const payload = await pending;
+        if (version !== state.sshVersion) {
+          if (typeof payload.session_id === "string") await apiFetch(`/api/ssh/sessions/${encodeURIComponent(payload.session_id)}`, {method: "DELETE", privateRequest: true});
+          return;
+        }
+        const expiresAt = Date.parse(payload.expires_at);
+        if (payload.ok !== true || typeof payload.session_id !== "string" || !payload.session_id || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new Error("后端未返回有效的 SSH 会话，请重新连接。");
+        state.sshSession = {id: payload.session_id, expiresAt, settingsKey: sshSettingsKey()};
+        state.sshStatus = "connected";
+        state.sshMessage = "SSH 已连接，正在识别可见 GPU。刷新页面后需要重新连接。";
+        state.hostKeyFingerprint = "";
+        el.confirmHostKey.checked = false;
+        state.sessionExpiryTimer = window.setTimeout(() => clearSessionState("expired", SSH_ERROR_MESSAGES.ssh_session_expired), Math.min(expiresAt - Date.now(), 2147483647));
+        renderSshConnection();
+        await resolveHardwareProfile();
+      } catch (error) {
+        if (version !== state.sshVersion) return;
+        state.sshStatus = error.code === "host_key_confirmation_required" ? "host_key" : "failed";
+        state.sshMessage = error.message || "SSH 连接失败，请检查连接设置。";
+        if (error.fingerprint) state.hostKeyFingerprint = error.fingerprint;
+        renderSshConnection();
+        updateStartButtonState();
+      }
+    }
+
+    function renderRemoteHardware() {
+      const remote = el.v2RunnerType.value === "ssh";
+      const device = currentRemoteDevice();
+      const identified = remote && sessionIsActive() && !!device;
+      let label = remote ? "尚未识别" : "local demo，未验证远程 GPU";
+      if (remote && state.hardwareResolving) label = "识别中";
+      else if (identified) label = state.hardwareDetectionStatus === "complete" ? "已识别" : "已识别，部分参数未知";
+      else if (remote && state.remoteDevices.length > 1) label = "待选择设备";
+      else if (remote && state.hardwareDetectionStatus === "failed") label = "没有可见 GPU";
+      el.remoteHardwareStatus.className = `chip ${identified && state.hardwareDetectionStatus === "complete" ? "ok" : "warn"}`;
+      el.remoteHardwareStatus.textContent = `GPU：${label}`;
+      el.deviceSelectionField.hidden = !remote || state.remoteDevices.length < 2;
+      el.gpuDeviceSelect.disabled = state.hardwareResolving || !sessionIsActive();
+      el.gpuDeviceSelect.innerHTML = `<option value="">请选择设备</option>${state.remoteDevices.map((item) => `<option value="${escapeHtml(item.device_id)}">${escapeHtml(`GPU ${item.runtime_index ?? "?"} · ${item.fields?.target_name || "未知型号"} · ${item.device_id}`)}</option>`).join("")}`;
+      el.gpuDeviceSelect.value = state.selectedDeviceId;
+      el.deviceIdentity.textContent = identified
+        ? `实际设备：${device.fields?.target_name || "未知型号"} / ${device.backend || device.fields?.backend || "未知 backend"}；device_id：${device.device_id}；UUID：${device.fields?.device_uuid || "未知"}；PCI：${device.fields?.pci_bus_id || "未知"}${inputValue("v2GpuModel") ? `；人工声明：${inputValue("v2GpuModel")}` : ""}`
+        : remote ? "设备身份由远程实际探测结果确定，请先连接并识别硬件。" : "local demo 不代表已连接 SSH 或识别到真实 GPU。";
+      const message = state.hardwareResolveError || (state.hardwareResolving ? "正在读取实际设备和硬件参数。" : remote && state.hardwareDetectionStatus === "failed" ? "SSH 已连接，但没有探测到可见 GPU；请检查远端驱动和运行时后重新识别。" : remote && state.remoteDevices.length > 1 && !device ? "检测到多块 GPU，请明确选择一块设备。" : identified && device.identity_verified !== true ? "无法核实设备的稳定身份，远程任务暂不能提交。" : identified && state.hardwareDetectionStatus === "partial" ? "GPU 身份已识别，部分参数或环境信息未采集；未知值保留为空。" : "");
+      el.hardwareDetectionMessage.textContent = [message, ...state.hardwareWarnings.map((item) => sanitizeText(String(item)))].filter(Boolean).join("\n");
+      el.resolveHardwareBtn.disabled = state.hardwareResolving || remote && !sessionIsActive();
+      el.resolveHardwareBtn.textContent = state.hardwareResolving ? "正在识别硬件" : remote ? "重新识别硬件" : "解析硬件参数";
     }
 
     function readSettings() {
@@ -2245,6 +2506,11 @@
         llm_model: inputValue("settingLlmModel"),
         api_key_env: inputValue("settingApiKeyEnv"),
       };
+    }
+
+    function sshSettingsKey() {
+      const settings = readSettings();
+      return JSON.stringify([settings.ssh_host, settings.ssh_port, settings.ssh_username, settings.remote_workspace, settings.auth_type, settings.auth_type === "key" ? settings.key_path : null]);
     }
 
     function settingsApiPayload() {
@@ -2289,6 +2555,8 @@
       };
       localStorage.setItem(V2_SETTINGS_KEY, JSON.stringify(state.settings));
       loadSettings();
+      state.settingsEdited = false;
+      if (state.sshSession && state.sshSession.settingsKey !== sshSettingsKey()) disconnectSshSession("后端连接设置已变化，请重新连接并识别硬件。");
     }
 
     function cleanRedacted(value) {
@@ -2300,10 +2568,9 @@
       const settings = readSettings();
       setEnvStatusChip(el.passwordEnvStatus, "SSH password env", state.settingsEnv.passwordEnvExists);
       setEnvStatusChip(el.apiKeyEnvStatus, "LLM API key env", state.settingsEnv.apiKeyEnvExists);
-      setStatusChip(el.sshStatus, "SSH", !!(settings.ssh_host && settings.ssh_username && settings.remote_workspace));
       setStatusChip(el.llmStatus, "LLM", !!(settings.llm_base_url && settings.llm_model && settings.api_key_env));
-      setStartSettingChip(el.startSshStatus, "SSH", !!(settings.ssh_host && settings.ssh_username && settings.remote_workspace));
       setStartSettingChip(el.startLlmStatus, "LLM", !!(settings.llm_base_url && settings.llm_model && settings.api_key_env));
+      renderSshConnection();
     }
 
     function settingsFileObject() {
@@ -2618,36 +2885,35 @@
     }
 
     function renderHardwareEditor() {
-      if (state.hardwareResolveError) {
-        el.v2HardwareEditor.innerHTML = `<div class="empty">硬件参数解析失败：${escapeHtml(state.hardwareResolveError)}</div>`;
-        return;
-      }
-      const hardware = state.resolvedHardware || state.hardware || { fields: {} };
+      const remote = el.v2RunnerType.value === "ssh";
+      const hardware = state.resolvedHardware || (!remote ? state.hardware : null) || { fields: {} };
       const detectedFields = hardware.fields || {};
       const gpuModel = el.v2GpuModel.value.trim();
       const backendInput = el.v2Backend.value.trim();
-      const rows = HARDWARE_FIELD_NAMES.map((field) => {
+      const fieldNames = [...new Set([...HARDWARE_FIELD_NAMES, ...Object.keys(detectedFields)])].filter((field) => !SENSITIVE_KEY_RE.test(field));
+      const rows = fieldNames.map((field) => {
         const detected = detectedFields[field] || {};
-        const userTarget = field === "target_name" && gpuModel;
-        const userBackend = field === "backend" && backendInput && backendInput !== "unknown";
+        const locked = remote && HARDWARE_IDENTITY_FIELDS.has(field);
+        const userTarget = !remote && field === "target_name" && gpuModel;
+        const userBackend = !remote && field === "backend" && backendInput && backendInput !== "unknown";
         const override = state.hardwareOverrides[field];
         const formValue = userTarget ? gpuModel : userBackend ? backendInput : "";
-        const value = override !== undefined ? override : pick(detected.value, formValue, "");
+        const value = !locked && override !== undefined ? override : detected.value ?? (formValue || "");
         const source = override !== undefined ? "用户修改" : (formValue ? "user_input" : pick(detected.source, value ? "user_input" : "unknown"));
         const confidence = override !== undefined ? "high" : (formValue ? "medium" : pick(detected.confidence, value ? "medium" : "unknown"));
-        const notes = formValue ? "from V2 user input" : pick(detected.notes, value ? "from V2 form input" : "not available yet");
-        return { field, value, unit: unitForHardwareField(field), source, confidence, modified: override !== undefined, notes };
+        const unknown = value === null || value === undefined || value === "" || value === "unknown";
+        return { field, value: unknown ? "" : value, unit: detected.unit || unitForHardwareField(field), source, confidence, modified: !locked && override !== undefined, locked, notes: detected.notes || "" };
       });
       el.v2HardwareEditor.innerHTML = `<table class="hardware-table">
         <thead><tr><th>字段</th><th>值</th><th>单位</th><th>来源</th><th>置信度</th><th>是否可编辑</th></tr></thead>
         <tbody>
           ${rows.map((row) => `<tr>
             <td>${escapeHtml(row.field)}</td>
-            <td><input data-hardware-override="${escapeHtml(row.field)}" value="${escapeHtml(display(row.value) === "暂无数据" ? "" : display(row.value))}" placeholder="unavailable"></td>
+            <td>${row.locked ? `<span>${escapeHtml(row.value === "" ? "未知" : display(row.value))}</span>` : `<input aria-label="${escapeHtml(row.field)} 值" data-hardware-override="${escapeHtml(row.field)}" value="${escapeHtml(row.value === "" ? "" : display(row.value))}" placeholder="未知">`}</td>
             <td>${escapeHtml(row.unit)}</td>
-            <td>${escapeHtml(display(row.source))}</td>
-            <td>${escapeHtml(display(row.confidence))}</td>
-            <td>${row.modified ? `<span class="badge best">用户修改</span>` : `<span class="badge warn">可编辑</span>`}</td>
+            <td title="${escapeHtml(display(row.source))}">${escapeHtml(({remote_detection: "远程探测", builtin_profile: "内置 profile", user_override: "用户修改", user_input: "人工声明", unknown: "未知"})[row.source] || display(row.source))}</td>
+            <td>${escapeHtml(({high: "高", medium: "中", low: "低", unknown: "未知"})[row.confidence] || display(row.confidence))}</td>
+            <td>${row.locked ? `<span class="badge">设备身份只读</span>` : row.modified ? `<span class="badge best">用户修改</span>` : `<span class="badge warn">可编辑</span>`}</td>
           </tr>`).join("")}
         </tbody>
       </table>`;
@@ -2656,7 +2922,9 @@
           const field = input.dataset.hardwareOverride;
           if (!field) return;
           const value = sanitizeText(input.value.trim());
-          if (value) state.hardwareOverrides[field] = parseRequestValue(value);
+          const parsed = parseRequestValue(value);
+          const detectedValue = detectedFields[field]?.value;
+          if (parsed !== null && JSON.stringify(parsed) !== JSON.stringify(detectedValue)) state.hardwareOverrides[field] = parsed;
           else delete state.hardwareOverrides[field];
           renderHardwareEditor();
         });
@@ -2689,7 +2957,7 @@
     }
 
     function readHardwareOverrideFields() {
-      return { ...state.hardwareOverrides };
+      return Object.fromEntries(Object.entries(state.hardwareOverrides).filter(([field]) => !SENSITIVE_KEY_RE.test(field) && !(el.v2RunnerType.value === "ssh" && HARDWARE_IDENTITY_FIELDS.has(field))));
     }
 
     function unitForHardwareField(field) {
@@ -2856,8 +3124,8 @@
       return "";
     }
 
-    function startFormValidationError() {
-      return sourceOptimizationValidationError() || budgetValidationError() || sampleValidationError() || commandValidationError();
+    function startFormValidationError({requireSession = true} = {}) {
+      return sourceOptimizationValidationError() || budgetValidationError() || sampleValidationError() || commandValidationError() || (requireSession ? remoteRunnerBlocker(el.v2RunnerType.value) : "");
     }
 
     function updateStartButtonState() {
@@ -2888,7 +3156,7 @@
     }
 
     function generateRunRequest() {
-      const validationError = startFormValidationError();
+      const validationError = startFormValidationError({requireSession: false});
       if (validationError) {
         addOneShotWarning(validationError);
         renderAlerts();
@@ -2966,6 +3234,8 @@
 
     async function apiFetch(path, options = {}) {
       let response;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs || 90000);
       try {
         const isFormData = options.body instanceof FormData;
         response = await fetch(path, {
@@ -2973,13 +3243,37 @@
           headers: isFormData ? (options.headers || {}) : { "Content-Type": "application/json", ...(options.headers || {}) },
           body: options.body ? (isFormData ? options.body : JSON.stringify(options.body)) : undefined,
           cache: "no-store",
+          signal: controller.signal,
         });
       } catch (error) {
+        if (error.name === "AbortError") {
+          const timeoutError = new Error("请求超时，请检查连接状态后重试。");
+          timeoutError.code = "connection_timeout";
+          throw timeoutError;
+        }
         throw new Error("后端服务未启动，请确认本地服务已开启。");
+      } finally {
+        window.clearTimeout(timeout);
       }
       const contentType = response.headers.get("content-type") || "";
-      const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+      let payload;
+      try {
+        payload = contentType.includes("application/json") ? await response.json() : options.privateRequest ? null : await response.text();
+      } catch (error) {
+        throw new Error("后端响应格式无效，请检查服务状态后重试。");
+      }
       if (!response.ok) {
+        if (options.privateRequest) {
+          const code = typeof payload?.detail?.code === "string" && Object.prototype.hasOwnProperty.call(SSH_ERROR_MESSAGES, payload.detail.code) ? payload.detail.code : "";
+          const message = SSH_ERROR_MESSAGES[code] || (response.status === 404 && path === "/api/ssh/sessions"
+            ? "当前后端未提供 SSH 会话接口，请更新服务后重试。"
+            : response.status === 422 ? "请求被后端拒绝，请检查连接信息、任务输入和硬件参数。" : "后端未能完成请求，请检查连接和服务状态后重试。");
+          const failure = new Error(message);
+          failure.code = code;
+          failure.status = response.status;
+          if (code === "host_key_confirmation_required" && /^SHA256:[A-Za-z0-9+/]{43}=?$/.test(payload.detail.fingerprint || "")) failure.fingerprint = payload.detail.fingerprint;
+          throw failure;
+        }
         const rawDetail = typeof payload === "object" ? (payload.detail || payload.error || payload) : payload;
         const detail = typeof rawDetail === "string" ? rawDetail : JSON.stringify(rawDetail);
         if (response.status === 404 && path === "/api/health") throw new Error("后端服务未启动，请确认本地服务已开启。");
@@ -3029,32 +3323,58 @@
     }
 
     async function resolveHardwareProfile() {
-      el.resolveHardwareBtn.disabled = true;
-      el.resolveHardwareBtn.textContent = "搜索中";
+      if (state.hardwareResolving) return;
+      const remote = el.v2RunnerType.value === "ssh";
+      if (remote && !sessionIsActive()) {
+        if (state.sshSession) clearSessionState("expired", SSH_ERROR_MESSAGES.ssh_session_expired);
+        state.hardwareResolveError = "请先在设置页连接 SSH，再识别硬件。";
+        renderRemoteHardware();
+        updateStartButtonState();
+        return;
+      }
+      const version = state.sshVersion;
+      state.hardwareResolving = true;
+      state.hardwareResolveError = "";
+      renderSshConnection();
+      renderRemoteHardware();
+      updateStartButtonState();
       try {
+        const body = remote
+          ? {ssh_session_id: state.sshSession.id, ...(state.selectedDeviceId ? {device_id: state.selectedDeviceId} : {}), user_overrides: {}}
+          : {gpu_model: inputValue("v2GpuModel") || "unknown", backend: inputValue("v2Backend") || "unknown", user_overrides: {}, allow_llm_lookup: false, allow_web_lookup: false};
         const payload = await apiFetch("/api/hardware/resolve", {
           method: "POST",
-          body: {
-            gpu_model: sanitizeText(el.v2GpuModel.value.trim() || "unknown"),
-            backend: sanitizeText(el.v2Backend.value.trim() || "unknown"),
-            user_overrides: readHardwareOverrideFields(),
-            allow_llm_lookup: false,
-            allow_web_lookup: false,
-          },
+          body,
+          privateRequest: remote,
         });
+        if (version !== state.sshVersion || remote !== (el.v2RunnerType.value === "ssh")) return;
         state.resolvedHardware = payload.hardware_profile || payload.hardware || null;
-        state.hardwareResolveError = "";
+        if (remote) {
+          state.remoteDevices = Array.isArray(payload.devices) ? payload.devices.filter((item) => item && typeof item.device_id === "string") : [];
+          state.selectedDeviceId = state.remoteDevices.some((item) => item.device_id === payload.selected_device_id) ? payload.selected_device_id : "";
+          state.hardwareDetectionStatus = ["complete", "partial", "failed"].includes(payload.detection_status) ? payload.detection_status : "failed";
+          state.hardwareWarnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+          state.sshMessage = "SSH 已连接。刷新页面后需要重新连接。";
+          if (!state.selectedDeviceId) state.resolvedHardware = null;
+          if (state.resolvedHardware) renderHardware({...state.resolvedHardware, available: true, unknownFields: state.resolvedHardware.unknown_fields || []});
+        }
         renderHardwareEditor();
-        addOneShotWarning("硬件参数已由后端解析；低置信度或 unknown 字段请手动确认。");
       } catch (error) {
+        if (version !== state.sshVersion) return;
+        if (remote && handleSessionError(error)) return;
         state.resolvedHardware = null;
+        if (remote) {
+          state.remoteDevices = [];
+          state.selectedDeviceId = "";
+        }
+        state.hardwareDetectionStatus = "error";
         state.hardwareResolveError = error.message;
         renderHardwareEditor();
-        addOneShotWarning(`硬件参数解析失败：${error.message}`);
       } finally {
-        el.resolveHardwareBtn.disabled = false;
-        el.resolveHardwareBtn.textContent = "解析硬件参数";
-        renderAlerts();
+        if (version === state.sshVersion) state.hardwareResolving = false;
+        renderSshConnection();
+        renderRemoteHardware();
+        updateStartButtonState();
       }
     }
 
@@ -3125,8 +3445,8 @@
         project_name: inputValue("v2ProjectName") || "web-task",
         sample,
         target: {
-          gpu_model: inputValue("v2GpuModel") || "unknown",
-          backend: String(pick(state.hardwareOverrides.backend, inputValue("v2Backend"), state.resolvedHardware?.fields?.backend?.value, "unknown")),
+          gpu_model: el.v2RunnerType.value === "ssh" ? currentRemoteDevice()?.fields?.target_name || "unknown" : inputValue("v2GpuModel") || "unknown",
+          backend: el.v2RunnerType.value === "ssh" ? currentRemoteDevice()?.backend || currentRemoteDevice()?.fields?.backend || "unknown" : String(pick(state.hardwareOverrides.backend, inputValue("v2Backend"), state.resolvedHardware?.fields?.backend?.value, "unknown")),
           user_overrides: readHardwareOverrideFields(),
           allow_llm_lookup: false,
           allow_web_lookup: false,
@@ -3154,6 +3474,12 @@
           type: el.v2RunnerType.value === "ssh" ? "ssh" : "local",
         },
       };
+      if (request.runner.type === "ssh") {
+        const blocker = remoteRunnerBlocker("ssh");
+        if (blocker) throw new Error(blocker);
+        request.ssh_session_id = state.sshSession.id;
+        request.target.device_id = state.selectedDeviceId;
+      }
       if (sourceOptimizationRequested()) {
         request.optimization = {
           enabled: true,
@@ -3195,7 +3521,7 @@
         el.startOptimizationBtn.textContent = "提交任务";
         renderTaskWaiting("正在创建真实运行任务，等待后端返回 task_id。");
         activateView("taskView");
-        const payload = await apiFetch("/api/tasks", { method: "POST", body: request });
+        const payload = await apiFetch("/api/tasks", { method: "POST", body: request, privateRequest: runnerType === "ssh" });
         state.task = unwrapTaskPayload(payload);
         state.activeTaskId = pick(payload.task_id, state.task?.task_id);
         if (!state.activeTaskId) throw new Error("后端没有返回 task_id，任务状态未知。");
@@ -3207,7 +3533,15 @@
         loadTaskList();
         startTaskPolling();
       } catch (error) {
-        el.taskStatus.textContent = "failed";
+        handleSessionError(error);
+        if (["selected_device_changed", "selected_device_not_found", "stable_device_identity_unavailable", "execution_device_mismatch"].includes(error.code)) {
+          state.selectedDeviceId = "";
+          state.resolvedHardware = null;
+          state.hardwareResolveError = error.message;
+          renderRemoteHardware();
+          renderHardwareEditor();
+        }
+        el.taskStatus.textContent = "提交失败";
         el.taskDetailPanel.innerHTML = `<div class="empty">任务启动失败：${escapeHtml(error.message)}</div>`;
         addOneShotWarning(`任务启动失败：${error.message}`);
         renderAlerts();
@@ -3313,16 +3647,11 @@
 
     function remoteRunnerBlocker(runnerType) {
       if (runnerType !== "ssh") return "";
-      const settings = readSettings();
-      if (!settings.ssh_host || !settings.ssh_username || !settings.remote_workspace) {
-        return "remote SSH 需要先填写并保存 SSH host、username 和 remote workspace。";
-      }
-      if (settings.auth_type === "password" && state.settingsEnv.passwordEnvExists !== true) {
-        return "remote SSH 需要后端环境变量中的 SSH password env 已设置；请保存设置后确认 SSH password env 显示“已设置”。";
-      }
-      if (settings.auth_type === "key" && !settings.key_path) {
-        return "remote SSH key 认证需要填写 key path；页面不会读取或显示私钥内容。";
-      }
+      if (!sessionIsActive()) return state.sshStatus === "expired" || state.sshSession ? "SSH 会话已过期或失效，请到设置页重新连接并识别硬件。" : "远程任务需要先在设置页连接 SSH 并识别硬件。";
+      if (state.hardwareResolving) return "正在识别硬件，请等待后端返回设备结果。";
+      if (state.hardwareResolveError) return "硬件识别尚未完成，请重新识别设备后再提交远程任务。";
+      if (!state.selectedDeviceId || !currentRemoteDevice()) return state.remoteDevices.length > 1 ? "请选择一块实际识别到的 GPU 后再提交远程任务。" : "尚未识别到可用 GPU，请检查远端运行时并重新识别。";
+      if (currentRemoteDevice().identity_verified !== true) return "无法核实 GPU 的稳定身份，请重新识别设备后再提交远程任务。";
       return "";
     }
 
