@@ -31,7 +31,8 @@ from kernel_opt_agent.patcher import PatchProposal, PatchTrial, find_patch_regio
 from kernel_opt_agent.profiler.base import BaseProfiler, ProfilerResult
 from kernel_opt_agent.profiler.dummy_profiler import DummyProfiler
 from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
-from kernel_opt_agent.profiler.mcprofiler import COLLECTION_SCHEMA_VERSION, McProfilerCollectionRequest, collect_remote_mcprofiler_case
+from kernel_opt_agent.profiler.mcprofiler import COLLECTION_SCHEMA_VERSION, McProfilerCollectionRequest
+from kernel_opt_agent.profiler.registry import collect_mcprofiler_case as collect_remote_mcprofiler_case
 from kernel_opt_agent.profiler.tilelang_log_profiler import TileLangLogProfiler
 from kernel_opt_agent.redaction import configured_secret_values, redact_data, redact_text, SessionLogFilter
 from kernel_opt_agent.run_request import load_config_from_run_request
@@ -404,7 +405,9 @@ def run_trial(
             )
             collection_record = collection.to_dict(lambda value: redact_data(config, value))
             if collection.status == "collected" and collection.case_dir:
-                profiler_context["mcprofiler_case_path"] = str(db.results_dir / collection.case_dir)
+                profiler_context["mcprofiler_case_path"] = str(
+                    db.results_dir / collection.case_dir / (collection.primary_report or ".")
+                )
         except Exception as exc:
             collection_record = redact_data(
                 config,

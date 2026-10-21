@@ -1,0 +1,60 @@
+{
+  "fixture_name": "real_c500_native_smoke_20261021",
+  "fixture_kind": "real_native_report_subset",
+  "synthetic": false,
+  "case_name": "c500-native-profiler-smoke-20261021-final",
+  "exec_id": "55474e88-35ee-48ef-87f8-e5d819efb751",
+  "collection_id": "mcprof-a0e1762e095b1a7d663d3b49",
+  "collection_mode": "remote_official_cli",
+  "collection_status": "collected",
+  "started_at": "2026-10-21T13:58:40.504546Z",
+  "finished_at": "2026-10-21T13:59:31.636920Z",
+  "operator": "native_elementwise_axpby",
+  "target_subkernel": "profiler_vector_axpby",
+  "kernel_name": "profiler_vector_axpby",
+  "dtype": "FP32",
+  "shape": {"elements": 32768, "threads": 256, "blocks": 128},
+  "gpu_model": "MetaX C500",
+  "mxmaca_version": "3.3.0.15",
+  "driver_version": "3.8.30",
+  "torch_version": "2.8.0+metax3.3.0.2",
+  "python_version": "3.10.10",
+  "tilelang_version": null,
+  "mctilelang_version": null,
+  "mcprofiler_version": "3.9.0.29",
+  "mcprofiler_build": "c63ea13089",
+  "source_file": "kernel_opt_agent/samples/profiler_smoke/vector_add.cpp",
+  "source_sha256": "d17ab2025516d2595450a8a5e14e923b96d54343ab0a1e6a08e3d6c35295a54b",
+  "primary_report": "1_profiler_vector_axpby_dumped_result.json",
+  "raw_case_file_count": 24,
+  "correctness": {"passed": true, "max_error": 0, "atol": 0, "rtol": 0, "reference": "CPU FP32 elementwise reference"},
+  "benchmark": {"artifact": "benchmark.json", "warmup": 3, "measurements": 5, "timing": "GPU events", "median_ms": 0.0340479984879},
+  "toolkit": {
+    "download_page": "https://developer.metax-tech.com/softnova/metax",
+    "archive": "linux-perf-kit_3.9.0.29.tar.gz",
+    "md5": "b2dd400710cda71752b64565afc2ba52",
+    "sha256": "db39a333bc1096119eb0c1bebc708695392f87e980cf68178e3ab96a5ee8e5f0"
+  },
+  "limitations": [
+    "Collector/parser acceptance only; not TileLang, Paged Attention, GEMM, or MoE performance evidence.",
+    "Native per-kernel counters are preserved, not independently calibrated.",
+    "Nonzero MMA duty for an elementwise kernel means target-only counter attribution is unverified.",
+    "The aggregate report includes period0 and must not replace the named kernel report.",
+    "The CLI custom flag did not change generated profile_from_start=true; preserve this vendor behavior as unknown.",
+    "No optimization or isolated hardware-counter interpretation is claimed."
+  ],
+  "sanitization": [
+    "Only non-identifying native JSON and correctness/benchmark output are included.",
+    "Connection details, device UUID, absolute workspace paths, databases and vendor logs are omitted.",
+    "All included native report/config bytes and metric values are unchanged."
+  ],
+  "artifacts": [
+    {"path": "report_dumped_result.json", "source_sha256": "9717cd5c5236af6552a1a8afd4dd60518a1bf665035c2e08b895707412ad5867", "stored_sha256": "9717cd5c5236af6552a1a8afd4dd60518a1bf665035c2e08b895707412ad5867", "storage_transform": "none_original_bytes_preserved"},
+    {"path": "1_profiler_vector_axpby_dumped_result.json", "source_sha256": "45c6178421a6cd66e1ff7432ba950c6d23076201b62aae9fcb485ac8b629cf46", "stored_sha256": "45c6178421a6cd66e1ff7432ba950c6d23076201b62aae9fcb485ac8b629cf46", "storage_transform": "none_original_bytes_preserved"},
+    {"path": "event_batch_1.json", "source_sha256": "01617ad3796f157496aba703db1f5aad0aa1cd08feb7b3ec41d2be0926529031", "stored_sha256": "01617ad3796f157496aba703db1f5aad0aa1cd08feb7b3ec41d2be0926529031", "storage_transform": "none_original_bytes_preserved"},
+    {"path": "event_batch_2.json", "source_sha256": "41b5b5e39fd6043cfe6b7a6316a60bc86d4869c25ad1ba97604f686c99f5023e", "stored_sha256": "41b5b5e39fd6043cfe6b7a6316a60bc86d4869c25ad1ba97604f686c99f5023e", "storage_transform": "none_original_bytes_preserved"},
+    {"path": "mcProfiler.json", "source_sha256": "41b5b5e39fd6043cfe6b7a6316a60bc86d4869c25ad1ba97604f686c99f5023e", "stored_sha256": "41b5b5e39fd6043cfe6b7a6316a60bc86d4869c25ad1ba97604f686c99f5023e", "storage_transform": "none_original_bytes_preserved"},
+    {"path": "benchmark.json", "source_sha256": "feed3eaf56fd7361638df2ef7040cb9906719dcef257fb8c25faa2256b5843ef", "stored_sha256": "feed3eaf56fd7361638df2ef7040cb9906719dcef257fb8c25faa2256b5843ef", "storage_transform": "none_original_bytes_preserved"},
+    {"path": "correctness.stdout.log", "source_sha256": "98f1854dc1c45790f9de6c9600e2c7e38991799c3a02d0bc3800eb7e6dad9f33", "stored_sha256": "98f1854dc1c45790f9de6c9600e2c7e38991799c3a02d0bc3800eb7e6dad9f33", "storage_transform": "none_original_bytes_preserved"}
+  ]
+}

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import shlex
 import shutil
 import stat
 import tempfile
@@ -18,6 +20,7 @@ from kernel_opt_agent.profiler.mcprofiler import (
     McProfilerCollectionRequest,
     collect_remote_mcprofiler_case,
 )
+from kernel_opt_agent.profiler.mcprofiler.collector import _build_collection_command
 from kernel_opt_agent.runner.local_runner import CommandResult
 from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
 from kernel_opt_agent.storage.experiment_db import ExperimentDB
@@ -27,13 +30,14 @@ FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcprofiler" / "real_v8
 
 
 class FakeRemoteCollectionRunner:
-    def __init__(self, remote_root: Path, mode: str = "success", secret: str = ""):
+    def __init__(self, remote_root: Path, mode: str = "success", secret: str = "", fixture: Path = FIXTURE):
         self.remote_root = remote_root
         self.remote_root.mkdir(parents=True, exist_ok=True)
         self.info = SimpleNamespace(remote_workspace="/managed/mcprofiler-task")
         self.denied_commands = []
         self.mode = mode
         self.secret = secret
+        self.fixture = fixture
         self.commands: list[tuple[str, str]] = []
 
     @staticmethod
@@ -73,7 +77,7 @@ class FakeRemoteCollectionRunner:
         if match is None:
             return self._result(name, command, 1, stderr="controlled collection directory missing")
         case_root = self.remote_root / ".kernel_opt_agent" / "mcprofiler" / "collections" / match.group(1) / "real-case"
-        shutil.copytree(FIXTURE, case_root, dirs_exist_ok=True)
+        shutil.copytree(self.fixture, case_root, dirs_exist_ok=True)
         if self.mode == "ambiguous":
             shutil.copytree(FIXTURE, case_root.parent / "second-case", dirs_exist_ok=True)
         if self.mode == "artifact_secret":
@@ -116,7 +120,7 @@ class McProfilerCollectionTests(unittest.TestCase):
             root = Path(temporary)
             runner = FakeRemoteCollectionRunner(root / "remote")
             results = root / "results"
-            result = collect_remote_mcprofiler_case(runner, results, self.request())
+            result = collect_remote_mcprofiler_case(runner, results, self.request(server_mode="managed_external"))
             self.assertEqual(result.schema_version, COLLECTION_SCHEMA_VERSION)
             self.assertEqual(result.status, "collected")
             self.assertEqual(result.reason_category, "none")
@@ -160,6 +164,86 @@ class McProfilerCollectionTests(unittest.TestCase):
                     source_trial_id="source-baseline",
                     source_sha256="a" * 64,
                 )
+
+    def test_embedded_cli_uses_native_argument_shapes_and_runtime_hook(self) -> None:
+        request = self.request(per_kernel=True, profile_from_start=False)
+        command = _build_collection_command(request, "/managed/task workspace", ".managed/case", 52124)
+        script = shlex.split(command)[2]
+        self.assertIn("--metrics 'Global Read Instructions' 'Global Write Instructions'", script)
+        self.assertIn("--kernelnames paged_attention", script)
+        self.assertNotIn("--kernelname ", script)
+        self.assertIn("--per-kernel", script)
+        self.assertIn("--custom", script)
+        self.assertIn("MCTX_TARGET_INIT=true", script)
+        self.assertIn("--output '/managed/task workspace/.managed/case'", script)
+        self.assertIn("HOME='/managed/task workspace/.managed/case/.home'", script)
+        self.assertIn("TMPDIR='/managed/task workspace/.managed/case/.tmp'", script)
+        self.assertNotIn("profiler_server --", script)
+        self.assertNotIn("server_pid=$!", script)
+
+    def test_returncode_zero_without_report_preserves_partial_native_artifacts(self) -> None:
+        class PartialRunner(FakeRemoteCollectionRunner):
+            def run_cancellable(self, name, command, should_cancel=None, **kwargs):
+                self.commands.append((name, command))
+                match = re.search(r"\.kernel_opt_agent/mcprofiler/collections/(mcprof-[a-f0-9]+)", command)
+                root = self.remote_root / ".kernel_opt_agent/mcprofiler/collections" / match.group(1)
+                root.mkdir(parents=True)
+                (root / "profiler.log").write_text("profiler failed: list index out of range\n", encoding="utf-8")
+                (root / "case.json").write_text('{"perf_counters": []}', encoding="utf-8")
+                if self.secret:
+                    (root / "unexpected.log").write_text(self.secret, encoding="utf-8")
+                return self._result(name, command, stdout="perf done, please check report file")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            results = root / "results"
+            result = collect_remote_mcprofiler_case(PartialRunner(root / "remote"), results, self.request())
+            self.assertEqual((result.status, result.reason_category), ("failed", "report_not_found"))
+            partial = results / result.partial_artifact_dir
+            self.assertIn("list index out of range", (partial / "profiler.log").read_text())
+            self.assertTrue(all(row["source"] == "mcprofiler_failed_collection" for row in result.artifact_manifest))
+            self.assertFalse((results / "profiler_results.jsonl").exists())
+            self.assertFalse(result.metric_observations)
+            self.assertIsNone(result.case_dir)
+            for row in result.artifact_manifest:
+                self.assertEqual(hashlib.sha256((partial / row["relative_path"]).read_bytes()).hexdigest(), row["sha256"])
+
+            secret = "partial-fixture-credential"
+            secret_results = root / "secret-results"
+            secret_result = collect_remote_mcprofiler_case(
+                PartialRunner(root / "remote-secret", secret=secret), secret_results,
+                self.request(), secret_values=(secret,),
+            )
+            self.assertIsNone(secret_result.partial_artifact_dir)
+            self.assertFalse(any((secret_results / "mcprofiler_failed").rglob("unexpected.log")))
+            self.assertNotIn(secret, json.dumps(secret_result.to_dict()))
+
+    def test_empty_and_unavailable_reports_are_not_successful_collections(self) -> None:
+        class EmptyReportRunner(FakeRemoteCollectionRunner):
+            def run_cancellable(self, name, command, should_cancel=None, **kwargs):
+                result = super().run_cancellable(name, command, should_cancel, **kwargs)
+                report = next(self.remote_root.rglob("report_dumped_result.json"))
+                payload = json.loads(report.read_text())
+                if self.mode == "unavailable":
+                    for rows in payload.values():
+                        for row in rows:
+                            row["isError"] = True
+                else:
+                    payload = {}
+                report.write_text(json.dumps(payload), encoding="utf-8")
+                return result
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for mode in ("empty", "unavailable"):
+                with self.subTest(mode=mode):
+                    results = root / (mode + "-results")
+                    result = collect_remote_mcprofiler_case(
+                        EmptyReportRunner(root / mode, mode), results, self.request(),
+                    )
+                    self.assertEqual((result.status, result.reason_category), ("failed", "report_invalid"))
+                    self.assertFalse((results / "profiler_results.jsonl").exists())
+                    self.assertFalse(result.metric_observations)
 
     def test_collection_ignores_unrelated_reports_and_never_overwrites_existing_case(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

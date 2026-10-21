@@ -219,7 +219,7 @@ def parse_discovered_case(case: McProfilerCase) -> McProfilerParseResult:
         "sha256": _sha256(case.report_path),
     }
     artifacts["artifact_id"] = _artifact_id(metadata, case, artifacts["report_dumped_result"]["sha256"])
-    expected = artifacts["sha256_manifest"].get("case_report/report_dumped_result.json")
+    expected = artifacts["sha256_manifest"].get(case.report_path.relative_to(case.case_root).as_posix())
     if expected and expected != artifacts["report_dumped_result"]["sha256"]:
         warnings.append("report_dumped_result.json sha256 does not match SHA256SUMS.txt")
     if _contains_sensitive_value(report):

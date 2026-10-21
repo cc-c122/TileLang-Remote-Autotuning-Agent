@@ -22,11 +22,16 @@ def discover_case(path: str | Path) -> McProfilerCase:
     root = Path(path).expanduser()
     if not root.is_absolute():
         root = (Path.cwd() / root).resolve()
+    explicit_report = root if root.is_file() else None
+    if explicit_report is not None:
+        if not (root.name == "report_dumped_result.json" or root.name.endswith("_dumped_result.json")):
+            raise ValueError("expected a native mcProfiler dumped result JSON")
+        root = root.parent.parent if root.parent.name == "case_report" else root.parent
     report_candidates = [
         root / "case_report" / "report_dumped_result.json",
         root / "report_dumped_result.json",
     ]
-    report_path = next((candidate for candidate in report_candidates if candidate.exists()), None)
+    report_path = explicit_report or next((candidate for candidate in report_candidates if candidate.exists()), None)
     sha_path = root / "SHA256SUMS.txt"
     readme_path = root / "README.md"
     manifest_path = root / "manifest.json"

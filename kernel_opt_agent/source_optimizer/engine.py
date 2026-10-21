@@ -18,7 +18,8 @@ from kernel_opt_agent.benchmark.correctness import parse_correctness
 from kernel_opt_agent.benchmark.parser import parse_benchmark
 from kernel_opt_agent.config_model import AppConfig, resolve_path
 from kernel_opt_agent.main import build_runner, command_failure_status
-from kernel_opt_agent.profiler.mcprofiler import McProfilerCollectionRequest, collect_remote_mcprofiler_case
+from kernel_opt_agent.profiler.mcprofiler import McProfilerCollectionRequest
+from kernel_opt_agent.profiler.registry import collect_mcprofiler_case as collect_remote_mcprofiler_case
 from kernel_opt_agent.redaction import configured_secret_values, redact_data, redact_text
 from kernel_opt_agent.sample_security import copy_safe_sample_contents, normalize_sample_path
 
