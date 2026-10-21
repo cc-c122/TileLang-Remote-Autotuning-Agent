@@ -34,6 +34,11 @@ def _write_log(log_path: Path, lines: list[str]) -> None:
 def _build_detection_runner(config: AppConfig, results_dir: Path):
     if config.runner.type == "local":
         return LocalRunner(results_dir.parent, config.hardware_detection.timeout_seconds, config.constraints.denied_commands)
+    from kernel_opt_agent.runner.ssh_runtime import current_ssh_context
+
+    context = current_ssh_context()
+    if context is not None:
+        return context.detection_runner()
     info = SSHConnectionInfo(
         host=config.remote.host,
         port=config.remote.port,
@@ -42,6 +47,7 @@ def _build_detection_runner(config: AppConfig, results_dir: Path):
         key_path=config.remote.key_path,
         password_env=config.remote.password_env,
         remote_workspace=config.remote.remote_workspace,
+        host_key_fingerprint=config.remote.host_key_fingerprint,
     )
     runner = SSHRunner(info, config.hardware_detection.timeout_seconds, config.constraints.denied_commands)
     runner.connect()
@@ -75,6 +81,24 @@ def _has_critical_unknowns(info: HardwareInfo) -> bool:
 
 def detect_hardware(config: AppConfig, results_dir: Path, profile_loader: HardwareProfileLoader | None = None, command_runner: Any | None = None) -> HardwareInfo:
     results_dir.mkdir(parents=True, exist_ok=True)
+    from kernel_opt_agent.runner.ssh_runtime import current_ssh_context
+    from .hardware_info import HardwareField
+
+    context = current_ssh_context()
+    if context is not None and context.hardware_snapshot is not None:
+        snapshot = context.redact(context.hardware_snapshot)
+        public_info = snapshot["hardware"]
+        info = HardwareInfo.unknown()
+        info.fields = {name: HardwareField(**value) for name, value in public_info["fields"].items()}
+        info.profile_used = public_info.get("profile_used")
+        info.warnings = public_info.get("warnings", [])
+        info.remote_detection_attempted = True
+        info.conservative_mode = bool(config.hardware_detection.conservative_unknown_mode and _has_critical_unknowns(info))
+        (results_dir / "hardware_snapshot.yaml").write_text(yaml.safe_dump(snapshot, sort_keys=True), encoding="utf-8")
+        (results_dir / "hardware_detected.yaml").write_text(yaml.safe_dump(info.to_dict(), sort_keys=True), encoding="utf-8")
+        _write_log(results_dir / "hardware_detection.log", ["session hardware snapshot verified on the execution connection", *info.warnings])
+        _write_empty_probe_file(results_dir)
+        return info
     log_lines = ["hardware detection started"]
     info = HardwareInfo.unknown()
     info.detection_enabled = config.hardware_detection.enabled

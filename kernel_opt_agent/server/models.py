@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 
 TaskStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
@@ -12,6 +12,20 @@ ExecutionMode = Literal["parameter_search", "baseline_only", "source_optimizatio
 
 def utc_now() -> str:
     return datetime.utcnow().isoformat() + "Z"
+
+
+def _validate_hardware_overrides(fields: dict[str, Any]) -> None:
+    def check(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if str(key).lower() in {"password", "api_key", "token", "private_key", "credential", "authorization", "secret"}:
+                    raise ValueError("credential fields are not hardware overrides")
+                check(item)
+        elif isinstance(value, list):
+            for item in value:
+                check(item)
+
+    check(fields)
 
 
 class SSHSettings(BaseModel):
@@ -24,6 +38,15 @@ class SSHSettings(BaseModel):
     password_env: str | None = "KERNEL_AGENT_SSH_PASSWORD"
     key_path: str | None = None
     remote_workspace: str = "/tmp/kernel_opt_workspace"
+    host_key_fingerprint: str | None = None
+    connect_timeout_seconds: int = Field(default=15, ge=1, le=60)
+
+
+class SSHSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    ssh: SSHSettings
+    password: SecretStr | None = Field(default=None, repr=False, exclude=True)
 
 
 class LLMSettings(BaseModel):
@@ -140,6 +163,12 @@ class HardwareTargetPayload(BaseModel):
     user_overrides: dict[str, Any] = Field(default_factory=dict)
     allow_llm_lookup: bool = False
     allow_web_lookup: bool = False
+    device_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_overrides(self):
+        _validate_hardware_overrides(self.user_overrides)
+        return self
 
 
 class TaskCreateRequest(BaseModel):
@@ -154,6 +183,15 @@ class TaskCreateRequest(BaseModel):
     patching: PatchingPayload = Field(default_factory=PatchingPayload)
     runner: RunnerPayload = Field(default_factory=RunnerPayload)
     optimization: OptimizationPayload = Field(default_factory=OptimizationPayload)
+    ssh_session_id: str | None = Field(default=None, repr=False, exclude=True)
+
+    @model_validator(mode="after")
+    def validate_session_runner(self) -> "TaskCreateRequest":
+        if self.ssh_session_id and self.runner.type != "ssh":
+            raise ValueError("ssh_session_id requires runner.type=ssh")
+        if self.target.device_id and not self.ssh_session_id:
+            raise ValueError("device_id requires an SSH session")
+        return self
 
     @model_validator(mode="after")
     def validate_profiler_runner(self) -> "TaskCreateRequest":
@@ -172,6 +210,15 @@ class HardwareResolveRequest(BaseModel):
     user_overrides: dict[str, Any] = Field(default_factory=dict)
     allow_llm_lookup: bool = False
     allow_web_lookup: bool = False
+    ssh_session_id: str | None = Field(default=None, repr=False, exclude=True)
+    device_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_overrides(self):
+        _validate_hardware_overrides(self.user_overrides)
+        if self.device_id and not self.ssh_session_id:
+            raise ValueError("device_id requires an SSH session")
+        return self
 
 
 class TaskRecord(BaseModel):

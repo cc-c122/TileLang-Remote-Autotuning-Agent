@@ -33,7 +33,7 @@ from kernel_opt_agent.profiler.dummy_profiler import DummyProfiler
 from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
 from kernel_opt_agent.profiler.mcprofiler import COLLECTION_SCHEMA_VERSION, McProfilerCollectionRequest, collect_remote_mcprofiler_case
 from kernel_opt_agent.profiler.tilelang_log_profiler import TileLangLogProfiler
-from kernel_opt_agent.redaction import configured_secret_values, redact_data, redact_text
+from kernel_opt_agent.redaction import configured_secret_values, redact_data, redact_text, SessionLogFilter
 from kernel_opt_agent.run_request import load_config_from_run_request
 from kernel_opt_agent.runner.local_runner import CommandResult, LocalRunner
 from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
@@ -59,11 +59,18 @@ def setup_logging() -> None:
             logging.FileHandler(RESULTS_DIR / "agent.log", encoding="utf-8"),
         ],
     )
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(SessionLogFilter())
 
 
 def build_runner(config: AppConfig, trial_dir: Path):
     if config.runner.type == "local":
         return LocalRunner(trial_dir, config.search.timeout_seconds, config.constraints.denied_commands)
+    from kernel_opt_agent.runner.ssh_runtime import current_ssh_context
+
+    context = current_ssh_context()
+    if context is not None:
+        return context.build_runner(config, trial_dir)
     info = SSHConnectionInfo(
         host=config.remote.host,
         port=config.remote.port,
@@ -72,6 +79,7 @@ def build_runner(config: AppConfig, trial_dir: Path):
         key_path=config.remote.key_path,
         password_env=config.remote.password_env,
         remote_workspace=config.remote.remote_workspace,
+        host_key_fingerprint=config.remote.host_key_fingerprint,
     )
     runner = SSHRunner(info, config.search.timeout_seconds, config.constraints.denied_commands)
     try:
@@ -459,7 +467,7 @@ def run_trial(
     record = redact_data(config, record)
     if runner is not None:
         maybe_run_controlled_patch_trial(config, db, record, paths, runner, metrics_data)
-    if isinstance(runner, SSHRunner):
+    if config.runner.type == "ssh" and hasattr(runner, "download_artifacts"):
         try:
             runner.download_artifacts(RESULTS_DIR / "remote_artifacts")
         except Exception as exc:

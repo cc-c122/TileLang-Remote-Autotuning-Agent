@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import threading
+import json
+from contextlib import nullcontext
 from pathlib import Path
 
 import kernel_opt_agent.main as agent_main
@@ -17,6 +19,7 @@ from kernel_opt_agent.source_optimizer import (
     write_source_result,
 )
 from kernel_opt_agent.source_optimizer.analyzer import sha256_file
+from kernel_opt_agent.runner.ssh_runtime import bind_ssh_context
 
 from .models import TaskCreateRequest
 from .profiler_status import profiler_status, read_jsonl
@@ -39,24 +42,34 @@ class JobWorker:
         self.settings_path = settings_path
         self.upload_store = upload_store
 
-    def submit(self, task_id: str, request: TaskCreateRequest) -> None:
-        thread = threading.Thread(target=self._run_task, args=(task_id, request), daemon=True)
+    def submit(self, task_id: str, request: TaskCreateRequest, execution_context=None) -> None:
+        thread = threading.Thread(target=self._run_task, args=(task_id, request, execution_context), daemon=True)
         thread.start()
 
-    def _run_task(self, task_id: str, request: TaskCreateRequest) -> None:
+    def _run_task(self, task_id: str, request: TaskCreateRequest, execution_context=None) -> None:
         task = self.manager.get(task_id)
         workspace = Path(task.workspace)
         results_dir = Path(task.results_dir)
         generated_dir = workspace / "generated"
         patches_dir = workspace / "patches"
         self.manager.add_event(task_id, "task_queued", "waiting for runner slot")
-        with WORKER_LOCK:
-            if self.manager.is_cancel_requested(task_id):
-                if request.optimization.enabled:
-                    write_source_result(results_dir, SourceOptimizationResult(status="cancelled", reason="cancelled before execution"))
-                self.manager.set_status(task_id, "cancelled")
-                return
-            self._run_task_locked(task_id, request, workspace, results_dir, generated_dir, patches_dir)
+        try:
+            with WORKER_LOCK, (execution_context.operation() if execution_context else nullcontext()), bind_ssh_context(execution_context):
+                if self.manager.is_cancel_requested(task_id):
+                    if request.optimization.enabled:
+                        write_source_result(results_dir, SourceOptimizationResult(status="cancelled", reason="cancelled before execution"))
+                    self.manager.set_status(task_id, "cancelled")
+                    return
+                if execution_context:
+                    execution_context.prepare_task(task_id)
+                self._run_task_locked(task_id, request, workspace, results_dir, generated_dir, patches_dir, execution_context)
+        except Exception as exc:
+            message = getattr(exc, "code", "ssh_task_preflight_failed")
+            (results_dir / "connection_failure.json").write_text(json.dumps({"stage": "task_preflight", "error_category": message, "exception_type": type(exc).__name__}), encoding="utf-8")
+            self.manager.set_status(task_id, "failed", message)
+        finally:
+            if execution_context:
+                execution_context.release()
 
     def _run_task_locked(
         self,
@@ -66,6 +79,7 @@ class JobWorker:
         results_dir: Path,
         generated_dir: Path,
         patches_dir: Path,
+        execution_context=None,
     ) -> None:
         self.manager.set_status(task_id, "running")
         self.manager.add_event(task_id, "hardware_resolved", "hardware profile and user overrides prepared")
@@ -76,7 +90,7 @@ class JobWorker:
             "PATCHES_DIR": agent_main.PATCHES_DIR,
         }
         try:
-            config = build_effective_config(request, workspace, self.settings_path, self.upload_store)
+            config = build_effective_config(request, workspace, self.settings_path, self.upload_store, execution_context=execution_context)
             self.manager.add_event(task_id, "sample_uploaded", "sample saved to isolated task workspace")
             source_entry = None
             source_analysis = None
@@ -122,6 +136,8 @@ class JobWorker:
                 should_cancel=lambda: self.manager.is_cancel_requested(task_id),
                 event_callback=lambda event_type, message: self.manager.add_event(task_id, event_type, message),
             )
+            if execution_context:
+                execution_context.verify_bound_device()
             if request.optimization.enabled and source_entry is not None and source_analysis is not None:
                 self.manager.add_event(task_id, "source_optimization_started", "running controlled source optimization trial")
                 planning_client = None

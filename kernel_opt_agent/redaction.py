@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import logging
+import threading
+from collections import Counter
 from typing import Any
 
 
@@ -10,10 +13,49 @@ _PRIVATE_KEY_RE = re.compile(
     r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----",
     re.DOTALL,
 )
+_LOG_SECRETS: Counter[str] = Counter()
+_LOG_SECRETS_LOCK = threading.RLock()
+
+
+def register_log_secrets(values: list[str]) -> None:
+    with _LOG_SECRETS_LOCK:
+        _LOG_SECRETS.update(value for value in values if value)
+    for name in ("", "uvicorn", "uvicorn.error", "uvicorn.access", "paramiko", "httpx"):
+        for handler in logging.getLogger(name).handlers:
+            if not any(isinstance(item, SessionLogFilter) for item in handler.filters):
+                handler.addFilter(SessionLogFilter())
+
+
+def unregister_log_secrets(values: list[str]) -> None:
+    with _LOG_SECRETS_LOCK:
+        for value in values:
+            _LOG_SECRETS[value] -= 1
+            if _LOG_SECRETS[value] <= 0:
+                del _LOG_SECRETS[value]
+
+
+class SessionLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        with _LOG_SECRETS_LOCK:
+            for value in sorted(_LOG_SECRETS, key=len, reverse=True):
+                message = message.replace(value, "<redacted:secret>")
+        message = re.sub(r"(/api/ssh/sessions/)[^\s?\"']+", r"\1<redacted:session>", message)
+        record.msg = redact_text(None, message)
+        record.args = ()
+        if record.exc_info:
+            record.exc_info = None
+            record.exc_text = "<redacted:exception>"
+        return True
 
 
 def configured_secret_values(config: Any) -> list[str]:
     values: list[str] = []
+    from kernel_opt_agent.runner.ssh_runtime import current_ssh_context
+
+    context = current_ssh_context()
+    if context is not None:
+        values.extend(context.secret_values())
     remote = getattr(config, "remote", None)
     llm = getattr(config, "llm", None)
     for env_name in (getattr(remote, "password_env", None), getattr(llm, "api_key_env", None)):

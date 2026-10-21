@@ -4,6 +4,7 @@ import argparse
 import csv
 import hashlib
 import os
+import json
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ import yaml
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
 
 from kernel_opt_agent.hardware.hardware_info import CANONICAL_FIELDS, HardwareInfo
 from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader, normalize_profile_name
@@ -20,7 +22,10 @@ from kernel_opt_agent.source_optimizer import read_source_result
 from kernel_opt_agent.source_optimizer.performance import saved_gate_is_accepted
 
 from .job_worker import JobWorker
-from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest
+from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest, SSHSessionRequest
+from .ssh_sessions import SSHSessionStore, SessionError
+from .security import local_request_only, safe_validation_error, validate_loopback_host
+from kernel_opt_agent.runner.host_keys import HostKeyError
 from .profiler_status import profiler_status
 from .sample_uploads import SampleUploadError, SampleUploadStore, parse_sample_upload_request
 from .settings_store import SettingsStore
@@ -217,6 +222,8 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "best_config.yaml",
         "report.md",
         "source_optimization.json",
+        "hardware_snapshot.yaml",
+        "hardware_detected.yaml",
     ]:
         path = results_dir / name
         files[name] = {"exists": path.exists(), "size": path.stat().st_size if path.exists() else 0}
@@ -245,6 +252,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "source_optimization": source_optimization,
         "source_best_verified": source_best_verified if source_mode else None,
         "source_best_verification_error": source_error if source_mode else None,
+        "hardware_snapshot": _read_yaml(results_dir / "hardware_snapshot.yaml"),
     }
     payload.update({"files": files, "summary": summary, "best_row": best_row, "report": report})
     return payload
@@ -298,7 +306,39 @@ manager = TaskManager(TASKS_ROOT)
 upload_store = SampleUploadStore(UPLOADS_ROOT)
 worker = JobWorker(manager, SETTINGS_PATH, upload_store)
 settings_store = SettingsStore(SETTINGS_PATH)
+ssh_sessions = SSHSessionStore()
 app = FastAPI(title="TileLang Remote Autotuning Agent API")
+app.middleware("http")(local_request_only)
+app.add_exception_handler(RequestValidationError, safe_validation_error)
+
+
+def _session_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, HostKeyError):
+        detail = {"code": exc.code}
+        if exc.fingerprint:
+            detail["fingerprint"] = exc.fingerprint
+        return HTTPException(status_code=409, detail=detail)
+    if isinstance(exc, SessionError):
+        return HTTPException(status_code=exc.status_code, detail={"code": exc.code})
+    import socket
+    import paramiko
+
+    code = "auth_failed" if isinstance(exc, paramiko.AuthenticationException) else "connection_timeout" if isinstance(exc, (TimeoutError, socket.timeout)) else "ssh_connection_failed"
+    return HTTPException(status_code=502, detail={"code": code})
+
+
+@app.post("/api/ssh/sessions")
+def create_ssh_session(payload: SSHSessionRequest) -> dict[str, Any]:
+    try:
+        return ssh_sessions.create(payload)
+    except Exception as exc:
+        raise _session_http_error(exc) from None
+
+
+@app.delete("/api/ssh/sessions/{session_id}")
+def delete_ssh_session(session_id: str) -> dict[str, Any]:
+    ssh_sessions.delete(session_id)
+    return {"ok": True}
 
 
 @app.get("/api/health")
@@ -338,43 +378,35 @@ def test_connection() -> dict[str, Any]:
                 raise ValueError(f"SSH password env var is not set: {ssh.password_env}")
         if ssh.auth_type == "key" and not ssh.key_path:
             raise ValueError("key_path is required for SSH key auth")
-        try:
-            import paramiko
-        except ImportError as exc:
-            raise RuntimeError("SSH test requires optional dependency 'paramiko'") from exc
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        try:
-            if ssh.auth_type == "password":
-                client.connect(
-                    hostname=ssh.host,
-                    port=ssh.port,
-                    username=ssh.username,
-                    password=os.environ[ssh.password_env or ""],
-                    timeout=10,
-                    look_for_keys=False,
-                    allow_agent=False,
-                )
-            else:
-                client.connect(
-                    hostname=ssh.host,
-                    port=ssh.port,
-                    username=ssh.username,
-                    key_filename=os.path.expanduser(ssh.key_path or ""),
-                    timeout=10,
-                    look_for_keys=True,
-                    allow_agent=True,
-                )
-        finally:
-            client.close()
+        from pydantic import SecretStr
+
+        password = SecretStr(os.environ[ssh.password_env]) if ssh.auth_type == "password" else None
+        created = ssh_sessions.create(SSHSessionRequest(ssh=ssh, password=password))
+        ssh_sessions.delete(created["session_id"])
         return {"ok": True, "success": True, "failure": False, "error_message": None, "settings": settings_store.load()}
     except Exception as exc:
-        return {"ok": True, "success": False, "failure": True, "error_message": _redact_connection_error(str(exc), settings), "settings": settings_store.load()}
+        detail = _session_http_error(exc).detail
+        message = str(exc) if isinstance(exc, ValueError) and not isinstance(exc, (SessionError, HostKeyError)) else detail.get("code", "connection_failed")
+        return {"ok": True, "success": False, "failure": True, "error_message": _redact_connection_error(message, settings), "error": detail, "settings": settings_store.load()}
 
 
 @app.post("/api/hardware/resolve")
 def hardware_resolve(payload: HardwareResolveRequest) -> dict[str, Any]:
-    return {"ok": True, "hardware": resolve_hardware(payload)}
+    if payload.ssh_session_id:
+        lease = None
+        try:
+            lease = ssh_sessions.acquire(payload.ssh_session_id)
+            lease.add_redaction_values([os.environ.get(settings_store.load_raw().llm.api_key_env, "")])
+            with lease.operation():
+                return {"ok": True, **lease.resolve(payload.device_id, payload.user_overrides)}
+        except Exception as exc:
+            raise _session_http_error(exc) from None
+        finally:
+            if lease:
+                lease.release()
+    hardware = resolve_hardware(payload)
+    return {"ok": True, "hardware": hardware, "devices": [], "selected_device_id": None,
+            "detection_status": "partial", "warnings": ["remote detection was not requested", *hardware.get("warnings", [])]}
 
 
 @app.post("/api/samples/upload")
@@ -406,8 +438,30 @@ def create_task(payload: TaskCreateRequest) -> dict[str, Any]:
             upload_store.validate_reference(payload.sample.upload_id or "", payload.sample.entry_file)
         except SampleUploadError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    task = manager.create(payload)
-    worker.submit(task.task_id, payload)
+    lease = None
+    if payload.ssh_session_id:
+        try:
+            lease = ssh_sessions.acquire(payload.ssh_session_id)
+            lease.add_redaction_values([os.environ.get(settings_store.load_raw().llm.api_key_env, "")])
+            with lease.operation():
+                text = json.dumps(payload.model_dump(), ensure_ascii=False)
+                if any(secret and secret in text for secret in lease.secret_values()):
+                    raise SessionError("credential_in_task_payload", 422)
+                lease.select(payload.target.device_id, payload.target.user_overrides)
+        except Exception as exc:
+            if lease:
+                lease.release()
+            raise _session_http_error(exc) from None
+    try:
+        task = manager.create(payload)
+        if lease:
+            worker.submit(task.task_id, payload, execution_context=lease)
+        else:
+            worker.submit(task.task_id, payload)
+    except Exception:
+        if lease:
+            lease.release()
+        raise
     return {"ok": True, "task_id": task.task_id, "task": _task_payload(task)}
 
 
@@ -512,7 +566,11 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
-    uvicorn.run("kernel_opt_agent.server.app:app", host=args.host, port=args.port, reload=False)
+    try:
+        host = validate_loopback_host(args.host)
+    except ValueError as exc:
+        parser.error(str(exc))
+    uvicorn.run("kernel_opt_agent.server.app:app", host=host, port=args.port, reload=False, access_log=False, proxy_headers=False)
 
 
 if __name__ == "__main__":

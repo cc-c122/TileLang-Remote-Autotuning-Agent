@@ -7,6 +7,7 @@ import yaml
 
 from kernel_opt_agent.config_model import AppConfig, safe_config_dict
 from kernel_opt_agent.run_request import RunRequest, app_config_from_run_request
+from kernel_opt_agent.redaction import redact_data
 from kernel_opt_agent.sample_security import (
     UnsafeSampleError,
     copy_safe_sample_contents,
@@ -108,7 +109,7 @@ def build_internal_run_request(
         "patching": request.patching.model_dump(),
     }
     run_request = RunRequest.model_validate(raw)
-    (task_workspace / "run_request.yaml").write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    (task_workspace / "run_request.yaml").write_text(yaml.safe_dump(redact_data(None, raw), sort_keys=False), encoding="utf-8")
     return run_request
 
 
@@ -127,6 +128,7 @@ def _apply_server_settings(config: AppConfig, settings: SettingsPayload) -> None
     config.remote.password_env = settings.ssh.password_env
     config.remote.key_path = settings.ssh.key_path
     config.remote.remote_workspace = settings.ssh.remote_workspace
+    config.remote.host_key_fingerprint = settings.ssh.host_key_fingerprint
     config.llm.provider = "openai_compatible"
     config.llm.base_url = settings.llm.base_url
     config.llm.model = settings.llm.model
@@ -138,6 +140,7 @@ def build_effective_config(
     task_workspace: Path,
     settings_path: Path | None = None,
     upload_store: SampleUploadStore | None = None,
+    execution_context: Any | None = None,
 ) -> AppConfig:
     run_request = build_internal_run_request(request, task_workspace, upload_store)
     run_request.settings_ref.use_saved_settings = False
@@ -153,6 +156,8 @@ def build_effective_config(
         config.patching.run_controlled_trial = False
     if request.runner.type == "ssh":
         _apply_server_settings(config, _load_server_settings(settings_path))
+        if execution_context is not None:
+            execution_context.apply_settings(config)
         config.hardware_detection.remote_detection = True
         config.hardware_detection.safe_probe = True
     else:

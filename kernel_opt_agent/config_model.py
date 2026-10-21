@@ -26,6 +26,7 @@ class RemoteConfig(BaseModel):
     key_path: str | None = None
     password_env: str | None = None
     remote_workspace: str = "/tmp/kernel_opt_workspace"
+    host_key_fingerprint: str | None = None
 
     @model_validator(mode="after")
     def validate_remote(self) -> "RemoteConfig":
@@ -214,4 +215,6 @@ def safe_config_dict(config: AppConfig) -> dict[str, Any]:
     if data.get("remote", {}).get("key_path"):
         data["remote"]["key_path"] = "<redacted:key_path>"
     data["remote"]["password_env"] = config.remote.password_env
-    return data
+    from kernel_opt_agent.redaction import redact_data
+
+    return redact_data(config, data)
