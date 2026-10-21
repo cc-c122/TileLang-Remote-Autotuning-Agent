@@ -20,19 +20,16 @@ candidates+=sorted(glob.glob('/opt/conda/envs/*/bin/python'))[:4]
 deadline=time.monotonic()+50
 warnings=[]
 selected=None
-seen=set()
+attempted=0
 for candidate in dict.fromkeys(candidates):
     if not os.path.isfile(candidate):
         continue
-    resolved=os.path.realpath(candidate)
-    if resolved in seen:
-        continue
-    seen.add(resolved)
     remaining=deadline-time.monotonic()
     if remaining<=0:
         warnings.append('interpreter discovery: total_timeout')
         break
-    label='interpreter['+str(len(seen)-1)+']'
+    label='interpreter['+str(attempted)+']'
+    attempted+=1
     try:
         completed=subprocess.run([candidate,'-B','-c',query_script],capture_output=True,text=True,timeout=min(15,remaining))
         if completed.returncode:

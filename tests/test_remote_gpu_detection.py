@@ -88,10 +88,10 @@ class InterpreterDiscoveryTests(unittest.TestCase):
     def completed(self, payload):
         return SimpleNamespace(returncode=0, stdout="KERNEL_AGENT_GPU_QUERY=" + json.dumps(payload))
 
-    def bootstrap(self, execute, *, monotonic=None):
+    def bootstrap(self, execute, *, monotonic=None, realpath=None):
         output = io.StringIO()
         with patch("sys.executable", "/system/python"), patch("glob.glob", return_value=["/opt/conda/envs/gpu/bin/python"]), \
-                patch("os.path.isfile", return_value=True), patch("os.path.realpath", side_effect=lambda value: value), \
+                patch("os.path.isfile", return_value=True), patch("os.path.realpath", side_effect=realpath or (lambda value: value)), \
                 patch("subprocess.run", side_effect=execute) as run, contextlib.redirect_stdout(output):
             if monotonic:
                 with patch("time.monotonic", side_effect=monotonic):
@@ -133,6 +133,14 @@ class InterpreterDiscoveryTests(unittest.TestCase):
         self.assertEqual(payload["environment"]["python_executable"], "/opt/conda/bin/python")
         self.assertIn("interpreter[0]: timeout", payload["warnings"])
         self.assertNotIn("credential-sentinel", json.dumps(payload))
+
+    def test_environment_symlinks_to_same_binary_are_still_queried(self):
+        def execute(arguments, **kwargs):
+            return self.completed(self.payload(gpu=arguments[0].startswith("/opt/conda/envs/"), interpreter=arguments[0]))
+
+        payload, run = self.bootstrap(execute, realpath=lambda value: "/shared/python")
+        self.assertEqual(run.call_count, 5)
+        self.assertEqual(payload["environment"]["python_executable"], "/opt/conda/envs/gpu/bin/python")
 
     def test_unverified_devices_do_not_prevent_trying_another_environment(self):
         def execute(arguments, **kwargs):
