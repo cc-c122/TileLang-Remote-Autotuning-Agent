@@ -13,19 +13,51 @@ from .profile_loader import HardwareProfileLoader
 
 QUERY_SCRIPT = Path(__file__).with_name("remote_gpu_query.py").read_text(encoding="utf-8")
 _BOOTSTRAP = (
-    "import glob,os,subprocess,sys\n"
-    "candidates=[sys.executable,'/opt/conda/bin/python3','/opt/conda/bin/python','/root/miniconda3/bin/python']\n"
-    "candidates+=sorted(glob.glob('/opt/conda/envs/*/bin/python'))[:4]\n"
-    "selected=sys.executable\n"
-    "for candidate in dict.fromkeys(candidates):\n"
-    " if not os.path.isfile(candidate): continue\n"
-    " try:\n"
-    "  check=subprocess.run([candidate,'-B','-c',\"import importlib.util; raise SystemExit(0 if importlib.util.find_spec('torch') else 1)\"],capture_output=True,timeout=3)\n"
-    "  if check.returncode==0: selected=candidate; break\n"
-    " except Exception: pass\n"
-    f"completed=subprocess.run([selected,'-B','-c',{QUERY_SCRIPT!r}],capture_output=True,text=True,timeout=45)\n"
-    "print(completed.stdout)\n"
-    "raise SystemExit(completed.returncode)\n"
+    "import glob,json,os,subprocess,sys,time\n"
+    f"query_script={QUERY_SCRIPT!r}\n"
+    """candidates=[sys.executable,'/opt/conda/bin/python3','/opt/conda/bin/python','/root/miniconda3/bin/python']
+candidates+=sorted(glob.glob('/opt/conda/envs/*/bin/python'))[:4]
+deadline=time.monotonic()+50
+warnings=[]
+selected=None
+seen=set()
+for candidate in dict.fromkeys(candidates):
+    if not os.path.isfile(candidate):
+        continue
+    resolved=os.path.realpath(candidate)
+    if resolved in seen:
+        continue
+    seen.add(resolved)
+    remaining=deadline-time.monotonic()
+    if remaining<=0:
+        warnings.append('interpreter discovery: total_timeout')
+        break
+    label='interpreter['+str(len(seen)-1)+']'
+    try:
+        completed=subprocess.run([candidate,'-B','-c',query_script],capture_output=True,text=True,timeout=min(15,remaining))
+        if completed.returncode:
+            warnings.append(label+': query_failed')
+            continue
+        line=next(line for line in reversed(completed.stdout.splitlines()) if line.startswith('KERNEL_AGENT_GPU_QUERY='))
+        payload=json.loads(line.split('=',1)[1])
+        if not isinstance(payload.get('devices'),list) or not isinstance(payload.get('environment'),dict):
+            raise ValueError()
+        devices=payload['devices']
+        if selected is None or devices and not selected.get('devices'):
+            selected=payload
+        if any(isinstance(item,dict) and item.get('identity_verified') is True and item.get('fields') for item in devices):
+            selected=payload
+            break
+        warnings.append(label+(': stable_identity_unavailable' if devices else ': no_visible_gpu'))
+    except subprocess.TimeoutExpired:
+        warnings.append(label+': timeout')
+    except Exception as exc:
+        warnings.append(label+': '+type(exc).__name__)
+if selected is None:
+    selected={'devices':[],'environment':{},'warnings':[]}
+selected['warnings']=list(dict.fromkeys(selected.get('warnings',[])+warnings))
+print('KERNEL_AGENT_GPU_QUERY='+json.dumps(selected,sort_keys=True))
+"""
 )
 GPU_QUERY_COMMAND = "python3 -B -c " + shlex.quote(_BOOTSTRAP)
 UNITS = {"total_memory_bytes": "bytes", "available_memory_bytes": "bytes", "shared_memory_per_block_bytes": "bytes",

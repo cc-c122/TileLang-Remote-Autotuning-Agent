@@ -247,6 +247,25 @@ class SSHSessionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("device_id requires an SSH session", response.text)
 
+    def test_unproven_device_identity_cannot_create_task_workspace(self):
+        session_id = self.create().json()["session_id"]
+        lease = self.store.acquire(session_id)
+        try:
+            unverified = device()
+            unverified["identity_verified"] = False
+            unverified["fields"]["device_uuid"] = None
+            lease._session.runner.devices = [unverified]
+        finally:
+            lease.release()
+        manager = TaskManager(self.root / "tasks")
+        with patch.object(server, "manager", manager), patch.object(server.worker, "submit") as submit:
+            response = self.client.post("/api/tasks", json={"runner": {"type": "ssh"}, "ssh_session_id": session_id,
+                "target": {"device_id": unverified["device_id"]}, "sample": {"inline_text": "VALUE=1"}})
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json()["detail"]["code"], "stable_device_identity_unavailable")
+            self.assertEqual(list(manager.tasks_root.iterdir()), [])
+            submit.assert_not_called()
+
     def test_request_origin_and_bind_are_local_only(self):
         self.assertEqual(self.client.get("/api/health", headers={"Origin": "https://evil.invalid"}).status_code, 403)
         self.assertEqual(self.client.get("/api/health", headers={"Host": "evil.invalid"}).status_code, 403)
@@ -403,9 +422,20 @@ def kernel(A: T.Tensor([8], "float32")):
         runner.execution_env = {"MACA_VISIBLE_DEVICES": "GPU-test"}
         result = runner.run("build", "export MACA_VISIBLE_DEVICES=1; python3 kernel.py")
         self.assertTrue(result.guard_denied)
+        result = runner.run_cancellable("build", "export MACA_VISIBLE_DEVICES=1; python3 kernel.py")
+        self.assertTrue(result.guard_denied)
         runner.client.exec_command.assert_not_called()
         with self.assertRaisesRegex(ValueError, "predefined"):
             runner.run_bound_detection("invalid", "python3 malicious.py")
+
+    def test_cancellable_path_does_not_expose_session_password(self):
+        runner = SSHRunner(SSHConnectionInfo("example.invalid", 22, "user", "password", None, None, "/tmp/managed-test"),
+                           5, password=SecretStr("cancellable-password-sentinel"))
+        runner.client = Mock()
+        runner.client.exec_command.side_effect = RuntimeError("cancellable-password-sentinel")
+        result = runner.run_cancellable("build", "python3 kernel.py")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("cancellable-password-sentinel", result.stderr + str(result.error_message))
 
 
 if __name__ == "__main__":

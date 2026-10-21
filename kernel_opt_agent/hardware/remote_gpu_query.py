@@ -71,14 +71,11 @@ def collect():
             return result
         count = torch.cuda.device_count()
         environment["device_count"] = count
-        mx_ids = {}
-        for match in re.finditer(r"GPU\s*#?\s*(\d+)\s+([0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.\d)", tool_outputs.get("mx-smi -L", ""), re.I):
-            mx_ids[int(match.group(1))] = match.group(2).lower()
-        nvidia = {}
+        nvidia_by_uuid = {}
         for line in tool_outputs.get("nvidia-smi --query-gpu=index,uuid,name,pci.bus_id,driver_version --format=csv,noheader", "").splitlines():
             values = [value.strip() for value in line.split(",")]
             if len(values) == 5 and values[0].isdigit():
-                nvidia[int(values[0])] = values
+                nvidia_by_uuid[values[1].lower()] = values
         for index in range(count):
             try:
                 props = torch.cuda.get_device_properties(index)
@@ -87,31 +84,28 @@ def collect():
                 mask = os.environ.get("MACA_VISIBLE_DEVICES" if backend == "mxmaca" else "CUDA_VISIBLE_DEVICES")
                 selectors = [value.strip() for value in mask.split(",")] if mask else []
                 selector = selectors[index] if len(selectors) > index else str(index)
-                physical_index = int(selector) if selector.isdigit() else None
-                uuid = getattr(props, "uuid", None)
-                uuid = str(uuid) if uuid else None
-                uuid_selector = uuid if uuid and uuid.startswith("GPU-") else None
-                if uuid and uuid_selector is None:
+                device_warnings = []
+                runtime_uuid = getattr(props, "uuid", None)
+                uuid = None
+                if runtime_uuid:
                     try:
-                        uuid_selector = "GPU-" + str(uuid_module.UUID(uuid))
-                    except ValueError:
-                        pass
+                        uuid_text = str(runtime_uuid)
+                        uuid_text = uuid_text[4:] if uuid_text.startswith("GPU-") else uuid_text
+                        uuid = "GPU-" + str(uuid_module.UUID(uuid_text))
+                    except (ValueError, TypeError, AttributeError):
+                        device_warnings.append("runtime UUID format unavailable; no identity inferred from device order")
                 pci = getattr(props, "pci_bus_id", None)
                 if not isinstance(pci, str) or not re.fullmatch(r"[0-9a-fA-F]{4,8}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.\d", pci):
                     pci = None
-                if backend == "mxmaca" and not pci and physical_index is not None:
-                    # A single card is unambiguous; multi-card runtime order needs a UUID/BDF from runtime.
-                    if count == 1 or os.environ.get("MACA_DEVICE_ORDER") == "PCI_BUS_ID":
-                        pci = mx_ids.get(physical_index)
-                if backend == "cuda" and not uuid and physical_index is not None:
-                    row = nvidia.get(physical_index)
-                    if row and (count == 1 or os.environ.get("CUDA_DEVICE_ORDER") == "PCI_BUS_ID"):
-                        uuid, pci = row[1], row[3]
+                if pci:
+                    pci = pci.lower()
+                # Management indices, visibility masks and single-card counts do not
+                # establish which physical GPU the runtime is using. Join by UUID only.
+                if backend == "cuda" and uuid:
+                    row = nvidia_by_uuid.get(uuid.lower())
+                    if row:
                         environment["driver_version"] = row[4]
-                if selector.startswith("GPU-"):
-                    uuid = uuid or selector
                 identity = uuid or pci
-                device_warnings = []
                 if not identity:
                     device_warnings.append("stable device UUID/PCI identity unavailable; task binding is disabled")
                 fields = {
@@ -135,7 +129,7 @@ def collect():
                     if value is None:
                         device_warnings.append(key + ": unavailable from runtime")
                 result["devices"].append({"device_id": fields["device_id"], "runtime_index": index,
-                    "selector": uuid_selector or selector,
+                    "selector": uuid or selector,
                     "identity_verified": bool(identity), "backend": backend, "fields": fields, "warnings": device_warnings})
             except Exception as exc:
                 warnings.append("device " + str(index) + ": " + type(exc).__name__)
