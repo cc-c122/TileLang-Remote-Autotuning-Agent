@@ -3,6 +3,7 @@
 async (page) => {
   const passed = [];
   let mcProfilerCapability;
+  let deviceBackend = "mxmaca";
 
   function check(condition, label) {
     if (!condition) throw new Error(label);
@@ -33,8 +34,8 @@ async (page) => {
     if (path === "/api/hardware/resolve" && request.method() === "POST") {
       return json(route, {
         ok: true,
-        devices: [{device_id: "mxmaca:contract-device", identity_verified: true, backend: "mxmaca", fields: {target_name: "Contract GPU", backend: "mxmaca"}}],
-        selected_device_id: "mxmaca:contract-device",
+        devices: [{device_id: "contract-device", identity_verified: true, backend: deviceBackend, fields: {target_name: "Contract GPU", backend: deviceBackend}}],
+        selected_device_id: "contract-device",
         detection_status: "partial",
         warnings: [],
         hardware: {fields: {}},
@@ -60,38 +61,35 @@ async (page) => {
 
   mcProfilerCapability = undefined;
   await reloadHealthy();
-  check(await page.locator("#mcProfilerAutoCollectionField").isHidden(), "Missing capability keeps the mcProfiler control hidden");
+  check(await page.locator("#v2McProfilerAutoCollect").count() === 0, "Automatic selection requires no manual profiler control");
   let request = await page.evaluate(() => buildApiTaskRequest());
   check(JSON.stringify(request.profiler) === JSON.stringify({enabled: true, type: "dummy"}), "Missing capability preserves the default dummy profiler request");
 
   mcProfilerCapability = true;
   await reloadHealthy();
-  check(await page.locator("#mcProfilerAutoCollectionField").isHidden(), "Local runner does not expose remote mcProfiler collection");
-  await page.evaluate(() => { el.v2McProfilerAutoCollect.checked = true; });
+  check((await page.locator("#profilerToolSelectionHint").innerText()).includes("local demo"), "Local runner explains the benchmark and log fallback");
   request = await page.evaluate(() => buildApiTaskRequest());
-  check(JSON.stringify(request.profiler) === JSON.stringify({enabled: true, type: "dummy"}), "Local runner cannot force auto collection through JavaScript");
+  check(JSON.stringify(request.profiler) === JSON.stringify({enabled: true, type: "dummy"}), "Local runner does not request a remote profiler");
 
   await connectRemote();
-  check(await page.locator("#mcProfilerAutoCollectionField").getAttribute("hidden") === null, "Capable remote SSH mode enables the optional collection control");
-  const advancedSettings = page.locator("#mcProfilerAutoCollectionField").locator("xpath=ancestor::details");
-  if ((await advancedSettings.getAttribute("open")) === null) await advancedSettings.locator("summary").click();
-  check(await page.locator("#mcProfilerAutoCollectionField").isVisible(), "The optional collection control is usable after opening advanced settings");
-  check(!(await page.locator("#v2McProfilerAutoCollect").isChecked()), "Remote auto collection remains opt-in");
   request = await page.evaluate(() => buildApiTaskRequest());
-  check(JSON.stringify(request.profiler) === JSON.stringify({enabled: true, type: "dummy"}), "Unchecked remote collection preserves the dummy profiler request");
-  await page.locator("#v2McProfilerAutoCollect").check();
+  check(JSON.stringify(request.profiler) === JSON.stringify({enabled: true, type: "mxmaca", auto_collect: true}), "Verified MXMACA device automatically requests the agreed collection fields");
+  check((await page.locator("#profilerToolSelectionHint").innerText()).includes("未安装或采集不可用") && (await page.locator("#profilerToolSelectionHint").innerText()).includes("无需填写 profiler 命令"), "Automatic tool selection explains the honest fallback without a command input");
+
+  deviceBackend = "cuda";
+  await page.evaluate(() => resolveHardwareProfile());
   request = await page.evaluate(() => buildApiTaskRequest());
-  check(JSON.stringify(request.profiler) === JSON.stringify({enabled: true, type: "mxmaca", auto_collect: true}), "Explicit remote opt-in sends only the agreed auto collection fields");
-  check((await page.locator("#mcProfilerAutoCollectionHint").innerText()).includes("未安装或采集不可用") && (await page.locator("#mcProfilerAutoCollectionHint").innerText()).includes("benchmark + 日志"), "Collection hint explains the honest fallback");
+  check(JSON.stringify(request.profiler) === JSON.stringify({enabled: true, type: "dummy"}), "Changing to an unsupported device cannot keep the previous tool selection");
+  deviceBackend = "mxmaca";
+  await page.evaluate(() => resolveHardwareProfile());
 
   await page.locator("#v2RunnerType").selectOption("local");
-  check(await page.locator("#mcProfilerAutoCollectionField").isHidden() && !(await page.locator("#v2McProfilerAutoCollect").isChecked()), "Leaving remote mode clears the collection opt-in");
+  check((await page.locator("#profilerToolSelectionHint").innerText()).includes("local demo") && !(await page.evaluate(() => mcProfilerAutoCollectionRequested())), "Leaving remote mode disables automatic remote collection");
 
   mcProfilerCapability = false;
   await reloadHealthy();
   await connectRemote();
-  check(await page.locator("#mcProfilerAutoCollectionField").isHidden(), "Explicit false capability does not advertise collection support");
-  await page.evaluate(() => { el.v2McProfilerAutoCollect.checked = true; });
+  check((await page.locator("#profilerToolSelectionHint").innerText()).includes("未声明支持"), "Explicit false capability does not advertise collection support");
   request = await page.evaluate(() => buildApiTaskRequest());
   check(JSON.stringify(request.profiler) === JSON.stringify({enabled: true, type: "dummy"}), "False capability cannot be bypassed through JavaScript");
 
@@ -165,9 +163,13 @@ async (page) => {
     renderApiResults();
     activateView("resultsView");
   }, results);
-  const resultText = await page.locator("#apiResultsPanel").innerText();
-  check(resultText.includes("mcProfiler 采集") && resultText.includes("7 条记录"), "Result view renders the backend collection array");
-  const collectionSummaryClass = await page.locator("#apiResultsPanel section").filter({hasText: "mcProfiler 采集"}).locator(".section-head .badge").getAttribute("class");
+  let resultText = await page.locator("#apiResultsPanel").innerText();
+  check(resultText.includes("性能采集与证据") && resultText.includes("7 条采集记录"), "Result view renders the backend collection array");
+  check(!(resultText.includes("case_report/<script>.csv")) && await page.locator("#apiResultsAdvanced").getAttribute("open") === null, "Raw reports and metric detail are folded by default");
+  await page.locator("#apiResultsAdvanced > summary").click();
+  await page.locator("#apiResultsAdvanced .source-trial > summary").first().click();
+  resultText = await page.locator("#apiResultsPanel").innerText();
+  const collectionSummaryClass = await page.locator("#profilerCollectionPanel .section-head .badge").getAttribute("class");
   check(collectionSummaryClass.includes("warn"), "Mixed collection outcomes do not receive an all-success summary color");
   check(resultText.includes("0.85") && resultText.includes("latency_ms") && resultText.includes("mcprofiler"), "Only an explicit observation value is rendered as a metric");
   check(resultText.includes("可用标记，数值未返回") && resultText.includes("缺失") && resultText.includes("未返回数值"), "Boolean availability and missing metric values remain distinct");
@@ -185,7 +187,7 @@ async (page) => {
     state.taskResults = withoutCollections;
     renderApiResults();
   }, results);
-  check((await page.locator("#apiResultsPanel").innerText()).includes("本次任务未采集 mcProfiler；这不是任务错误"), "Missing collection array is a neutral uncollected state");
+  check((await page.locator("#apiResultsPanel").innerText()).includes("等待后端采集记录"), "Missing collection array does not infer tool availability or a task failure");
 
   return {passed: passed.length, checks: passed, contractOnly: true, profilerEvidence: false};
 }
