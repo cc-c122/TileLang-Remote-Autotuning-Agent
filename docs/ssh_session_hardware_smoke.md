@@ -137,10 +137,74 @@ SHA-256 of retained real artifacts:
 | experiments.jsonl | 8efa0c834109d26943d5acee32e22c9864cf061114a084f90230330de791354a |
 | effective_config.yaml | 7649d5f89a428174bf2cae1071c224484e02c457756c3345994a1dba02ba9737 |
 
+## Review Fixes and Combined Browser Acceptance (2026-10-21)
+
+Both branches were synchronized with PR #65 at `37bd5b2`. The backend merge
+commit is `7322a3b`; its conflict resolutions retain managed cancellation,
+session redaction, device-binding guards, symlink rejection, and regular-file
+hash checks. Backend implementation `01e62d5` and UI `55ed249` combine without
+conflicts (`git merge-tree --write-tree` exits zero). No PR was merged.
+
+Device identity now requires a valid runtime UUID or complete runtime PCI BDF.
+Single-visible-device counts, management-tool indices, visibility masks, and
+`*_DEVICE_ORDER=PCI_BUS_ID` are not identity evidence. Management metadata can
+only be joined by a matching runtime UUID. Unknown identity blocks task creation
+before a task workspace is created.
+
+Interpreter discovery runs the actual device query for each candidate, with a
+15-second per-interpreter timeout and a 50-second total deadline. CPU-only,
+timed-out, malformed, and identity-unverified results do not stop discovery.
+Distinct environment paths remain eligible even if their executables resolve to
+the same binary. Typed failures are retained without raw exception text.
+
+Real Chromium browser acceptance used the synchronized UI with this backend's
+loopback FastAPI app. The frontend was served from its checkout; no API requests
+were intercepted or mocked. The previously confirmed host fingerprint remained
+pinned. The page connected, resolved hardware, selected remote SSH, submitted
+an inline GPU sample in baseline-only mode, displayed results, and downloaded
+both artifacts using the actual buttons.
+
+| Check | Result |
+| --- | --- |
+| Session and task creation | PASS, HTTP 200 |
+| GPU environment discovery | PASS, CPU-only system environment skipped for Conda |
+| Runtime identity | PASS, runtime UUID available; PCI remains null |
+| Actual device query | PASS, C500 / mxmaca, `partial`; unknown fields stay null |
+| Bound execution hardware snapshot | PASS, `execution_device_verified=true` |
+| Build / correctness / benchmark | PASS, same session and managed task workspace |
+| Correctness before benchmark | PASS, event order verified |
+| CPU reference comparison | PASS, max_error=0, atol=0, rtol=0 |
+| GPU measurements | 3 warmups, 5 samples; median 0.0772671774 ms |
+| Raw samples (ms) | 0.0833803788, 0.0768154860, 0.0772671774, 0.0810697675, 0.0752229244 |
+| Best kernel and report downloads | PASS, downloaded bytes match stored hashes |
+| Browser storage and results response | No password or session credential |
+| Local text artifact scan | 31 files scanned, zero password/session-credential matches |
+| Final regression tests | 245 passed; focused GPU/session suite 31 passed |
+| compileall / diff check | PASS |
+
+This remains a Torch GPU connection/execution smoke, not a TileLang optimization,
+Paged Attention baseline, or mcProfiler collection claim. The measured value is
+the smoke operation's end-to-end latency, not a pure compiled-kernel latency.
+
+Evidence is retained locally, excluded from Git:
+
+- `kernel_opt_agent/workspace/server_runtime/browser_ssh_smoke_20261021.json`
+- `kernel_opt_agent/workspace/server_runtime/review_validation_final.log`
+- `kernel_opt_agent/workspace/tasks/a06634c6dde946368f660955c0980737/results/`
+- `output/playwright/c500-ssh-browser-results-final.png`
+
+The results directory contained 25 files at scan time, including downloaded
+remote correctness/benchmark data. The sanitized JSON includes request/response
+summaries, events, raw measurements, artifact counts, and SHA-256 hashes.
+The downloaded best kernel SHA-256 is
+`a614b4b7f1fc360c2aa96b639ac520abc5200c1c834dd80528b62e281ee7099b`;
+the report SHA-256 is
+`76b4785bacdb5e296a63878ae1ade12c3979a1afaf1ea5b7ad11e11afcfe2305`.
+
 ## Repeatable Checks
 
 ```text
-python -m unittest tests.test_ssh_sessions
+python -m unittest tests.test_remote_gpu_detection tests.test_ssh_sessions
 python -m unittest discover -s tests
 python -m compileall -q kernel_opt_agent tests scripts
 git diff --check
@@ -163,3 +227,5 @@ does not install runtimes. A stable UUID/PCI identity and a working GPU runtime
 are required to accept a device-bound task. CUDA property handling is unit-tested;
 this round's real hardware validation used C500 only. The service binds to
 loopback and checks client/Host/Origin; it is not a multi-user network service.
+Task metadata is currently process-local: restarting the backend preserves
+artifact files but does not reload the task API index.
