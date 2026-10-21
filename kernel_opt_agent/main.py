@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import sys
 import time
@@ -29,8 +31,9 @@ from kernel_opt_agent.patcher import PatchProposal, PatchTrial, find_patch_regio
 from kernel_opt_agent.profiler.base import BaseProfiler, ProfilerResult
 from kernel_opt_agent.profiler.dummy_profiler import DummyProfiler
 from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
+from kernel_opt_agent.profiler.mcprofiler import COLLECTION_SCHEMA_VERSION, McProfilerCollectionRequest, collect_remote_mcprofiler_case
 from kernel_opt_agent.profiler.tilelang_log_profiler import TileLangLogProfiler
-from kernel_opt_agent.redaction import redact_data, redact_text
+from kernel_opt_agent.redaction import configured_secret_values, redact_data, redact_text
 from kernel_opt_agent.run_request import load_config_from_run_request
 from kernel_opt_agent.runner.local_runner import CommandResult, LocalRunner
 from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
@@ -117,6 +120,7 @@ def collect_profiler_result(
     benchmark_stdout: str,
     benchmark_stderr: str,
     compile_log: str,
+    extra_context: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], ProfilerResult]:
     if not config.profiler.enabled:
         result = ProfilerResult.empty()
@@ -126,14 +130,14 @@ def collect_profiler_result(
         if paths.get("kernel") and paths["kernel"].exists():
             generated_code = paths["kernel"].read_text(encoding="utf-8")
         profiler = build_profiler(config.profiler.type)
-        result = profiler.collect(
-            {
+        context = {
                 "benchmark_stdout": benchmark_stdout,
                 "benchmark_stderr": benchmark_stderr,
                 "compile_log": compile_log,
                 "generated_code": generated_code,
             }
-        )
+        context.update(extra_context or {})
+        result = profiler.collect(context)
         return {"enabled": True, "type": config.profiler.type, "result": result.to_dict(), "error": None}, result
     except Exception as exc:
         result = ProfilerResult.empty()
@@ -265,6 +269,7 @@ def run_trial(
     paths: dict[str, Path],
     hardware_info: HardwareInfo | None = None,
     on_event: Callable[[str, str], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     label = f"iter{iteration:03d}_cand{candidate_id:03d}"
     config_path = paths["trial_dir"] / "trial_config.yaml"
@@ -351,10 +356,65 @@ def run_trial(
         error = {"category": status, "message": str(exc)}
         stderr_all.append(str(exc))
 
+    source_trial_id = f"{run_id}:{label}"
+    source_sha256 = hashlib.sha256(paths["kernel"].read_bytes()).hexdigest()
+    collection_record = None
+    profiler_context: dict[str, Any] = {}
     if config.profiler.enabled and on_event:
         on_event("profiling_started", "collecting profiler evidence")
-    profiler_record, profiler_result = collect_profiler_result(config, paths, benchmark_stdout, benchmark_stderr, compile_log)
-    source_trial_id = f"{run_id}:{label}"
+    if (
+        error is None
+        and config.profiler.enabled
+        and config.profiler.type == "mxmaca"
+        and config.profiler.auto_collect
+        and config.execution_mode != "source_optimization"
+    ):
+        metrics = tuple(config.profiler.metrics) if config.profiler.metrics else ()
+        request_kwargs = {
+            "target_command": config.profiler.command or config.kernel.run_command,
+            "case_name": f"{run_id[:12]}-{label}",
+            "source_trial_id": source_trial_id,
+            "source_sha256": source_sha256,
+            "shape_id": None,
+            "kernel_names": tuple(config.profiler.kernel_names),
+            "executable": config.profiler.mcprofiler_executable,
+            "server_executable": config.profiler.mcprofiler_server_executable,
+            "service_port": config.profiler.service_port,
+            "timeout_seconds": config.profiler.timeout_seconds,
+        }
+        if metrics:
+            request_kwargs["metrics"] = metrics
+        try:
+            collection = collect_remote_mcprofiler_case(
+                runner,
+                db.results_dir,
+                McProfilerCollectionRequest(**request_kwargs),
+                should_cancel=should_cancel,
+                redactor=lambda value: redact_data(config, value),
+                secret_values=tuple(configured_secret_values(config)),
+                import_output_dir=db.results_dir / "mcprofiler_imports" / label,
+            )
+            collection_record = collection.to_dict(lambda value: redact_data(config, value))
+            if collection.status == "collected" and collection.case_dir:
+                profiler_context["mcprofiler_case_path"] = str(db.results_dir / collection.case_dir)
+        except Exception as exc:
+            collection_record = redact_data(
+                config,
+                {
+                    "schema_version": COLLECTION_SCHEMA_VERSION,
+                    "status": "failed",
+                    "reason_category": "adapter_exception",
+                    "message": f"mcProfiler collection adapter failed: {type(exc).__name__}: {exc}",
+                    "fallback": "benchmark_log",
+                },
+            )
+            with (db.results_dir / "mcprofiler_collection.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(collection_record, ensure_ascii=False, sort_keys=True, default=str) + "\n")
+    profiler_record, profiler_result = collect_profiler_result(
+        config, paths, benchmark_stdout, benchmark_stderr, compile_log, profiler_context
+    )
+    if collection_record is not None:
+        profiler_record["collection"] = collection_record
     evidence_records = profiler_observations_to_evidence(profiler_result, source_trial_id)
     metric_observations = [item.to_dict() for item in evidence_records]
     diagnoses = [item.to_dict() for item in diagnose_from_evidence_records(evidence_records)]
@@ -462,7 +522,7 @@ def run(
     paths = generator.create_trial(0, 0, baseline)
     logging.info("running baseline")
     if not cancelled():
-        record = run_trial(config, db, run_id, 0, 0, baseline, paths, hardware_info, event_callback)
+        record = run_trial(config, db, run_id, 0, 0, baseline, paths, hardware_info, event_callback, should_cancel)
         history.append(record)
         if record["status"] == "benchmark_ok":
             best_value = record["objective"]["value"]
@@ -486,7 +546,7 @@ def run(
             tried.add(h)
             try:
                 paths = generator.create_trial(iteration, candidate_id, cand)
-                record = run_trial(config, db, run_id, iteration, candidate_id, cand, paths, hardware_info, event_callback)
+                record = run_trial(config, db, run_id, iteration, candidate_id, cand, paths, hardware_info, event_callback, should_cancel)
             except Exception as exc:
                 record = {
                     "run_id": run_id,

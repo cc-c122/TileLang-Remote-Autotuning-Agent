@@ -43,6 +43,7 @@ class ExperimentDB:
         self.experiments_path = results_dir / "experiments.jsonl"
         self.failed_path = results_dir / "failed_cases.jsonl"
         self.profiler_path = results_dir / "profiler_results.jsonl"
+        self.mcprofiler_collection_path = results_dir / "mcprofiler_collection.jsonl"
         self.metric_observations_path = results_dir / "metric_observations.jsonl"
         self.diagnosis_path = results_dir / "diagnosis.jsonl"
         self.diagnoses_path = results_dir / "diagnoses.jsonl"
@@ -57,6 +58,7 @@ class ExperimentDB:
         self.experiments_path.write_text("", encoding="utf-8")
         self.failed_path.write_text("", encoding="utf-8")
         self.profiler_path.write_text("", encoding="utf-8")
+        self.mcprofiler_collection_path.write_text("", encoding="utf-8")
         self.metric_observations_path.write_text("", encoding="utf-8")
         self.diagnosis_path.write_text("", encoding="utf-8")
         self.diagnoses_path.write_text("", encoding="utf-8")

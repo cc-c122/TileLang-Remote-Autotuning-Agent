@@ -18,11 +18,13 @@ from kernel_opt_agent.benchmark.correctness import parse_correctness
 from kernel_opt_agent.benchmark.parser import parse_benchmark
 from kernel_opt_agent.config_model import AppConfig, resolve_path
 from kernel_opt_agent.main import build_runner, command_failure_status
-from kernel_opt_agent.redaction import redact_data, redact_text
+from kernel_opt_agent.profiler.mcprofiler import McProfilerCollectionRequest, collect_remote_mcprofiler_case
+from kernel_opt_agent.redaction import configured_secret_values, redact_data, redact_text
 from kernel_opt_agent.sample_security import copy_safe_sample_contents, normalize_sample_path
 
-from .analyzer import AnalysisResult, CopyLoopTarget, analyze_source, rewrite_copy_loop, sha256_bytes, sha256_file
+from .analyzer import AnalysisResult, SourceOptimizationTarget, analyze_source, rewrite_source_target, sha256_bytes, sha256_file
 from .models import SourceOptimizationResult, SourceOptimizationTrial, SourceTrialCorrectness
+from .performance import CodegenEvidence, assess_performance, parse_codegen_evidence
 from .planner import SourcePlan, choose_plan
 
 
@@ -67,7 +69,7 @@ def inspect_source_optimization(config: AppConfig) -> tuple[Path | None, Analysi
     entry = sample.joinpath(*PurePosixPath(entry_name).parts) if sample.is_dir() else sample
     if not entry.is_file():
         return None, AnalysisResult((), "kernel entry file does not exist")
-    return entry, analyze_source(entry.read_text(encoding="utf-8"))
+    return entry, analyze_source(entry.read_bytes().decode("utf-8"))
 
 
 def _tree_hashes(root: Path) -> dict[str, str]:
@@ -124,6 +126,7 @@ class _ExecutionOutcome:
         self.logs: dict[str, str] = {}
         self.stage_hashes: dict[str, dict[str, str]] = {}
         self.runner: Any | None = None
+        self.codegen = CodegenEvidence()
 
 
 def _execute_version(
@@ -138,6 +141,12 @@ def _execute_version(
 ) -> _ExecutionOutcome:
     outcome = _ExecutionOutcome()
     entry_name = normalize_sample_path(config.kernel.entry_file)
+
+    def run_command(name: str, command: str) -> Any:
+        assert outcome.runner is not None
+        if hasattr(outcome.runner, "run_cancellable"):
+            return outcome.runner.run_cancellable(name, command, should_cancel, timeout_seconds=config.search.timeout_seconds)
+        return outcome.runner.run(name, command)
 
     def audit(stage: str) -> bool:
         assert outcome.runner is not None
@@ -160,8 +169,9 @@ def _execute_version(
         if config.kernel.build_command:
             if event_callback:
                 event_callback("build_started", f"{label}: running build command")
-            build = outcome.runner.run("build", config.kernel.build_command)
+            build = run_command("build", config.kernel.build_command)
             outcome.logs["build"] = build.stdout + build.stderr
+            outcome.codegen = parse_codegen_evidence(outcome.logs["build"])
             if not audit("after_build"):
                 return outcome
             if build.returncode != 0:
@@ -174,7 +184,7 @@ def _execute_version(
             return outcome
         if event_callback:
             event_callback("correctness_started", f"{label}: running strict correctness gate")
-        correctness = outcome.runner.run("correctness", config.kernel.correctness_command)
+        correctness = run_command("correctness", config.kernel.correctness_command)
         outcome.logs["correctness"] = correctness.stdout + correctness.stderr
         strict_match = CORRECTNESS_STRICT_RE.search(correctness.stdout + "\n" + correctness.stderr)
         parsed_correctness = parse_correctness(correctness.stdout, correctness.stderr, correctness.returncode)
@@ -196,7 +206,7 @@ def _execute_version(
                 return outcome
             if event_callback:
                 event_callback("benchmark_started", f"{label}: benchmark repeat {index + 1}/{repeats}")
-            benchmark = outcome.runner.run(f"benchmark_{index + 1}", config.kernel.run_command)
+            benchmark = run_command(f"benchmark_{index + 1}", config.kernel.run_command)
             outcome.logs[f"benchmark_{index + 1}"] = benchmark.stdout + benchmark.stderr
             if not audit(f"after_benchmark_{index + 1}"):
                 return outcome
@@ -268,6 +278,86 @@ def _save_logs(artifact_dir: Path, logs: dict[str, str]) -> dict[str, str]:
         path.write_text(content, encoding="utf-8")
         paths[name] = str(path)
     return paths
+
+
+def _shape_id(config: AppConfig) -> str | None:
+    field = config.hardware.fields.get("shape_id")
+    if isinstance(field, dict):
+        field = field.get("value")
+    return str(field) if field not in (None, "") else None
+
+
+def _collect_source_profiler(
+    config: AppConfig,
+    results_dir: Path,
+    outcome: _ExecutionOutcome,
+    source_trial_id: str,
+    source_sha256: str,
+    should_cancel: Callable[[], bool],
+    event_callback: Callable[[str, str], None] | None,
+) -> dict[str, Any] | None:
+    if not (
+        config.profiler.enabled
+        and config.profiler.type == "mxmaca"
+        and config.profiler.auto_collect
+        and outcome.status == "benchmark_ok"
+        and outcome.runner is not None
+    ):
+        return None
+    if event_callback:
+        event_callback("profiling_started", f"{source_trial_id}: collecting mcProfiler evidence")
+    metrics = tuple(config.profiler.metrics) if config.profiler.metrics else ()
+    request_kwargs: dict[str, Any] = {
+        "target_command": config.profiler.command or config.kernel.run_command,
+        "case_name": source_trial_id.replace(":", "-")[:96],
+        "source_trial_id": source_trial_id,
+        "source_sha256": source_sha256,
+        "shape_id": _shape_id(config),
+        "kernel_names": tuple(config.profiler.kernel_names),
+        "executable": config.profiler.mcprofiler_executable,
+        "server_executable": config.profiler.mcprofiler_server_executable,
+        "service_port": config.profiler.service_port,
+        "timeout_seconds": config.profiler.timeout_seconds,
+    }
+    if metrics:
+        request_kwargs["metrics"] = metrics
+    try:
+        collection = collect_remote_mcprofiler_case(
+            outcome.runner,
+            results_dir,
+            McProfilerCollectionRequest(**request_kwargs),
+            should_cancel=should_cancel,
+            redactor=lambda value: _redact_value(config, value),
+            secret_values=tuple(configured_secret_values(config)),
+            append_imported_records=True,
+        )
+        payload = collection.to_dict(lambda value: _redact_value(config, value))
+    except Exception as exc:
+        payload = _redact_value(
+            config,
+            {
+                "schema_version": "v2.mcprofiler_collection.v1",
+                "status": "failed",
+                "reason_category": "adapter_exception",
+                "message": f"mcProfiler collection adapter failed: {type(exc).__name__}: {exc}",
+                "source_trial_id": source_trial_id,
+                "source_sha256": source_sha256,
+                "shape_id": _shape_id(config),
+                "metrics_requested": list(metrics),
+                "available_metrics": {},
+                "artifact_manifest": [],
+                "fallback": "benchmark_log",
+                "execution_manifest": {
+                    "target_command_sha256": sha256_bytes(request_kwargs["target_command"].encode("utf-8")),
+                    "credentials_forwarded_to_vendor": False,
+                },
+            },
+        )
+        with (results_dir / "mcprofiler_collection.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str) + "\n")
+    if event_callback and payload.get("status") == "collected":
+        event_callback("profiler_parsed", f"{source_trial_id}: mcProfiler Case parsed")
+    return payload
 
 
 def _append_csv(path: Path, row: dict[str, Any], default_fields: list[str]) -> None:
@@ -362,6 +452,7 @@ def _update_best_config(results_dir: Path, trial: SourceOptimizationTrial) -> No
         "latency_ms": trial.candidate_median_latency_ms,
         "latency_samples_ms": trial.candidate_latency_ms,
         "improvement_percent": trial.improvement_percent,
+        "performance_gate": trial.artifacts.get("performance_gate"),
     }
     path.write_text(yaml.safe_dump(payload, sort_keys=True), encoding="utf-8")
 
@@ -394,11 +485,25 @@ def _append_report(results_dir: Path, result: SourceOptimizationResult) -> None:
         improvement = "" if trial.improvement_percent is None else f"{trial.improvement_percent:.3f}%"
         rollback = "not_applicable" if trial.rollback_verified is None else str(trial.rollback_verified).lower()
         lines.append(f"| {trial.trial_id} | {trial.optimization_name} | {trial.status} | {trial.baseline_median_latency_ms or ''} | {trial.candidate_median_latency_ms or ''} | {improvement} | {rollback} |")
+    for trial in result.trials:
+        gate = trial.artifacts.get("performance_gate")
+        if isinstance(gate, dict):
+            lines += [
+                "", f"### Performance Evidence: {trial.trial_id}",
+                f"- Decision: {gate.get('decision')}",
+                f"- Reason: {gate.get('reason')}",
+                f"- Generated source comparison: {gate.get('codegen_status')}",
+                f"- Baseline generated source SHA-256: `{gate.get('baseline_codegen_hash') or 'unknown'}`",
+                f"- Candidate generated source SHA-256: `{gate.get('candidate_codegen_hash') or 'unknown'}`",
+                f"- Baseline recheck samples (ms): {gate.get('baseline_recheck_samples_ms', [])}",
+                f"- Conservative observed improvement: {gate.get('conservative_improvement_percent')}%",
+                *[f"- Uncertainty: {item}" for item in gate.get("uncertainty", [])],
+            ]
     lines += ["", "The source optimizer used a statically authorized structural template. Local fixture tests validate the mechanism only; they are not evidence of target GPU performance."]
     report_path.write_text(prior.rstrip() + "\n" + "\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _plans_for_targets(targets: tuple[CopyLoopTarget, ...], evidence_rows: list[dict[str, Any]], max_candidates: int, planning_client: Any | None) -> list[tuple[SourcePlan, str]]:
+def _plans_for_targets(targets: tuple[SourceOptimizationTarget, ...], evidence_rows: list[dict[str, Any]], max_candidates: int, planning_client: Any | None) -> list[tuple[SourcePlan, str]]:
     first, source = choose_plan(targets, evidence_rows, planning_client)
     plans = [(first, source)]
     selected = {first.target_id}
@@ -407,7 +512,7 @@ def _plans_for_targets(targets: tuple[CopyLoopTarget, ...], evidence_rows: list[
         if len(plans) >= max_candidates:
             break
         if target.target_id not in selected:
-            plans.append((SourcePlan(target_id=target.target_id, hypothesis="replace a verified elementwise copy loop with the TileLang bulk copy primitive", evidence_ids=evidence_ids), "rule_based"))
+            plans.append((SourcePlan(target_id=target.target_id, template=target.template, hypothesis=target.hypothesis, evidence_ids=evidence_ids), "rule_based"))
             selected.add(target.target_id)
     return plans
 
@@ -438,18 +543,6 @@ def run_source_optimization(
         _append_report(results_dir, result)
         return result
 
-    evidence_rows: list[dict[str, Any]] = []
-    evidence_path = results_dir / "metric_observations.jsonl"
-    if evidence_path.is_file():
-        for line in evidence_path.read_text(encoding="utf-8").splitlines():
-            try:
-                row = json.loads(line)
-                if row.get("available") is True and row.get("evidence_id"):
-                    evidence_rows.append(_redact_value(config, row))
-            except json.JSONDecodeError:
-                pass
-    plans = _plans_for_targets(analysis.targets, evidence_rows, config.source_optimization.max_candidates, planning_client)
-
     trials_root = workspace / "source_trials"
     _assert_within(trials_root, workspace)
     trials_root.mkdir(parents=True, exist_ok=True)
@@ -473,14 +566,64 @@ def run_source_optimization(
         write_source_result(results_dir, result)
         _append_report(results_dir, result)
         return result
+    baseline_collection = _collect_source_profiler(
+        config,
+        results_dir,
+        baseline_outcome,
+        "source-baseline",
+        baseline_hash,
+        cancelled,
+        event_callback,
+    )
+    if baseline_collection is not None:
+        baseline_ok, baseline_error, baseline_hashes = _audit_runner(baseline_outcome.runner, baseline_manifest)
+        baseline_outcome.stage_hashes["after_profiler"] = baseline_hashes
+        if not baseline_ok:
+            baseline_outcome.status = "validation_failed"
+            baseline_outcome.error = baseline_error
+            restored, rollback_error, rollback_hashes = _restore_execution_workspace(
+                config, baseline_outcome.runner, baseline_snapshot, baseline_manifest
+            )
+            _close_runner(baseline_outcome.runner)
+            baseline_artifacts = _save_logs(trials_root / "baseline" / "logs", baseline_outcome.logs)
+            baseline_artifacts["profiler_collection"] = baseline_collection
+            baseline_artifacts["rollback"] = {
+                "verified": restored,
+                "error": rollback_error,
+                "hashes": rollback_hashes,
+            }
+            result.status = "failed"
+            result.reason = f"source optimization baseline profiler audit failed: {baseline_error}"
+            result = _sanitized_result(config, result)
+            write_source_result(results_dir, result)
+            _append_report(results_dir, result)
+            return result
     _close_runner(baseline_outcome.runner)
     baseline_artifacts = _save_logs(trials_root / "baseline" / "logs", baseline_outcome.logs)
+    if baseline_collection is not None:
+        baseline_artifacts["profiler_collection"] = baseline_collection
     result.baseline_verified = True
     (results_dir / "best_kernel.py").write_bytes(original_bytes)
     if not (results_dir / "best_config.yaml").is_file():
         (results_dir / "best_config.yaml").write_text("{}\n", encoding="utf-8")
     baseline_best_config_bytes = (results_dir / "best_config.yaml").read_bytes()
     baseline_median = statistics.median(baseline_outcome.samples)
+    evidence_rows: list[dict[str, Any]] = []
+    evidence_path = results_dir / "metric_observations.jsonl"
+    if evidence_path.is_file():
+        for line in evidence_path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+                if row.get("available") is True and row.get("evidence_id"):
+                    evidence_rows.append(_redact_value(config, row))
+            except json.JSONDecodeError:
+                pass
+    plans = _plans_for_targets(
+        analysis.targets,
+        evidence_rows,
+        config.source_optimization.max_candidates,
+        planning_client,
+    )
     candidates: list[tuple[SourceOptimizationTrial, Path]] = []
     rollback_failed = False
 
@@ -497,7 +640,25 @@ def run_source_optimization(
         copy_safe_sample_contents(candidate_dir, snapshot_dir)
         baseline_candidate_manifest = _tree_hashes(snapshot_dir)
         candidate_entry = candidate_dir.joinpath(*PurePosixPath(entry_name).parts)
-        candidate_source = rewrite_copy_loop(original_source, target)
+        try:
+            candidate_source = rewrite_source_target(original_source, target)
+        except Exception as exc:
+            trial = SourceOptimizationTrial(
+                trial_id=trial_id, optimization_name=target.template,
+                target_file=config.kernel.entry_file, target_function=target.function_name,
+                hypothesis=redact_source_text(config, plan.hypothesis) or "",
+                evidence_ids=plan.evidence_ids, source_before_sha256=baseline_hash,
+                status="validation_failed",
+                decision_reason=redact_source_text(config, f"source rewrite rejected: {type(exc).__name__}: {exc}"),
+                baseline_latency_ms=list(baseline_outcome.samples), baseline_median_latency_ms=baseline_median,
+                artifacts={"validation_stage": "source_rewrite", "baseline_logs": baseline_artifacts,
+                           "rollback_snapshot": str(snapshot_dir), "source_was_modified": False},
+            )
+            result.trials.append(trial)
+            write_source_result(results_dir, result, config)
+            if event_callback:
+                event_callback("source_trial_completed", f"{trial_id}: validation_failed: {trial.decision_reason}")
+            continue
         candidate_bytes = candidate_source.encode("utf-8")
         candidate_hash = sha256_bytes(candidate_bytes)
         diff = "".join(difflib.unified_diff(original_source.splitlines(keepends=True), candidate_source.splitlines(keepends=True), fromfile=config.kernel.entry_file, tofile=config.kernel.entry_file))
@@ -512,7 +673,7 @@ def run_source_optimization(
         candidate_manifest[entry_name] = candidate_hash
         trial = SourceOptimizationTrial(
             trial_id=trial_id,
-            optimization_name="parallel_copy_to_t_copy",
+            optimization_name=target.template,
             target_file=config.kernel.entry_file,
             target_function=target.function_name,
             hypothesis=redact_source_text(config, plan.hypothesis) or "",
@@ -523,13 +684,29 @@ def run_source_optimization(
             diff=diff,
             baseline_latency_ms=list(baseline_outcome.samples),
             baseline_median_latency_ms=baseline_median,
-            artifacts={"planner": {"source": plan_source, "attempts": plan.planning_attempts, "fallback_reason": redact_source_text(config, plan.fallback_reason)}, "baseline_logs": baseline_artifacts, "source_before": str(source_before_path), "source_after": str(source_after_path), "diff": str(diff_path), "rollback_snapshot": str(snapshot_dir)},
+            artifacts={"planner": {"source": plan_source, "attempts": plan.planning_attempts, "fallback_reason": redact_source_text(config, plan.fallback_reason), "confidence": target.confidence}, "baseline_logs": baseline_artifacts, "source_before": str(source_before_path), "source_after": str(source_after_path), "diff": str(diff_path), "rollback_snapshot": str(snapshot_dir)},
         )
         result.trials.append(trial)
         write_source_result(results_dir, result, config)
         if event_callback:
             event_callback("source_trial_started", f"{trial_id}: controlled source candidate started")
         outcome = _execute_version(config, candidate_dir, candidate_manifest, config.source_optimization.benchmark_repeats, cancelled, event_callback, trial_id, keep_runner=True)
+        candidate_collection = _collect_source_profiler(
+            config,
+            results_dir,
+            outcome,
+            trial_id,
+            candidate_hash,
+            cancelled,
+            event_callback,
+        )
+        if candidate_collection is not None:
+            trial.artifacts["profiler_collection"] = candidate_collection
+            candidate_ok, candidate_error, candidate_hashes = _audit_runner(outcome.runner, candidate_manifest)
+            outcome.stage_hashes["after_profiler"] = candidate_hashes
+            if not candidate_ok:
+                outcome.status = "validation_failed"
+                outcome.error = candidate_error
         restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, outcome.runner, snapshot_dir, baseline_candidate_manifest)
         _close_runner(outcome.runner)
         trial.execution_source_sha256 = outcome.execution_hash
@@ -540,17 +717,63 @@ def run_source_optimization(
         if outcome.samples:
             trial.candidate_median_latency_ms = statistics.median(outcome.samples)
             trial.improvement_percent = ((baseline_median - trial.candidate_median_latency_ms) / baseline_median * 100.0) if baseline_median > 0 else None
-        if outcome.status == "benchmark_ok" and trial.improvement_percent is not None and trial.improvement_percent >= config.source_optimization.min_improvement_percent:
-            trial.status = "accepted"
-            trial.decision_reason = "strict correctness passed and measured median improvement met the configured threshold"
-            candidates.append((trial, source_after_path))
-        elif outcome.status == "benchmark_ok":
-            trial.status = "no_improvement"
-            trial.decision_reason = "candidate median improvement did not meet the configured threshold"
+        if outcome.status == "benchmark_ok" and restored and not cancelled():
+            gate = assess_performance(
+                baseline_outcome.samples, outcome.samples, config.source_optimization.min_improvement_percent,
+                baseline_outcome.codegen, outcome.codegen, require_recheck=False,
+            )
+            if gate.decision == "accepted":
+                recheck_dir = candidate_root / "baseline_recheck" / "workspace"
+                copy_safe_sample_contents(baseline_snapshot, recheck_dir)
+                if event_callback:
+                    event_callback("baseline_recheck_started", f"{trial_id}: rerunning original source to check timing drift")
+                recheck = _execute_version(
+                    config, recheck_dir, baseline_manifest, config.source_optimization.benchmark_repeats,
+                    cancelled, event_callback, f"{trial_id} baseline recheck", keep_runner=True,
+                )
+                recheck_restored, recheck_error, recheck_hashes = _restore_execution_workspace(
+                    config, recheck.runner, baseline_snapshot, baseline_manifest,
+                )
+                _close_runner(recheck.runner)
+                trial.artifacts["baseline_recheck"] = {
+                    "status": recheck.status, "source_sha256": recheck.execution_hash,
+                    "samples_ms": list(recheck.samples), "correctness": recheck.correctness.model_dump(mode="json"),
+                    "logs": _save_logs(candidate_root / "baseline_recheck" / "logs", recheck.logs),
+                    "stage_hashes": recheck.stage_hashes,
+                    "rollback": {"verified": recheck_restored, "hashes": recheck_hashes, "error": recheck_error},
+                }
+                gate = assess_performance(
+                    baseline_outcome.samples, outcome.samples, config.source_optimization.min_improvement_percent,
+                    baseline_outcome.codegen, outcome.codegen, recheck.samples,
+                )
+                if recheck.status != "benchmark_ok" or not recheck_restored:
+                    gate.decision = "inconclusive"
+                    gate.baseline_recheck_passed = False
+                    gate.reason = f"baseline recheck failed: {recheck.status}: {recheck.error or recheck_error}"
+                elif recheck.codegen.status == "inconsistent" or (
+                    baseline_outcome.codegen.sha256 and recheck.codegen.sha256 != baseline_outcome.codegen.sha256
+                ):
+                    gate.decision = "inconclusive"
+                    gate.baseline_recheck_passed = False
+                    gate.reason = "original source generated inconsistent code during baseline recheck"
+                if not recheck_restored:
+                    restored, rollback_error, rollback_hashes = recheck_restored, recheck_error, recheck_hashes
+            trial.artifacts["performance_gate"] = gate.to_dict()
+            trial.status = "accepted" if gate.decision == "accepted" else "no_improvement"
+            trial.decision_reason = gate.reason
+            if trial.status == "accepted":
+                candidates.append((trial, source_after_path))
+        elif cancelled():
+            trial.status = "cancelled"
+            trial.decision_reason = "cancel requested; verified baseline retained"
         else:
             trial.status = outcome.status  # type: ignore[assignment]
             trial.decision_reason = outcome.error
 
+        if cancelled():
+            trial.status = "cancelled"
+            trial.decision_reason = "cancel requested; verified baseline retained"
+            candidates = [item for item in candidates if item[0].trial_id != trial.trial_id]
         trial.rollback_verified = restored
         trial.artifacts["rollback"] = {"verified": restored, "hashes": rollback_hashes, "error": rollback_error}
         if not restored:
@@ -559,6 +782,9 @@ def run_source_optimization(
             rollback_failed = True
             candidates = [item for item in candidates if item[0].trial_id != trial.trial_id]
             break
+        write_source_result(results_dir, result, config)
+        if event_callback:
+            event_callback("source_trial_completed", f"{trial_id}: {trial.status}: {trial.decision_reason}")
 
     accepted: SourceOptimizationTrial | None = None
     if cancelled():

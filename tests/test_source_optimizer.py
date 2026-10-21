@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import yaml
@@ -17,8 +18,9 @@ from fastapi.testclient import TestClient
 from kernel_opt_agent.config_model import AppConfig
 from kernel_opt_agent.runner.local_runner import CommandResult
 from kernel_opt_agent.source_optimizer.analyzer import analyze_source, rewrite_copy_loop
-from kernel_opt_agent.source_optimizer.engine import run_source_optimization
+from kernel_opt_agent.source_optimizer.engine import inspect_source_optimization, run_source_optimization
 from kernel_opt_agent.source_optimizer.planner import choose_plan
+from kernel_opt_agent.source_optimizer.performance import assess_performance
 from kernel_opt_agent.server.app import _accepted_source_trial, _source_best_verification, app
 
 
@@ -64,7 +66,7 @@ def _config(sample: Path, **source_options: object) -> AppConfig:
             "source_optimization": {
                 "enabled": True,
                 "max_candidates": 1,
-                "benchmark_repeats": 2,
+                "benchmark_repeats": 3,
                 "min_improvement_percent": 1.0,
                 **source_options,
             },
@@ -84,6 +86,14 @@ class FakeRunner:
         command = command or ""
         entry = self.workspace / "kernel.py"
         changed = "TL.copy(" in entry.read_text(encoding="utf-8")
+        recheck = self.workspace.parent.name == "baseline_recheck"
+        if name == "build" and self.mode == "same_codegen":
+            return self._result(name, command, stdout=f"GENERATED_SOURCE_SHA256={'a' * 64}\n")
+        if name == "build" and self.mode == "codegen_recheck_changed":
+            digest = ("c" if recheck else "b" if changed else "a") * 64
+            return self._result(name, command, stdout=f"GENERATED_SOURCE_SHA256={digest}\n")
+        if name == "build" and recheck and self.mode == "baseline_recheck_failed":
+            return self._result(name, command, 1, stderr="control compilation failed")
         if name.startswith("source_hash"):
             digest = hashlib.sha256(entry.read_bytes()).hexdigest()
             return self._result(name, command, stdout=f"SOURCE_SHA256={digest}\n")
@@ -105,6 +115,10 @@ class FakeRunner:
             if changed and self.mode == "entry_mutation":
                 entry.write_text("# mutated after correctness\n", encoding="utf-8")
             latency = 12.0 if changed and self.mode == "regressed" else (5.0 if changed else 10.0)
+            if recheck and self.mode == "baseline_drift":
+                latency = 4.0
+            if changed and self.mode == "noise" and name == "benchmark_3":
+                latency = 12.0
             if changed and self.mode == "zero_latency":
                 latency = 0.0
             suffix = f" secret={os.environ.get('OPENAI_API_KEY', '')}" if self.mode == "secret_output" else ""
@@ -188,13 +202,17 @@ class SourceAnalyzerTests(unittest.TestCase):
         shadowed_shape = _source().replace("def factory():", "def factory(shape):")
         self.assertFalse(analyze_source(shadowed_shape).targets)
 
-    def test_paged_attention_regression_finds_only_output_partial_copy(self) -> None:
+    def test_paged_attention_regression_finds_copy_and_prefetch_targets(self) -> None:
         analysis = analyze_source(PAGED_SOURCE.read_text(encoding="utf-8"))
-        self.assertEqual(len(analysis.targets), 1)
-        target = analysis.targets[0]
-        self.assertEqual(target.function_name, "flashattn.main")
-        self.assertIn("Output_partial", target.source_expr)
-        self.assertEqual(target.destination_expr, "po_local")
+        copy_targets = [item for item in analysis.targets if item.template == "parallel_copy_to_t_copy"]
+        prefetch_targets = [item for item in analysis.targets if item.template == "prefetch_shared_load"]
+        self.assertEqual(len(copy_targets), 1)
+        self.assertEqual(len(prefetch_targets), 1)
+        self.assertEqual(copy_targets[0].function_name, "flashattn.main")
+        self.assertIn("Output_partial", copy_targets[0].source_expr)
+        self.assertEqual(copy_targets[0].destination_expr, "po_local")
+        self.assertIn("V[physical_block_idx", prefetch_targets[0].source_expr)
+        self.assertEqual(prefetch_targets[0].destination_expr, "V_shared")
 
     def test_invalid_llm_selection_retries_once_then_uses_rule_fallback(self) -> None:
         analysis = analyze_source(_source())
@@ -250,6 +268,125 @@ class SourceEngineTests(unittest.TestCase):
             )
         return root, results, result, original_hash
 
+    def test_mcprofiler_baseline_evidence_precedes_planning_and_candidates_are_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sample = root / "sample"
+            sample.mkdir()
+            entry = sample / "kernel.py"
+            entry.write_text(_source(), encoding="utf-8")
+            (sample / "correctness.py").write_text("protected", encoding="utf-8")
+            config = _config(sample)
+            config.profiler.enabled = True
+            config.profiler.type = "mxmaca"
+            config.profiler.auto_collect = True
+            results = root / "results"
+            results.mkdir()
+            calls = []
+            target = analyze_source(entry.read_text(encoding="utf-8")).targets[0]
+            planner = RecordingPlanner(
+                {
+                    "target_id": target.target_id,
+                    "template": "parallel_copy_to_t_copy",
+                    "hypothesis": "use baseline profiler evidence",
+                    "evidence_ids": ["ev_baseline"],
+                }
+            )
+
+            def fake_collect(runner, results_dir, request, **kwargs):
+                calls.append(request)
+                payload = {
+                    "schema_version": "v2.mcprofiler_collection.v1",
+                    "status": "collected",
+                    "reason_category": "none",
+                    "source_trial_id": request.source_trial_id,
+                    "source_sha256": request.source_sha256,
+                    "shape_id": request.shape_id,
+                    "metrics_requested": list(request.metrics),
+                    "available_metrics": {"l2c_hit_rate": True},
+                    "artifact_manifest": [{"sha256": "b" * 64, "source": "mcprofiler_auto_collection"}],
+                    "fallback": "benchmark_log",
+                }
+                with (results_dir / "mcprofiler_collection.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(payload) + "\n")
+                if request.source_trial_id == "source-baseline":
+                    with (results_dir / "metric_observations.jsonl").open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps({
+                            "evidence_id": "ev_baseline",
+                            "metric": "l2c_hit_rate",
+                            "value": 46.1,
+                            "available": True,
+                            "source_trial_id": "source-baseline",
+                        }) + "\n")
+                return SimpleNamespace(
+                    status="collected",
+                    reason_category="none",
+                    to_dict=lambda redactor=None: payload if redactor is None else redactor(payload),
+                )
+
+            with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=lambda config, trial_dir: FakeRunner(trial_dir)), patch(
+                "kernel_opt_agent.source_optimizer.engine.collect_remote_mcprofiler_case",
+                side_effect=fake_collect,
+            ):
+                result = run_source_optimization(
+                    config,
+                    root / "workspace",
+                    results,
+                    analyze_source(entry.read_text(encoding="utf-8")),
+                    entry,
+                    planning_client=planner,
+                )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(calls[0].source_trial_id, "source-baseline")
+            self.assertEqual(calls[0].source_sha256, hashlib.sha256(entry.read_bytes()).hexdigest())
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(calls[1].source_trial_id.startswith("source-"))
+            self.assertEqual(calls[1].source_sha256, result.trials[0].source_after_sha256)
+            self.assertIn("ev_baseline", planner.messages[0][0]["content"])
+            rows = [json.loads(line) for line in (results / "mcprofiler_collection.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([row["source_trial_id"] for row in rows], ["source-baseline", calls[1].source_trial_id])
+
+    def test_unavailable_mcprofiler_does_not_stop_source_optimization(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sample = root / "sample"
+            sample.mkdir()
+            entry = sample / "kernel.py"
+            entry.write_text(_source(), encoding="utf-8")
+            (sample / "correctness.py").write_text("protected", encoding="utf-8")
+            config = _config(sample)
+            config.profiler.enabled = True
+            config.profiler.type = "mxmaca"
+            config.profiler.auto_collect = True
+            results = root / "results"
+            results.mkdir()
+
+            with patch(
+                "kernel_opt_agent.source_optimizer.engine.build_runner",
+                side_effect=lambda config, trial_dir: FakeRunner(trial_dir),
+            ):
+                result = run_source_optimization(
+                    config,
+                    root / "workspace",
+                    results,
+                    analyze_source(entry.read_text(encoding="utf-8")),
+                    entry,
+                )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(len(result.trials), 1)
+            rows = [
+                json.loads(line)
+                for line in (results / "mcprofiler_collection.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(rows), 2)
+            self.assertEqual([row["source_trial_id"] for row in rows][0], "source-baseline")
+            self.assertTrue(rows[1]["source_trial_id"].startswith("source-"))
+            self.assertTrue(all(row["status"] == "unsupported" for row in rows))
+            self.assertTrue(all(row["reason_category"] == "runner_unsupported" for row in rows))
+            self.assertTrue(all(row["fallback"] == "benchmark_log" for row in rows))
+
     def test_build_and_correctness_failures_rollback_original_hash(self) -> None:
         for mode, status in (
             ("build_failed", "build_failed"),
@@ -270,6 +407,74 @@ class SourceEngineTests(unittest.TestCase):
         self.assertEqual(result.trials[0].status, "no_improvement")
         self.assertEqual(result.best_source_sha256, original_hash)
         self.assertIsNone(result.accepted_trial_id)
+
+    def test_codegen_and_measurement_gates_prevent_false_best_publication(self) -> None:
+        for mode, decision in (
+            ("same_codegen", "codegen_unchanged"),
+            ("noise", "inconclusive"),
+            ("baseline_drift", "inconclusive"),
+            ("baseline_recheck_failed", "inconclusive"),
+            ("codegen_recheck_changed", "inconclusive"),
+        ):
+            with self.subTest(mode=mode):
+                _, results, result, baseline_hash = self._run(mode)
+                trial = result.trials[0]
+                self.assertEqual(trial.status, "no_improvement")
+                self.assertEqual(trial.artifacts["performance_gate"]["decision"], decision)
+                self.assertTrue(trial.rollback_verified)
+                self.assertIsNone(result.accepted_trial_id)
+                self.assertEqual(hashlib.sha256((results / "best_kernel.py").read_bytes()).hexdigest(), baseline_hash)
+                self.assertIn(decision, (results / "report.md").read_text(encoding="utf-8"))
+
+    def test_accepted_candidate_has_correctness_and_hash_audited_baseline_recheck(self) -> None:
+        _, _, result, original_hash = self._run("accept")
+        trial = result.trials[0]
+        self.assertEqual(trial.status, "accepted")
+        recheck = trial.artifacts["baseline_recheck"]
+        self.assertEqual(recheck["source_sha256"], original_hash)
+        self.assertTrue(recheck["correctness"]["passed"])
+        self.assertEqual(len(recheck["samples_ms"]), 3)
+        self.assertTrue(trial.artifacts["performance_gate"]["baseline_recheck_passed"])
+
+    def test_rewrite_failure_is_recorded_without_losing_verified_baseline(self) -> None:
+        with patch("kernel_opt_agent.source_optimizer.engine.rewrite_source_target", side_effect=ValueError("stale target")):
+            _, results, result, original_hash = self._run("accept")
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.trials[0].status, "validation_failed")
+        self.assertIn("stale target", result.trials[0].decision_reason)
+        self.assertFalse(result.trials[0].artifacts["source_was_modified"])
+        self.assertEqual(result.best_source_sha256, original_hash)
+        self.assertIn("stale target", (results / "failed_cases.jsonl").read_text(encoding="utf-8"))
+
+    def test_prefetch_target_uses_its_own_rewriter_and_validation_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sample = root / "sample"
+            sample.mkdir()
+            entry = sample / "kernel.py"
+            source = PAGED_SOURCE.read_text(encoding="utf-8")
+            entry.write_text(source, encoding="utf-8")
+            (sample / "correctness.py").write_text("protected", encoding="utf-8")
+
+            class SchedulingFixtureRunner(FakeRunner):
+                def run(self, name, command):
+                    if name.startswith("benchmark"):
+                        text = (self.workspace / "kernel.py").read_text(encoding="utf-8")
+                        moved = text.index("T.copy(V[physical_block_idx") < text.index("T.clear(acc_s)")
+                        return self._result(name, command, stdout=f"BENCHMARK_RESULT latency_ms={5 if moved else 10}\n")
+                    return super().run(name, command)
+
+            config = _config(sample)
+            inspected_entry, analysis = inspect_source_optimization(config)
+            with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=lambda config, directory: SchedulingFixtureRunner(directory)):
+                result = run_source_optimization(config, root / "workspace", root / "results", analysis, inspected_entry)
+            trial = result.trials[0]
+            self.assertEqual(trial.optimization_name, "prefetch_shared_load")
+            self.assertEqual(trial.status, "accepted")
+            self.assertIn("low-confidence", trial.hypothesis)
+            self.assertTrue(trial.correctness.passed)
+            self.assertTrue(trial.artifacts["performance_gate"]["baseline_recheck_passed"])
+            self.assertEqual(entry.read_text(encoding="utf-8"), source)
 
     def test_protected_file_change_rejects_and_rolls_back(self) -> None:
         _, _, result, _ = self._run("protected_changed")
@@ -609,6 +814,25 @@ class SourceOptimizationApiTests(unittest.TestCase):
                 ],
             }
             self.assertIsNotNone(_accepted_source_trial(results, source_result))
+            for decision in ("codegen_unchanged", "inconclusive", "no_improvement"):
+                invalid = json.loads(json.dumps(source_result))
+                invalid["trials"][0]["artifacts"] = {"performance_gate": {
+                    "schema_version": "v2.performance_gate.v1", "decision": decision,
+                    "baseline_recheck_passed": True,
+                }}
+                self.assertIsNone(_accepted_source_trial(results, invalid))
+            invalid["trials"][0]["artifacts"]["performance_gate"].update({"decision": "accepted", "baseline_recheck_passed": False})
+            self.assertIsNone(_accepted_source_trial(results, invalid))
+            invalid["trials"][0]["artifacts"]["performance_gate"] = None
+            self.assertIsNone(_accepted_source_trial(results, invalid))
+            valid = json.loads(json.dumps(source_result))
+            valid["trials"][0].update({
+                "baseline_latency_ms": [10] * 3, "candidate_latency_ms": [5] * 3,
+                "artifacts": {"performance_gate": assess_performance([10] * 3, [5] * 3, 1, baseline_recheck=[10] * 3).to_dict()},
+            })
+            self.assertIsNotNone(_accepted_source_trial(results, valid))
+            valid["trials"][0]["candidate_latency_ms"] = [6] * 3
+            self.assertIsNone(_accepted_source_trial(results, valid))
             baseline_result = {
                 "status": "completed",
                 "baseline_verified": True,
@@ -724,6 +948,8 @@ class SourceOptimizationApiTests(unittest.TestCase):
             self.assertEqual(task["baseline_latency"], accepted["baseline_median_latency_ms"])
             self.assertNotEqual(task["baseline_latency"], 999.0)
             self.assertEqual(task["improvement_percent"], accepted["improvement_percent"])
+            self.assertEqual(task["source_accepted_trial_id"], accepted["trial_id"])
+            self.assertEqual(task["source_performance_decision"], "accepted")
             self.assertTrue(task["source_best_verified"])
             self.assertIsNone(task["source_best_verification_error"])
             self.assertTrue(result["source_best_verified"])
