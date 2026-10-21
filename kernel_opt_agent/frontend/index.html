@@ -1738,6 +1738,7 @@
 
     const state = { dirHandle: null, files: new Map(), warnings: [], missing: [], loading: false, lastLoadedAt: null, apiHealthy: false, apiError: "", apiCapabilities: { sourceOptimization: false, declared: false, mcProfilerAutoCollection: false }, sourceOptimizationChoiceTouched: false, hardware: null, resolvedHardware: null, hardwareResolveError: "", hardwareOverrides: {}, settings: {}, settingsEnv: {}, runRequest: null, activeTaskId: null, task: null, taskEvents: [], taskResults: null, taskList: [], taskPollTimer: null, eventPollTimer: null, sampleFiles: [], sampleUploadId: null, sampleUploadStage: "empty", sampleUploadError: "", sampleUploadVersion: 0, sampleUploadedVersion: null, sampleUploadedEntryFile: "", sampleSourceMode: "inline", taskSubmitting: false, cancellationPending: false };
     state.sshSession = null;
+    state.sshPendingSettingsKey = null;
     state.sshStatus = "disconnected";
     state.sshMessage = "尚未连接。刷新页面后需要重新连接。";
     state.sshVersion = 0;
@@ -2347,7 +2348,7 @@
     }
 
     function sessionIsActive() {
-      return !!state.sshSession && Date.now() < state.sshSession.expiresAt;
+      return !!state.sshSession && Date.now() < state.sshSession.expiresAt && state.sshSession.settingsKey === sshSettingsKey();
     }
 
     function clearSessionState(status, message) {
@@ -2355,6 +2356,7 @@
       window.clearTimeout(state.sessionExpiryTimer);
       state.sessionExpiryTimer = null;
       state.sshSession = null;
+      state.sshPendingSettingsKey = null;
       state.sshStatus = status;
       state.sshMessage = message;
       state.remoteDevices = [];
@@ -2432,10 +2434,14 @@
         return;
       }
       const previousId = state.sshSession?.id;
+      const requestSettingsKey = sshSettingsKey(settings);
       clearSessionState("connecting", "正在建立真实 SSH 会话，等待后端认证结果。");
       el.v2RunnerType.value = "ssh";
+      el.v2McProfilerAutoCollect.checked = false;
+      syncMcProfilerAutoCollectionUi();
       const version = state.sshVersion;
-      const request = {ssh: settingsApiPayload().ssh};
+      state.sshPendingSettingsKey = requestSettingsKey;
+      const request = {ssh: settingsApiPayload(settings).ssh};
       if (state.hostKeyFingerprint && el.confirmHostKey.checked) request.ssh.host_key_fingerprint = state.hostKeyFingerprint;
       if (settings.auth_type === "password") request.password = el.settingSshPassword.value;
       el.settingSshPassword.value = "";
@@ -2445,13 +2451,17 @@
       if (previousId) apiFetch(`/api/ssh/sessions/${encodeURIComponent(previousId)}`, {method: "DELETE", privateRequest: true}).catch(() => {});
       try {
         const payload = await pending;
-        if (version !== state.sshVersion) {
-          if (typeof payload.session_id === "string") await apiFetch(`/api/ssh/sessions/${encodeURIComponent(payload.session_id)}`, {method: "DELETE", privateRequest: true});
+        if (version !== state.sshVersion || requestSettingsKey !== sshSettingsKey()) {
+          if (version === state.sshVersion) clearSessionState("disconnected", "连接设置已变化，请重新连接并识别硬件。");
+          if (typeof payload.session_id === "string" && payload.session_id) {
+            await apiFetch(`/api/ssh/sessions/${encodeURIComponent(payload.session_id)}`, {method: "DELETE", privateRequest: true}).catch(() => {});
+          }
           return;
         }
         const expiresAt = Date.parse(payload.expires_at);
         if (payload.ok !== true || typeof payload.session_id !== "string" || !payload.session_id || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new Error("后端未返回有效的 SSH 会话，请重新连接。");
-        state.sshSession = {id: payload.session_id, expiresAt, settingsKey: sshSettingsKey()};
+        state.sshPendingSettingsKey = null;
+        state.sshSession = {id: payload.session_id, expiresAt, settingsKey: requestSettingsKey};
         state.sshStatus = "connected";
         state.sshMessage = "SSH 已连接，正在识别可见 GPU。刷新页面后需要重新连接。";
         state.hostKeyFingerprint = "";
@@ -2461,6 +2471,7 @@
         await resolveHardwareProfile();
       } catch (error) {
         if (version !== state.sshVersion) return;
+        state.sshPendingSettingsKey = null;
         state.sshStatus = error.code === "host_key_confirmation_required" ? "host_key" : "failed";
         state.sshMessage = error.message || "SSH 连接失败，请检查连接设置。";
         if (error.fingerprint) state.hostKeyFingerprint = error.fingerprint;
@@ -2508,13 +2519,11 @@
       };
     }
 
-    function sshSettingsKey() {
-      const settings = readSettings();
+    function sshSettingsKey(settings = readSettings()) {
       return JSON.stringify([settings.ssh_host, settings.ssh_port, settings.ssh_username, settings.remote_workspace, settings.auth_type, settings.auth_type === "key" ? settings.key_path : null]);
     }
 
-    function settingsApiPayload() {
-      const settings = readSettings();
+    function settingsApiPayload(settings = readSettings()) {
       return {
         ssh: {
           host: settings.ssh_host || "127.0.0.1",
@@ -2535,6 +2544,8 @@
     }
 
     function applySettingsPayload(payload) {
+      const boundSettingsKey = state.sshSession?.settingsKey || state.sshPendingSettingsKey;
+      const previousSettingsKey = sshSettingsKey();
       const ssh = payload.ssh || payload.remote || {};
       const llm = payload.llm || {};
       state.settingsEnv = {
@@ -2556,7 +2567,13 @@
       localStorage.setItem(V2_SETTINGS_KEY, JSON.stringify(state.settings));
       loadSettings();
       state.settingsEdited = false;
-      if (state.sshSession && state.sshSession.settingsKey !== sshSettingsKey()) disconnectSshSession("后端连接设置已变化，请重新连接并识别硬件。");
+      const currentSettingsKey = sshSettingsKey();
+      if (previousSettingsKey !== currentSettingsKey) {
+        state.hostKeyFingerprint = "";
+        el.confirmHostKey.checked = false;
+        el.settingSshPassword.value = "";
+      }
+      if (boundSettingsKey && boundSettingsKey !== currentSettingsKey) disconnectSshSession("后端连接设置已变化，请重新连接并识别硬件。");
     }
 
     function cleanRedacted(value) {

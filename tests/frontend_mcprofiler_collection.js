@@ -27,6 +27,19 @@ async (page) => {
         llm: {provider: "openai_compatible", base_url: "https://example.invalid/v1", model: "fixture", api_key_env: "OPENAI_API_KEY", api_key_env_exists: true},
       }});
     }
+    if (path === "/api/ssh/sessions" && request.method() === "POST") {
+      return json(route, {ok: true, session_id: "mcprofiler-contract-session", expires_at: new Date(Date.now() + 1800000).toISOString()});
+    }
+    if (path === "/api/hardware/resolve" && request.method() === "POST") {
+      return json(route, {
+        ok: true,
+        devices: [{device_id: "mxmaca:contract-device", identity_verified: true, backend: "mxmaca", fields: {target_name: "Contract GPU", backend: "mxmaca"}}],
+        selected_device_id: "mxmaca:contract-device",
+        detection_status: "partial",
+        warnings: [],
+        hardware: {fields: {}},
+      });
+    }
     if (path === "/api/tasks" && request.method() === "GET") return json(route, {ok: true, tasks: []});
     return json(route, {detail: `Unhandled fixture route: ${path}`}, 404);
   });
@@ -34,6 +47,15 @@ async (page) => {
   async function reloadHealthy() {
     await page.reload();
     await page.waitForFunction(() => state.apiHealthy === true);
+  }
+
+  async function connectRemote() {
+    await page.waitForFunction(() => document.getElementById("settingSshUsername").value === "fixture");
+    await page.evaluate(() => activateView("settingsView"));
+    await page.locator("#settingSshPassword").fill("contract-password-only");
+    await page.locator("#connectSshBtn").click();
+    await page.waitForFunction(() => sessionIsActive() && !state.hardwareResolving);
+    await page.evaluate(() => activateView("startView"));
   }
 
   mcProfilerCapability = undefined;
@@ -49,7 +71,7 @@ async (page) => {
   request = await page.evaluate(() => buildApiTaskRequest());
   check(JSON.stringify(request.profiler) === JSON.stringify({enabled: true, type: "dummy"}), "Local runner cannot force auto collection through JavaScript");
 
-  await page.locator("#v2RunnerType").selectOption("ssh");
+  await connectRemote();
   check(await page.locator("#mcProfilerAutoCollectionField").getAttribute("hidden") === null, "Capable remote SSH mode enables the optional collection control");
   const advancedSettings = page.locator("#mcProfilerAutoCollectionField").locator("xpath=ancestor::details");
   if ((await advancedSettings.getAttribute("open")) === null) await advancedSettings.locator("summary").click();
@@ -67,7 +89,7 @@ async (page) => {
 
   mcProfilerCapability = false;
   await reloadHealthy();
-  await page.locator("#v2RunnerType").selectOption("ssh");
+  await connectRemote();
   check(await page.locator("#mcProfilerAutoCollectionField").isHidden(), "Explicit false capability does not advertise collection support");
   await page.evaluate(() => { el.v2McProfilerAutoCollect.checked = true; });
   request = await page.evaluate(() => buildApiTaskRequest());

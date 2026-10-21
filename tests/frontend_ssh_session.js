@@ -5,9 +5,14 @@ async (page) => {
   const secret = "TransientSshPasswordOnly-42";
   const sessionId = "private-session-contract-only";
   const fingerprint = "SHA256:" + "A".repeat(43);
+  const hostA = "race-a.fixture.invalid";
+  const hostB = "race-b.fixture.invalid";
+  const sessionA = "private-race-session-a";
+  const sessionB = "private-race-session-b";
   const taskRequests = [];
   const resolveRequests = [];
   const savedRequests = [];
+  const revokedSessionIds = [];
   let sessionOutcome = "ok";
   let hardwareOutcome = "single";
   let taskOutcome = "ok";
@@ -15,6 +20,9 @@ async (page) => {
   let deleted = 0;
   let cancelled = 0;
   let sessionCreates = 0;
+  let backendSettings;
+  let holdHostA = false;
+  let releaseHostA;
 
   const check = (condition, label) => {
     if (!condition) throw new Error(label);
@@ -30,6 +38,7 @@ async (page) => {
     fields: {target_name: `Contract GPU ${index}`, backend: "mxmaca", device_id: `mxmaca:GPU-contract-${index}`, device_uuid: `GPU-contract-${index}`, pci_bus_id: `0000:0${index}:00.0`, total_memory_bytes: (index + 1) * 1000000000},
   });
   const settings = {ssh: {host: "fixture.invalid", port: 22, username: "contract-user", remote_workspace: "/tmp/contract-only", auth_type: "password", password_env_exists: false}, llm: {base_url: "https://example.invalid/v1", model: "contract", api_key_env: "OPENAI_API_KEY", api_key_env_exists: false}};
+  backendSettings = settings;
   const task = (status = "running") => ({task_id: "session-task", project_name: "session-contract", status, execution_mode: "baseline_only", current_stage: "benchmark_started", baseline_latency: status === "completed" ? 1 : null, events: []});
 
   await page.route("**/api/**", async (route) => {
@@ -37,7 +46,7 @@ async (page) => {
     const url = new URL(request.url());
     const path = url.pathname;
     if (path === "/api/health") return json(route, {ok: true, capabilities: {source_optimization: true}});
-    if (path === "/api/settings" && request.method() === "GET") return json(route, {ok: true, settings});
+    if (path === "/api/settings" && request.method() === "GET") return json(route, {ok: true, settings: backendSettings});
     if (path === "/api/settings" && request.method() === "POST") {
       savedRequests.push(request.postDataJSON());
       return json(route, {ok: true, settings: request.postDataJSON()});
@@ -46,16 +55,19 @@ async (page) => {
       sessionCreates += 1;
       const body = request.postDataJSON();
       check(body.password === secret, "Session request uses exactly the submitted password");
+      if (body.ssh.host === hostA && holdHostA) await new Promise((resolve) => { releaseHostA = resolve; });
       if (sessionOutcome === "held") await new Promise((resolve) => { releaseConnection = resolve; });
       if (sessionOutcome === "auth_failed") return json(route, {detail: {code: "auth_failed", message: secret}}, 502);
       if (sessionOutcome === "timeout") return json(route, {detail: {code: "connection_timeout", message: secret}}, 502);
       if (sessionOutcome === "malformed") return json(route, {detail: {code: secret, message: secret}}, 502);
       if (sessionOutcome === "fingerprint" && !body.ssh.host_key_fingerprint) return json(route, {detail: {code: "host_key_confirmation_required", fingerprint}}, 409);
       if (sessionOutcome === "fingerprint") check(body.ssh.host_key_fingerprint === fingerprint, "Only the explicitly confirmed fingerprint is submitted");
-      return json(route, {ok: true, session_id: sessionId, expires_at: new Date(Date.now() + 1800000).toISOString()});
+      const createdId = body.ssh.host === hostA ? sessionA : body.ssh.host === hostB ? sessionB : sessionId;
+      return json(route, {ok: true, session_id: createdId, expires_at: new Date(Date.now() + 1800000).toISOString()});
     }
     if (path.startsWith("/api/ssh/sessions/") && request.method() === "DELETE") {
       deleted += 1;
+      revokedSessionIds.push(decodeURIComponent(path.slice("/api/ssh/sessions/".length)));
       return json(route, {ok: true});
     }
     if (path === "/api/hardware/resolve") {
@@ -241,6 +253,64 @@ async (page) => {
   await page.waitForFunction(() => state.apiHealthy);
   check(await page.evaluate(() => state.sshSession === null) && await page.locator("#settingSshPassword").inputValue() === "", "Page reload never restores credentials or the session");
   check((await page.locator("#sshConnectionMessage").innerText()).includes("重新连接") && await safeStorage(), "Reload explicitly explains reconnection and retains no secrets");
+
+  async function startDelayedHostA() {
+    await settingsView();
+    await page.locator("#settingSshHost").fill(hostA);
+    holdHostA = true;
+    await submitConnection();
+    await page.waitForFunction(() => state.sshStatus === "connecting");
+  }
+
+  async function loadHostB() {
+    backendSettings = {...settings, ssh: {...settings.ssh, host: hostB}};
+    await page.locator("#loadSettingsBtn").click();
+    await page.waitForFunction((host) => document.getElementById("settingSshHost").value === host, hostB);
+  }
+
+  await startDelayedHostA();
+  const resolveCountBeforeSwitch = resolveRequests.length;
+  await loadHostB();
+  check(await page.evaluate(() => state.sshSession === null && state.sshStatus !== "connecting"), "Reading different backend settings invalidates the in-flight host A connection");
+  const staleRevocation = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/ssh/sessions/${sessionA}` && response.request().method() === "DELETE");
+  releaseHostA();
+  await staleRevocation;
+  await runnable();
+  check(await page.locator("#startOptimizationBtn").isDisabled(), "Late host A response cannot unlock remote submission with host B displayed");
+  check(await page.evaluate(() => state.sshSession === null) && resolveRequests.length === resolveCountBeforeSwitch, "Stale session is revoked without hardware lookup or page adoption");
+  check(revokedSessionIds.includes(sessionA), "Late host A session is explicitly revoked through DELETE");
+
+  await startDelayedHostA();
+  await loadHostB();
+  await connected();
+  check(await page.evaluate((id) => state.sshSession?.id === id && state.sshSession.settingsKey === sshSettingsKey(), sessionB), "New host B session is bound to the settings used by its request");
+  const resolvesAfterB = resolveRequests.length;
+  const revocationsOfBBefore = revokedSessionIds.filter((id) => id === sessionB).length;
+  const staleWhileB = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/ssh/sessions/${sessionA}` && response.request().method() === "DELETE");
+  releaseHostA();
+  await staleWhileB;
+  check(await page.evaluate((id) => state.sshSession?.id === id && state.sshStatus === "connected", sessionB), "Late host A response cannot overwrite a newer host B connection");
+  check(resolveRequests.length === resolvesAfterB && revokedSessionIds.filter((id) => id === sessionB).length === revocationsOfBBefore, "Stale cleanup affects only host A, not host B hardware or session");
+  await runnable();
+  await page.locator("#startOptimizationBtn").click();
+  await page.waitForFunction(() => !state.taskSubmitting);
+  check(taskRequests.at(-1).ssh_session_id === sessionB, "Remote task submitted after the race uses host B's session");
+
+  await startDelayedHostA();
+  await loadHostB();
+  backendSettings = {...settings, ssh: {...settings.ssh, host: hostA}};
+  await page.locator("#loadSettingsBtn").click();
+  await page.waitForFunction((host) => document.getElementById("settingSshHost").value === host, hostA);
+  const returnedToA = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/ssh/sessions/${sessionA}` && response.request().method() === "DELETE");
+  releaseHostA();
+  await returnedToA;
+  check(await page.evaluate(() => state.sshSession === null && !sessionIsActive()), "Switching A to B and back to A cannot revive an invalidated connection attempt");
+
+  holdHostA = false;
+  backendSettings = settings;
+  await settingsView();
+  await page.locator("#loadSettingsBtn").click();
+  await page.waitForFunction(() => state.sshStatus === "disconnected");
 
   await connected();
   await runnable();
