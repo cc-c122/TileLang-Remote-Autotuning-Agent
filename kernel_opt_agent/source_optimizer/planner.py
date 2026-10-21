@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .analyzer import CopyLoopTarget
+from .analyzer import SourceOptimizationTarget
 
 
 class SourcePlan(BaseModel):
@@ -19,19 +19,25 @@ class SourcePlan(BaseModel):
     fallback_reason: str | None = None
 
 
-def _validate_plan(raw: dict[str, Any], targets: tuple[CopyLoopTarget, ...], allowed_evidence_ids: set[str]) -> SourcePlan:
+def _validate_plan(
+    raw: dict[str, Any],
+    targets: tuple[SourceOptimizationTarget, ...],
+    allowed_evidence_ids: set[str],
+) -> SourcePlan:
     plan = SourcePlan.model_validate(raw)
-    if plan.template != "parallel_copy_to_t_copy":
-        raise ValueError("LLM selected an unauthorized source optimization template")
-    if plan.target_id not in {item.target_id for item in targets}:
+    target = next((item for item in targets if item.target_id == plan.target_id), None)
+    if target is None:
         raise ValueError("LLM selected an unauthorized source target")
+    if plan.template != target.template:
+        raise ValueError("LLM selected a template that is not authorized for the source target")
     if any(item not in allowed_evidence_ids for item in plan.evidence_ids):
         raise ValueError("LLM cited an unknown evidence id")
+    plan.hypothesis = target.hypothesis
     return plan
 
 
 def choose_plan(
-    targets: tuple[CopyLoopTarget, ...],
+    targets: tuple[SourceOptimizationTarget, ...],
     evidence: list[Any],
     client: Any | None = None,
 ) -> tuple[SourcePlan, str]:
@@ -46,6 +52,9 @@ def choose_plan(
             "source": item.source_expr,
             "destination": item.destination_expr,
             "extent": item.extent_expr,
+            "template": item.template,
+            "hypothesis": item.hypothesis,
+            "confidence": item.confidence,
         }
         for item in targets
     ]
@@ -54,11 +63,11 @@ def choose_plan(
         prompt = {
             "role": "user",
             "content": (
-                "Select exactly one authorized target and the template parallel_copy_to_t_copy. "
+                "Select exactly one authorized target and that target's authorized template. "
                 "Return strict JSON with target_id, template, hypothesis, evidence_ids. "
                 f"Authorized targets: {json.dumps(target_summaries, sort_keys=True)}. "
                 f"Available evidence: {json.dumps(evidence_rows, sort_keys=True, default=str)}. "
-                f"Authorized evidence_ids: {evidence_ids}. Do not return source code or shell commands."
+                f"Authorized evidence_ids: {evidence_ids}. Do not return source code, shell commands, or performance claims."
             ),
         }
         for attempt in range(1, 3):
@@ -72,7 +81,8 @@ def choose_plan(
     return (
         SourcePlan(
             target_id=target.target_id,
-            hypothesis="replace a verified elementwise copy loop with the TileLang bulk copy primitive",
+            template=target.template,
+            hypothesis=target.hypothesis,
             evidence_ids=evidence_ids,
             planning_attempts=2 if client is not None else 0,
             fallback_reason=last_error or "LLM planner was not configured",

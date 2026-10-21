@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 from fastapi.testclient import TestClient
@@ -42,7 +44,10 @@ class FastApiServerTests(unittest.TestCase):
                 "ok": True,
                 "service": "tilelang-agent",
                 "mode": "local-runner",
-                "capabilities": {"source_optimization": True},
+                "capabilities": {
+                    "source_optimization": True,
+                    "mcprofiler_auto_collection": True,
+                },
             },
         )
 
@@ -268,12 +273,29 @@ class FastApiServerTests(unittest.TestCase):
             payload = _result_payload(root)
             self.assertEqual(payload["profiler_status"], "profiler_metrics_available")
             self.assertTrue(payload["profiler_available"])
+            collection = {
+                "schema_version": "v2.mcprofiler_collection.v1",
+                "status": "unsupported",
+                "reason_category": "tool_unavailable",
+                "message": "official Linux tool unavailable",
+                "source_trial_id": "source-baseline",
+                "source_sha256": "a" * 64,
+                "shape_id": None,
+                "metrics_requested": [],
+                "available_metrics": {},
+                "artifact_manifest": [],
+                "fallback": "benchmark_log",
+            }
+            (root / "mcprofiler_collection.jsonl").write_text(json.dumps(collection) + "\n", encoding="utf-8")
+            payload = _result_payload(root)
+            self.assertEqual(payload["profiler_collections"], [collection])
 
     def test_ssh_runner_uses_saved_settings_without_leaking_secrets(self) -> None:
         request = TaskCreateRequest.model_validate(
             {
                 "project_name": "api-ssh-demo",
                 "runner": {"type": "ssh"},
+                "profiler": {"enabled": True, "type": "mxmaca", "auto_collect": True},
                 "sample": {"source_type": "inline", "inline_text": INLINE_KERNEL, "entry_file": "kernel.py"},
                 "commands": {
                     "build_command": "python -m py_compile kernel.py",
@@ -313,12 +335,35 @@ class FastApiServerTests(unittest.TestCase):
             self.assertEqual(config.remote.host, "ssh.example.invalid")
             self.assertEqual(config.remote.password_env, "KERNEL_AGENT_TEST_SSH_PASSWORD")
             self.assertEqual(config.llm.api_key_env, "KERNEL_AGENT_TEST_OPENAI_KEY")
+            self.assertEqual(config.profiler.type, "mxmaca")
+            self.assertTrue(config.profiler.auto_collect)
             effective = yaml.safe_load((root / "task" / "effective_config.yaml").read_text(encoding="utf-8"))
             self.assertEqual(effective["runner"]["type"], "ssh")
             self.assertEqual(effective["remote"]["password_env"], "KERNEL_AGENT_TEST_SSH_PASSWORD")
             self.assertNotIn("KERNEL_AGENT_TEST_OPENAI_KEY_VALUE", str(effective))
             self.assertNotIn("password:", (root / "task" / "effective_config.yaml").read_text(encoding="utf-8").lower())
             self.assertNotIn("api_key:", (root / "task" / "effective_config.yaml").read_text(encoding="utf-8").lower())
+
+    def test_web_profiler_auto_collection_requires_explicit_ssh_mxmaca(self) -> None:
+        base = {
+            "project_name": "api-profiler-contract",
+            "sample": {"source_type": "inline", "inline_text": INLINE_KERNEL, "entry_file": "kernel.py"},
+            "runner": {"type": "ssh"},
+            "profiler": {"enabled": True, "type": "mxmaca", "auto_collect": True},
+        }
+        with patch("kernel_opt_agent.server.app.worker.submit"):
+            accepted = self.client.post("/api/tasks", json=base)
+        self.assertEqual(accepted.status_code, 200)
+
+        local = dict(base)
+        local["runner"] = {"type": "local"}
+        rejected_local = self.client.post("/api/tasks", json=local)
+        self.assertEqual(rejected_local.status_code, 422)
+        rejected_dummy = self.client.post(
+            "/api/tasks",
+            json={**base, "profiler": {"enabled": True, "type": "dummy", "auto_collect": True}},
+        )
+        self.assertEqual(rejected_dummy.status_code, 422)
 
     def test_ssh_key_path_is_redacted_in_effective_config(self) -> None:
         request = TaskCreateRequest.model_validate(

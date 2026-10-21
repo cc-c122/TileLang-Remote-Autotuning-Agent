@@ -63,9 +63,12 @@ class McProfilerParserTests(unittest.TestCase):
     def test_synthetic_paged_attention_report_import_keeps_insufficient_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             payload = import_report(PAGED_FIXTURE, Path(tmp))
+            self.assertEqual(payload["collection_status"], "imported")
+            self.assertEqual(payload["collection_mode"], "report_import")
             self.assertEqual(payload["metadata"]["operator"], "Paged Attention Decode")
             self.assertEqual(payload["metadata"]["collection_status"], "synthetic_parser_fixture_not_real_baseline")
             self.assertTrue((Path(tmp) / "parsed_mcprofiler_case.json").exists())
+            self.assertTrue((Path(tmp) / "profiler_results.jsonl").exists())
             self.assertTrue((Path(tmp) / "metric_observations.jsonl").exists())
             diagnoses = [json.loads(line) for line in (Path(tmp) / "diagnoses.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual({item["bottleneck_type"] for item in diagnoses}, {"insufficient_evidence"})
@@ -156,7 +159,10 @@ class McProfilerParserTests(unittest.TestCase):
             self.assertTrue(any("failed to parse report_dumped_result.json" in item for item in parsed.warnings))
 
     def test_mxmaca_profiler_reads_mcprofiler_case(self) -> None:
-        result = MxmacaProfiler().collect({"mcprofiler_case_path": str(FIXTURE)})
+        result = MxmacaProfiler().collect(
+            {"mcprofiler_case_path": str(FIXTURE), "benchmark_stdout": "BENCHMARK_RESULT latency_ms=1.25"}
+        )
+        self.assertEqual(result.latency_ms, 1.25)
         self.assertAlmostEqual(result.l2c_hit_rate or 0, 46.10, places=2)
         self.assertAlmostEqual(result.dnoc_read_average_latency or 0, 283.70, places=2)
         self.assertAlmostEqual(result.shared_memory_access_efficiency or 0, 57.98, places=2)

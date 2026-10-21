@@ -91,7 +91,10 @@ class FastApiHttpSmokeTests(unittest.TestCase):
                     "ok": True,
                     "service": "tilelang-agent",
                     "mode": "local-runner",
-                    "capabilities": {"source_optimization": True},
+                    "capabilities": {
+                        "source_optimization": True,
+                        "mcprofiler_auto_collection": True,
+                    },
                 },
             )
             self.assertIn("<title>TileLang", _request_text(f"{base}/"))
