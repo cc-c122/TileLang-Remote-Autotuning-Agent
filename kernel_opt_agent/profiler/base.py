@@ -16,6 +16,15 @@ SENSITIVE_PATTERNS = (
     "private key",
 )
 REDACTED_SECRET = "<redacted:secret>"
+UNVERIFIED_ATTRIBUTION_WARNING = (
+    "mcProfiler target attribution is unverified; counters may include other device activity. "
+    "Excluded from optimization planning."
+)
+
+
+def has_verified_target_attribution(status: Any, confidence: Any, scope: Any, kernel_name: Any) -> bool:
+    return (status == "verified" and confidence in ("medium", "high") and scope == "kernel"
+            and isinstance(kernel_name, str) and bool(kernel_name.strip()))
 
 
 def _is_sensitive_string(value: str) -> bool:
@@ -73,6 +82,23 @@ class MetricObservation:
     confidence: str
     artifact: str | None
     parse_warnings: list[str] = field(default_factory=list)
+    parse_confidence: str | None = None
+    attribution_status: str = "unverified"
+    attribution_confidence: str = "unknown"
+    scope: str = "unknown"
+    kernel_name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.parse_confidence is None:
+            self.parse_confidence = self.confidence
+        if self.source == "mcprofiler" and not has_verified_target_attribution(
+            self.attribution_status, self.attribution_confidence, self.scope, self.kernel_name,
+        ):
+            self.confidence = "low"
+            self.attribution_status = "unverified"
+            self.attribution_confidence = "low"
+            if UNVERIFIED_ATTRIBUTION_WARNING not in self.parse_warnings:
+                self.parse_warnings.append(UNVERIFIED_ATTRIBUTION_WARNING)
 
     def to_dict(self) -> dict[str, Any]:
         return redact_sensitive(
@@ -86,6 +112,11 @@ class MetricObservation:
                 "confidence": self.confidence,
                 "artifact": self.artifact,
                 "parse_warnings": self.parse_warnings,
+                "parse_confidence": self.parse_confidence,
+                "attribution_status": self.attribution_status,
+                "attribution_confidence": self.attribution_confidence,
+                "scope": self.scope,
+                "kernel_name": self.kernel_name,
             }
         )
 

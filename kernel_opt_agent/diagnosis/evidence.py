@@ -3,9 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
+import math
 from typing import Any
 
-from kernel_opt_agent.profiler.base import METRIC_FIELDS, MetricObservation, ProfilerResult
+from kernel_opt_agent.profiler.base import (
+    METRIC_FIELDS, MetricObservation, ProfilerResult, UNVERIFIED_ATTRIBUTION_WARNING,
+    has_verified_target_attribution,
+)
 
 
 SENSITIVE_PATTERNS = (
@@ -55,6 +59,23 @@ class EvidenceRecord:
     confidence: str
     parse_warnings: list[str] = field(default_factory=list)
     source_trial_id: str | None = None
+    parse_confidence: str | None = None
+    attribution_status: str = "unverified"
+    attribution_confidence: str = "unknown"
+    scope: str = "unknown"
+    kernel_name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.parse_confidence is None:
+            self.parse_confidence = self.confidence
+        if self.source == "mcprofiler" and not has_verified_target_attribution(
+            self.attribution_status, self.attribution_confidence, self.scope, self.kernel_name,
+        ):
+            self.confidence = "low"
+            self.attribution_status = "unverified"
+            self.attribution_confidence = "low"
+            if UNVERIFIED_ATTRIBUTION_WARNING not in self.parse_warnings:
+                self.parse_warnings.append(UNVERIFIED_ATTRIBUTION_WARNING)
 
     def to_dict(self) -> dict[str, Any]:
         return redact_sensitive(
@@ -70,6 +91,11 @@ class EvidenceRecord:
                 "confidence": self.confidence,
                 "parse_warnings": self.parse_warnings,
                 "source_trial_id": self.source_trial_id,
+                "parse_confidence": self.parse_confidence,
+                "attribution_status": self.attribution_status,
+                "attribution_confidence": self.attribution_confidence,
+                "scope": self.scope,
+                "kernel_name": self.kernel_name,
             }
         )
 
@@ -104,6 +130,29 @@ def observation_to_evidence(
         confidence=observation.confidence,
         parse_warnings=list(observation.parse_warnings),
         source_trial_id=trial_id,
+        parse_confidence=observation.parse_confidence,
+        attribution_status=observation.attribution_status,
+        attribution_confidence=observation.attribution_confidence,
+        scope=observation.scope,
+        kernel_name=observation.kernel_name,
+    )
+
+
+def planning_evidence_allowed(row: dict[str, Any]) -> bool:
+    value = row.get("value")
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        if not math.isfinite(value):
+            return False
+    except OverflowError:
+        return False
+    return (
+        row.get("available") is True and isinstance(row.get("evidence_id"), str) and bool(row["evidence_id"])
+        and has_verified_target_attribution(row.get("attribution_status"), row.get("attribution_confidence"),
+                                            row.get("scope"), row.get("kernel_name"))
+        and row.get("parse_confidence") in ("medium", "high")
+        and row.get("confidence") in ("medium", "high")
     )
 
 

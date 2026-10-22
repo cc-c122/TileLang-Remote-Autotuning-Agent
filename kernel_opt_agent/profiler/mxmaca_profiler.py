@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .base import BaseProfiler, ProfilerResult
+from .base import BaseProfiler, MetricObservation, ProfilerResult
 from .mcprofiler import parse_mcprofiler_case
 from .mcprofiler.report_parser import redact_mcprofiler_sensitive
 from .parser import parse_benchmark_output, parse_log_metrics
@@ -14,26 +14,27 @@ def _observation_value(metric_map, name):
 
 
 class MxmacaProfiler(BaseProfiler):
+    @staticmethod
+    def from_observations(observations: list[MetricObservation], *, benchmark_stdout="", raw_logs=None, raw_artifact_refs=None):
+        metric_map = {item.metric_name: item for item in observations}
+        benchmark_metrics = parse_benchmark_output(benchmark_stdout)
+        names = ("vl1_hit_rate", "l2c_hit_rate", "dnoc_read_average_latency", "shared_memory_access_efficiency",
+                 "shared_conflict_cycles", "achieved_waves", "dispatched_waves", "mma_duty")
+        return ProfilerResult(
+            latency_ms=benchmark_metrics.get("latency"), tflops=benchmark_metrics.get("tflops"),
+            estimated_hbm_bandwidth=benchmark_metrics.get("estimated_hbm_bandwidth"),
+            **{name: _observation_value(metric_map, name) for name in names},
+            observations=observations, raw_artifact_refs=raw_artifact_refs or {}, raw_logs=raw_logs or {},
+        )
+
     def collect(self, run_context):
         case_path = run_context.get("mcprofiler_case_path") or run_context.get("profiler_case_path")
         if case_path:
             parsed_case = parse_mcprofiler_case(case_path)
             public_case = parsed_case.to_dict()
-            metric_map = parsed_case.metric_map()
-            benchmark_metrics = parse_benchmark_output(run_context.get("benchmark_stdout") or "")
-            return ProfilerResult(
-                latency_ms=benchmark_metrics.get("latency"),
-                tflops=benchmark_metrics.get("tflops"),
-                estimated_hbm_bandwidth=benchmark_metrics.get("estimated_hbm_bandwidth"),
-                vl1_hit_rate=_observation_value(metric_map, "vl1_hit_rate"),
-                l2c_hit_rate=_observation_value(metric_map, "l2c_hit_rate"),
-                dnoc_read_average_latency=_observation_value(metric_map, "dnoc_read_average_latency"),
-                shared_memory_access_efficiency=_observation_value(metric_map, "shared_memory_access_efficiency"),
-                shared_conflict_cycles=_observation_value(metric_map, "shared_conflict_cycles"),
-                achieved_waves=_observation_value(metric_map, "achieved_waves"),
-                dispatched_waves=_observation_value(metric_map, "dispatched_waves"),
-                mma_duty=_observation_value(metric_map, "mma_duty"),
-                observations=parsed_case.observations,
+            return self.from_observations(
+                parsed_case.observations,
+                benchmark_stdout=run_context.get("benchmark_stdout") or "",
                 raw_artifact_refs=public_case["artifacts"],
                 raw_logs={
                     "benchmark_stdout": run_context.get("benchmark_stdout") or "",
@@ -66,6 +67,6 @@ class MxmacaProfiler(BaseProfiler):
                 "profiler_stdout": profiler_stdout,
                 "profiler_stderr": profiler_stderr,
                 "compile_log": compile_log,
-                "todo": "MXMACA profiler command integration is not implemented yet; only explicit log metrics are parsed.",
+                "note": "No native mcProfiler report supplied; only explicit log metrics are parsed.",
             },
         )

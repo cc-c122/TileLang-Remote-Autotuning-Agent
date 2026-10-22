@@ -1,0 +1,47 @@
+{
+  "perfList": {
+    "ISU": [
+      [
+        15,
+        "AP_PERF_INSTS_BSM"
+      ],
+      [
+        74,
+        "AP_PERF_BSM_ATOMIC_CYCLES"
+      ],
+      [
+        27,
+        "AP_PERF_INST_PRIVATE_WR"
+      ],
+      [
+        19,
+        "AP_PERF_INST_GLOBAL_WR"
+      ],
+      [
+        18,
+        "AP_PERF_INST_GLOBAL_RD"
+      ],
+      [
+        89,
+        "AP_PERF_ISU_AP_BUSY"
+      ]
+    ],
+    "L2C": [
+      [
+        20,
+        "perf_sector_hit"
+      ]
+    ]
+  },
+  "action": "config,disable,read_dump,enable,kernel_collect",
+  "conditions": {
+    "kernelnames": [
+      "profiler_vector_axpby"
+    ],
+    "include": true,
+    "is_perkernel": true,
+    "is_multi_device": false,
+    "profile_from_start": true,
+    "counts": 100
+  }
+}

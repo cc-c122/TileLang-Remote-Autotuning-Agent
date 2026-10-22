@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import posixpath
 import re
 import secrets
@@ -13,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from kernel_opt_agent.profiler.base import redact_sensitive
+from kernel_opt_agent.profiler.base import UNVERIFIED_ATTRIBUTION_WARNING, redact_sensitive
 from kernel_opt_agent.runner.command_guard import validate
 
 
@@ -69,6 +70,9 @@ class McProfilerCollectionRequest:
     timeout_seconds: int = 120
     max_artifact_files: int = DEFAULT_MAX_ARTIFACT_FILES
     max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES
+    per_kernel: bool = False
+    profile_from_start: bool = True
+    server_mode: Literal["embedded", "managed_external"] = "embedded"
 
     def __post_init__(self) -> None:
         if not self.target_command.strip():
@@ -88,6 +92,8 @@ class McProfilerCollectionRequest:
             raise ValueError("mcProfiler service_port must be between 1024 and 65535")
         if self.startup_wait_seconds <= 0 or self.startup_wait_seconds > 30:
             raise ValueError("mcProfiler startup_wait_seconds must be in (0, 30]")
+        if self.server_mode not in {"embedded", "managed_external"}:
+            raise ValueError("mcProfiler server_mode must be embedded or managed_external")
         if self.timeout_seconds <= 0 or self.timeout_seconds > 3600:
             raise ValueError("mcProfiler timeout_seconds must be in [1, 3600]")
         if self.max_artifact_files <= 0 or self.max_artifact_bytes <= 0:
@@ -115,6 +121,8 @@ class McProfilerCollectionResult:
     kernel_names: list[str] = field(default_factory=list)
     execution_manifest: dict[str, Any] = field(default_factory=dict)
     case_dir: str | None = None
+    partial_artifact_dir: str | None = None
+    primary_report: str | None = None
     artifact_manifest: list[dict[str, Any]] = field(default_factory=list)
     available_metrics: dict[str, bool] = field(default_factory=dict)
     metric_observations: list[dict[str, Any]] = field(default_factory=list)
@@ -196,45 +204,64 @@ def _build_collection_command(
         request.executable,
         "perf_exec",
         "--cmdline",
-        request.target_command,
+        # Older MXMACA runtimes do not auto-enable the profiling RPC hook.
+        "sh -c " + shlex.quote("export MCTX_TARGET_INIT=true; " + request.target_command),
         "--casename",
         request.case_name,
         "--cwd",
         workspace,
-        "--metrics",
-        ",".join(request.metrics),
+        "--output",
+        posixpath.join(workspace, collection_root),
         "--host",
         "127.0.0.1",
         "--port",
         str(port),
     ]
+    if request.metrics:
+        client.extend(["--metrics", *request.metrics])
     if request.kernel_names:
-        client.extend(["--kernelname", ",".join(request.kernel_names)])
+        client.extend(["--kernelnames", *request.kernel_names])
+    if request.per_kernel:
+        client.append("--per-kernel")
+    if not request.profile_from_start:
+        client.append("--custom")
     server = " ".join(
         [shlex.quote(request.server_executable), "--host", "127.0.0.1", "--port", str(port)]
     )
     client_command = " ".join(shlex.quote(item) for item in client)
+    absolute_root = posixpath.join(workspace, collection_root)
+    prepare_environment = (
+        f"cd {shlex.quote(collection_root)}; "
+        "mkdir -p .home .tmp; "
+        f"export HOME={shlex.quote(posixpath.join(absolute_root, '.home'))}; "
+        f"export TMPDIR={shlex.quote(posixpath.join(absolute_root, '.tmp'))}; "
+    )
+    start_server = ""
+    if request.server_mode == "managed_external":
+        start_server = (
+            f"{server} > profiler_server.log 2>&1 & server_pid=$!; "
+            f"sleep {request.startup_wait_seconds:g}; kill -0 \"$server_pid\" 2>/dev/null || "
+            "{ echo 'managed mcProfiler server did not start' >&2; exit 70; }; "
+        )
     script = (
-        f"cd {shlex.quote(collection_root)}; server_pid=''; client_pid=''; "
+        prepare_environment + "server_pid=''; client_pid=''; "
         "cleanup() { if [ -n \"$client_pid\" ]; then kill -TERM \"$client_pid\" 2>/dev/null || true; "
         "wait \"$client_pid\" 2>/dev/null || true; fi; "
         f"if [ -n \"$server_pid\" ]; then kill -TERM \"$server_pid\" 2>/dev/null || true; "
         "wait \"$server_pid\" 2>/dev/null || true; fi; }; trap cleanup EXIT HUP INT TERM; "
-        f"{server} > profiler_server.log 2>&1 & server_pid=$!; "
-        f"sleep {request.startup_wait_seconds:g}; kill -0 \"$server_pid\" 2>/dev/null || "
-        "{ echo 'managed mcProfiler server did not start' >&2; exit 70; }; "
+        + start_server +
         f"{client_command} & client_pid=$!; wait \"$client_pid\"; rc=$?; client_pid=''; exit \"$rc\""
     )
     return f"sh -c {shlex.quote(script)}"
 
 
-def _artifact_manifest(case_dir: Path) -> list[dict[str, Any]]:
+def _artifact_manifest(case_dir: Path, source: str = "mcprofiler_auto_collection") -> list[dict[str, Any]]:
     return [
         {
             "relative_path": path.relative_to(case_dir).as_posix(),
             "sha256": _sha256(path),
             "size_bytes": path.stat().st_size,
-            "source": "mcprofiler_auto_collection",
+            "source": source,
         }
         for path in sorted(case_dir.rglob("*"))
         if path.is_file()
@@ -283,6 +310,36 @@ def _append_import_records(import_dir: Path, results_dir: Path) -> None:
                     output.write(line + "\n")
 
 
+def _preserve_partial_artifacts(
+    runner: Any,
+    results_dir: Path,
+    collection_root: str,
+    collection_id: str,
+    request: McProfilerCollectionRequest,
+    secret_values: tuple[str, ...],
+) -> dict[str, Any]:
+    partial_root = results_dir / "mcprofiler_failed"
+    destination = partial_root / collection_id
+    destination.resolve().relative_to(results_dir.resolve())
+    if destination.exists():
+        return {"warnings": ["partial artifact directory exists; no files were overwritten"]}
+    try:
+        runner.download(collection_root, destination, max_files=request.max_artifact_files,
+                        max_bytes=request.max_artifact_bytes)
+        if _contains_secret(destination, secret_values):
+            raise ValueError("configured secret detected in partial artifacts")
+        return {
+            "partial_artifact_dir": destination.relative_to(results_dir).as_posix(),
+            "artifact_manifest": _artifact_manifest(destination, "mcprofiler_failed_collection"),
+            "warnings": ["partial artifacts are debugging evidence, not a valid profiler Case"],
+        }
+    except Exception as exc:
+        if destination.exists():
+            destination.resolve().relative_to(partial_root.resolve())
+            shutil.rmtree(destination)
+        return {"warnings": ["partial artifact preservation failed: " + type(exc).__name__]}
+
+
 def collect_remote_mcprofiler_case(
     runner: Any,
     results_dir: Path,
@@ -317,7 +374,10 @@ def collect_remote_mcprofiler_case(
     if any(value and value in request.target_command for value in secret_values):
         return finish("failed", "secret_in_command", "target command contains a configured secret value")
 
-    for label, executable in (("client", request.executable), ("server", request.server_executable)):
+    tools = [("client", request.executable)]
+    if request.server_mode == "managed_external":
+        tools.append(("server", request.server_executable))
+    for label, executable in tools:
         try:
             check = runner.run(f"mcprofiler_{label}_check", _tool_check_command(executable))
         except Exception as exc:
@@ -353,26 +413,37 @@ def collect_remote_mcprofiler_case(
         "duration_seconds": execution.duration,
         "timed_out": execution.timeout,
         "guard_denied": execution.guard_denied,
+        "server_mode": request.server_mode,
+        "profile_from_start_requested": request.profile_from_start,
+        "runtime_profiling_hook": "MCTX_TARGET_INIT=true",
     }
+
+    def failed_execution(status: CollectionStatus, reason: str, message: str) -> McProfilerCollectionResult:
+        partial = _preserve_partial_artifacts(
+            runner, results_dir, collection_root, collection_id, request, secret_values,
+        )
+        return finish(status, reason, message, logs=log_paths,
+                      execution_manifest=execution_manifest, **partial)
+
     if execution.guard_denied:
         return finish("failed", "guard_denied", execution.error_message or execution.stderr or "collection command denied", logs=log_paths, execution_manifest=execution_manifest)
     if "stop could not be verified" in (execution.error_message or ""):
         return finish("failed", "cleanup_unverified", execution.error_message, logs=log_paths, execution_manifest=execution_manifest)
     if execution.returncode == 130 or (should_cancel and should_cancel()):
-        return finish("cancelled", "cancelled", "official mcProfiler collection was cancelled", logs=log_paths, execution_manifest=execution_manifest)
+        return failed_execution("cancelled", "cancelled", "official mcProfiler collection was cancelled")
     if execution.timeout:
-        return finish("failed", "timeout", execution.error_message or "official mcProfiler collection timed out", logs=log_paths, execution_manifest=execution_manifest)
+        return failed_execution("failed", "timeout", execution.error_message or "official mcProfiler collection timed out")
     if execution.returncode != 0:
-        return finish("failed", "collection_failed", execution.error_message or execution.stderr[-500:] or "official mcProfiler command failed", logs=log_paths, execution_manifest=execution_manifest)
+        return failed_execution("failed", "collection_failed", execution.error_message or execution.stderr[-500:] or "official mcProfiler command failed")
 
     try:
         reports = runner.find_files("report_dumped_result.json", relative_root=collection_root)
         report_hashes = {path: runner.file_sha256(path) for path in reports}
     except Exception as exc:
-        return finish("failed", "discovery_failed", f"could not inspect collected mcProfiler reports: {type(exc).__name__}: {exc}", logs=log_paths, execution_manifest=execution_manifest)
+        return failed_execution("failed", "discovery_failed", f"could not inspect collected mcProfiler reports: {type(exc).__name__}: {exc}")
     if len(reports) != 1:
         reason = "report_not_found" if not reports else "ambiguous_reports"
-        return finish("failed", reason, f"expected one report in the exclusive collection directory, found {len(reports)}", logs=log_paths, execution_manifest=execution_manifest)
+        return failed_execution("failed", reason, f"expected one report in the exclusive collection directory, found {len(reports)}")
     report_path = reports[0]
     if not (report_path == collection_root or report_path.startswith(collection_root + "/")):
         return finish("failed", "discovery_failed", "mcProfiler report resolved outside the exclusive collection directory", logs=log_paths, execution_manifest=execution_manifest)
@@ -410,30 +481,74 @@ def collect_remote_mcprofiler_case(
     except (OSError, ValueError):
         return finish("failed", "artifact_hash_mismatch", "downloaded report could not be verified", logs=log_paths, execution_manifest=execution_manifest)
 
+    if request.per_kernel:
+        candidates = [
+            path for path in local_case.rglob("*_dumped_result.json")
+            if re.fullmatch(r"\d+_.+_dumped_result\.json", path.name)
+            and not re.fullmatch(r"\d+_period\d+_dumped_result\.json", path.name)
+            and (not request.kernel_names or any(
+                re.fullmatch(r"\d+_" + re.escape(name) + r"_dumped_result\.json", path.name)
+                for name in request.kernel_names
+            ))
+        ]
+        if len(candidates) != 1:
+            return finish(
+                "failed", "target_report_not_found", "expected exactly one unambiguous per-kernel report; aggregate reports are not a target fallback",
+                case_dir=f"mcprofiler_cases/{collection_id}", artifact_manifest=_artifact_manifest(local_case),
+                logs=log_paths, execution_manifest=execution_manifest,
+            )
+        downloaded_report = candidates[0]
+        selected_remote = posixpath.join(case_root, downloaded_report.relative_to(local_case).as_posix())
+        try:
+            selected_hash = runner.file_sha256(selected_remote)
+            if selected_hash != _sha256(downloaded_report):
+                raise ValueError("per-kernel report hash changed")
+        except Exception:
+            return finish("failed", "artifact_hash_mismatch", "per-kernel report could not be verified",
+                          logs=log_paths, execution_manifest=execution_manifest)
+        execution_manifest["report_scope"] = "named_kernel"
+    else:
+        selected_hash = report_hashes[report_path]
+        execution_manifest["report_scope"] = "aggregate"
+
     try:
         from kernel_opt_agent.profiler.mcprofiler.report_import import import_report
         from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
 
+        profiler_result = MxmacaProfiler().collect({"mcprofiler_case_path": str(downloaded_report)})
+        if not any(
+            item.available and isinstance(item.value, (int, float))
+            and not isinstance(item.value, bool) and math.isfinite(item.value)
+            for item in profiler_result.observations
+        ):
+            return finish(
+                "failed", "report_invalid", "mcProfiler report contains no usable numeric counters",
+                case_dir=f"mcprofiler_cases/{collection_id}", artifact_manifest=_artifact_manifest(local_case),
+                logs=log_paths, execution_manifest=execution_manifest,
+            )
         import_dir = import_output_dir or (
             results_dir / "mcprofiler_imports" / collection_id
             if append_imported_records
             else results_dir
         )
-        imported = import_report(local_case, import_dir, source_trial_id=request.source_trial_id)
+        imported = import_report(downloaded_report, import_dir, source_trial_id=request.source_trial_id)
         if append_imported_records:
             _append_import_records(import_dir, results_dir)
-        profiler_result = MxmacaProfiler().collect({"mcprofiler_case_path": str(local_case)})
     except Exception as exc:
         return finish("failed", "parse_failed", f"collected mcProfiler Case could not be parsed: {type(exc).__name__}: {exc}", logs=log_paths, execution_manifest=execution_manifest)
     available = dict(profiler_result.available_metrics)
-    warnings = [] if any(available.values()) else ["mcProfiler Case was collected, but no normalized metrics were available"]
-    execution_manifest["report_sha256"] = report_hashes[report_path]
+    warnings = [UNVERIFIED_ATTRIBUTION_WARNING]
+    if not any(available.values()):
+        warnings.append("mcProfiler Case was collected, but no normalized metrics were available")
+    execution_manifest["target_attribution"] = {"status": "unverified", "confidence": "low"}
+    execution_manifest["report_sha256"] = selected_hash
     execution_manifest["import_artifact_id"] = imported.get("artifact_id")
     return finish(
         "collected",
         "none",
         "official mcProfiler completed and the resulting Case was imported",
         case_dir=f"mcprofiler_cases/{collection_id}",
+        primary_report=downloaded_report.relative_to(local_case).as_posix(),
         artifact_manifest=_artifact_manifest(local_case),
         available_metrics=available,
         metric_observations=[item.to_dict() for item in profiler_result.observations],

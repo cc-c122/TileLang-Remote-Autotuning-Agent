@@ -1,0 +1,87 @@
+{
+  "perfList": {
+    "ISU": [
+      [
+        26,
+        "AP_PERF_INST_PRIVATE_RD"
+      ],
+      [
+        43,
+        "AP_PERF_INST_CYCLES_MMA"
+      ],
+      [
+        73,
+        "AP_PERF_BSM_WR_CYCLES"
+      ],
+      [
+        1,
+        "AP_PERF_WAVES"
+      ],
+      [
+        72,
+        "AP_PERF_BSM_RD_CYCLES"
+      ],
+      [
+        78,
+        "AP_PERF_BSM_CONFLICT_CYCLES"
+      ]
+    ],
+    "L2C": [
+      [
+        51,
+        "perf_dnoc_rdreq_inflight_level"
+      ],
+      [
+        19,
+        "perf_hit"
+      ],
+      [
+        45,
+        "perf_dnoc_rdreq"
+      ],
+      [
+        21,
+        "perf_miss"
+      ]
+    ],
+    "RM": [
+      [
+        20,
+        "RM_PERF_DISPATCHED_WAVES_P1"
+      ],
+      [
+        36,
+        "RM_PERF_DISPATCHED_WAVES_P2"
+      ],
+      [
+        52,
+        "RM_PERF_DISPATCHED_WAVES_P3"
+      ],
+      [
+        4,
+        "RM_PERF_DISPATCHED_WAVES_P0"
+      ]
+    ],
+    "VL1": [
+      [
+        79,
+        "p_perf_thread_req_cnt"
+      ],
+      [
+        78,
+        "p_perf_miss_cnt"
+      ]
+    ]
+  },
+  "action": "config,disable,read_dump,enable,kernel_collect",
+  "conditions": {
+    "kernelnames": [
+      "profiler_vector_axpby"
+    ],
+    "include": true,
+    "is_perkernel": true,
+    "is_multi_device": false,
+    "profile_from_start": true,
+    "counts": 100
+  }
+}

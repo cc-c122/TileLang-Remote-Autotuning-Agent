@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .evidence import EvidenceBundle, EvidenceRecord
+from .evidence import EvidenceBundle, EvidenceRecord, planning_evidence_allowed
+from kernel_opt_agent.profiler.base import UNVERIFIED_ATTRIBUTION_WARNING
 
 
 BOTTLENECK_TYPES = [
@@ -91,8 +92,21 @@ def _has_metric(records: list[EvidenceRecord], metric: str) -> bool:
 
 
 def diagnose_from_evidence_records(records: list[EvidenceRecord]) -> list[EvidenceDiagnosis]:
+    unverified = [item for item in records if item.available and item.source == "mcprofiler"
+                  and not planning_evidence_allowed(item.to_dict())]
+    records = [item for item in records if item not in unverified]
     available = [item for item in records if item.available]
     diagnoses: list[EvidenceDiagnosis] = []
+
+    if unverified:
+        diagnoses.append(EvidenceDiagnosis(
+            bottleneck_type="insufficient_evidence", confidence="low",
+            evidence_ids=[item.evidence_id for item in unverified],
+            uncertainty=[UNVERIFIED_ATTRIBUTION_WARNING],
+            recommended_actions=["verify isolated target-kernel counter attribution before diagnosing a bottleneck"],
+        ))
+        if not available:
+            return diagnoses
 
     if not available:
         return [
@@ -224,6 +238,10 @@ def _record(
 
 
 def diagnose_bottlenecks(bundle: EvidenceBundle) -> list[BottleneckDiagnosis]:
+    if any(item.source == "mcprofiler" and item.attribution_status != "verified"
+           for item in bundle.profiler.observations):
+        return [_record(bundle, "insufficient_evidence", "low", [],
+                        [UNVERIFIED_ATTRIBUTION_WARNING], ["verify target-kernel counter attribution"])]
     diagnoses: list[BottleneckDiagnosis] = []
 
     occupancy = bundle.metric("occupancy")

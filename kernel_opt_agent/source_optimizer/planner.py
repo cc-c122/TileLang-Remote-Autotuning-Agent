@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+from kernel_opt_agent.diagnosis.evidence import planning_evidence_allowed
 
 from .analyzer import SourceOptimizationTarget
 
@@ -41,10 +42,8 @@ def choose_plan(
     evidence: list[Any],
     client: Any | None = None,
 ) -> tuple[SourcePlan, str]:
-    evidence_rows = [item for item in evidence if isinstance(item, dict)]
+    evidence_rows = [item for item in evidence if isinstance(item, dict) and planning_evidence_allowed(item)]
     evidence_ids = [str(item["evidence_id"]) for item in evidence_rows if item.get("evidence_id")]
-    if not evidence_rows:
-        evidence_ids = [str(item) for item in evidence if isinstance(item, str)]
     target_summaries = [
         {
             "target_id": item.target_id,
@@ -65,6 +64,8 @@ def choose_plan(
             "content": (
                 "Select exactly one authorized target and that target's authorized template. "
                 "Return strict JSON with target_id, template, hypothesis, evidence_ids. "
+                "Only target-attribution-verified evidence is authorized; high parse confidence alone is insufficient. "
+                "If no eligible evidence is supplied, use source structure only and make no hardware bottleneck claims. "
                 f"Authorized targets: {json.dumps(target_summaries, sort_keys=True)}. "
                 f"Available evidence: {json.dumps(evidence_rows, sort_keys=True, default=str)}. "
                 f"Authorized evidence_ids: {evidence_ids}. Do not return source code, shell commands, or performance claims."
