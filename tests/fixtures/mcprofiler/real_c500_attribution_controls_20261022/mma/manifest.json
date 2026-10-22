@@ -1,0 +1,9 @@
+{
+  "fixture_kind": "real_native_report_subset",
+  "case_name": "attribution-final-mma-20261022",
+  "collection_id": "mcprof-9e5918add47f7b937a75a802",
+  "mcprofiler_version": "3.9.0.29",
+  "operator": "native_attribution_control_mma",
+  "kernel_name": "attribution_mma",
+  "attribution_status": "unverified"
+}

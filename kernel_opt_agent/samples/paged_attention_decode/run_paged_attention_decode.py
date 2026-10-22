@@ -8,6 +8,7 @@ import statistics
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 
@@ -148,10 +149,12 @@ def _compiled_kernel_call(upstream, sparse_attn, query, key_cache, value_cache, 
     return run_once
 
 
-def run_baseline(shape: ShapeConfig, warmup: int, repeat: int, atol: float, rtol: float) -> dict:
+def run_baseline(shape: ShapeConfig, warmup: int, repeat: int, atol: float, rtol: float, mode: str = "all") -> dict:
     upstream, sparse_attn, query, key_cache, value_cache, block_indices, cache_seqlens, block_table = _make_inputs(shape)
     run_kernel_once = _compiled_kernel_call(upstream, sparse_attn, query, key_cache, value_cache, block_indices, cache_seqlens, block_table)
     output = run_kernel_once()
+    if mode == "build":
+        return {"operator": "Paged Attention Decode", "mode": mode, "compiled_and_ran": True, "seed": 42}
     reference = upstream.ref_program_torch_paged(
         query,
         key_cache,
@@ -165,16 +168,21 @@ def run_baseline(shape: ShapeConfig, warmup: int, repeat: int, atol: float, rtol
     max_error = float(torch.max(torch.abs(output - reference)).item())
     passed = bool(torch.allclose(output, reference, atol=atol, rtol=rtol))
     if not passed:
+        print(f'CORRECTNESS_RESULT status=FAIL max_error={max_error} reason="Torch paged KV reference; atol={atol} rtol={rtol}"')
         raise AssertionError(f"correctness failed: max_error={max_error} atol={atol} rtol={rtol}")
 
     def kernel_once() -> None:
         run_kernel_once()
 
-    for _ in range(warmup):
-        kernel_once()
-    samples = [_measure_once(kernel_once) for _ in range(repeat)]
+    samples = []
+    if mode != "correctness":
+        for _ in range(warmup):
+            kernel_once()
+        samples = [_measure_once(kernel_once) for _ in range(repeat)]
     return {
         "operator": "Paged Attention Decode",
+        "mode": mode,
+        "seed": 42,
         "dtype": shape.dtype,
         "shape": {
             "batch": shape.batch,
@@ -191,19 +199,21 @@ def run_baseline(shape: ShapeConfig, warmup: int, repeat: int, atol: float, rtol
             "max_error": max_error,
         },
         "benchmark": {
-            "warmup_runs": warmup,
-            "measurement_runs": repeat,
+            "warmup_runs": warmup if samples else 0,
+            "measurement_runs": len(samples),
             "raw_samples_ms": samples,
-            "median_ms": statistics.median(samples),
-            "p90_ms": _percentile(samples, 0.9),
-            "stddev_ms": statistics.stdev(samples) if len(samples) > 1 else 0.0,
+            "median_ms": statistics.median(samples) if samples else None,
+            "p90_ms": _percentile(samples, 0.9) if samples else None,
+            "stddev_ms": statistics.stdev(samples) if len(samples) > 1 else None,
             "measurement_protocol": "one precompiled TileLang paged-attention kernel invocation per sample after fixed warmup; inputs and intermediate buffers are preallocated before timing",
+            "timing": "host_perf_counter_with_device_synchronization",
         },
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["all", "build", "correctness", "benchmark"], default="all")
     parser.add_argument("--context-length", type=int, required=True)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--repeat", type=int, default=5)
@@ -216,6 +226,8 @@ def main() -> None:
     parser.add_argument("--tolerance-atol", type=float, default=2e-3)
     parser.add_argument("--tolerance-rtol", type=float, default=2e-3)
     args = parser.parse_args()
+    if args.warmup < 3 or args.repeat < 5:
+        parser.error("warmup must be >= 3 and repeat must be >= 5")
     try:
         payload = run_baseline(
             ShapeConfig(
@@ -231,11 +243,20 @@ def main() -> None:
             args.repeat,
             args.tolerance_atol,
             args.tolerance_rtol,
+            args.mode,
         )
     except Exception as exc:
         print(f"PAGED_ATTENTION_BASELINE_ERROR {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     print("PAGED_ATTENTION_BASELINE_RESULT " + json.dumps(payload, sort_keys=True))
+    results_dir = Path("results")
+    results_dir.mkdir(exist_ok=True)
+    (results_dir / f"paged_attention_ctx{args.context_length}_{args.mode}.json").write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    if args.mode in {"all", "correctness"}:
+        check = payload["correctness"]
+        print(f'CORRECTNESS_RESULT status=PASS max_error={check["max_error"]} reason="Torch paged KV reference; atol={args.tolerance_atol} rtol={args.tolerance_rtol}"')
+    if args.mode in {"all", "benchmark"}:
+        print(f'BENCHMARK_RESULT latency_ms={payload["benchmark"]["median_ms"]}')
 
 
 if __name__ == "__main__":

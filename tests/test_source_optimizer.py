@@ -227,9 +227,10 @@ class SourceAnalyzerTests(unittest.TestCase):
     def test_llm_prompt_contains_target_summaries_and_evidence(self) -> None:
         analysis = analyze_source(_source())
         evidence = [{
-            "evidence_id": "ev-1", "metric": "l2c_hit_rate", "value": 46.1, "available": True,
+            "evidence_id": "ev-1", "metric": "register_count", "value": 64, "available": True,
             "confidence": "high", "parse_confidence": "high", "attribution_status": "verified",
             "attribution_confidence": "high", "scope": "kernel", "kernel_name": "fixture_kernel",
+            "source": "compiler_log", "artifact_id": "fixture:compiler-log",
         }]
         planner = RecordingPlanner(
             {"target_id": analysis.targets[0].target_id, "template": "parallel_copy_to_t_copy", "hypothesis": "bulk copy", "evidence_ids": ["ev-1"]}
@@ -238,7 +239,7 @@ class SourceAnalyzerTests(unittest.TestCase):
         prompt = planner.messages[0][0]["content"]
         self.assertEqual(source, "llm")
         self.assertEqual(plan.evidence_ids, ["ev-1"])
-        self.assertIn("l2c_hit_rate", prompt)
+        self.assertIn("register_count", prompt)
         self.assertIn(analysis.targets[0].source_expr, prompt)
 
 
@@ -317,13 +318,14 @@ class SourceEngineTests(unittest.TestCase):
                     with (results_dir / "metric_observations.jsonl").open("a", encoding="utf-8") as handle:
                         handle.write(json.dumps({
                             "evidence_id": "ev_baseline",
-                            "metric": "l2c_hit_rate",
-                            "value": 46.1,
+                            "metric": "register_count",
+                            "value": 64,
                             "available": True,
                             "source_trial_id": "source-baseline",
                             "confidence": "high", "parse_confidence": "high",
                             "attribution_status": "verified", "attribution_confidence": "high",
                             "scope": "kernel", "kernel_name": "fixture_kernel",
+                            "source": "compiler_log", "artifact_id": "fixture:compiler-log",
                         }) + "\n")
                 return SimpleNamespace(
                     status="collected",
@@ -1049,6 +1051,7 @@ class SourceOptimizationApiTests(unittest.TestCase):
                 time.sleep(0.1)
             result = client.get(f"/api/tasks/{task_id}/results").json()["results"]
             self.assertFalse(result["source_optimization"]["baseline_verified"])
+            self.assertEqual(task["status"], "failed")
             self.assertFalse(result["source_best_verified"])
             self.assertIsNone(result["best_kernel"])
             self.assertIsNone(result["best_row"])

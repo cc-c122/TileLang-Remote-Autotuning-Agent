@@ -3,13 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
-import math
 from typing import Any
 
 from kernel_opt_agent.profiler.base import (
     METRIC_FIELDS, MetricObservation, ProfilerResult, UNVERIFIED_ATTRIBUTION_WARNING,
-    has_verified_target_attribution,
 )
+from kernel_opt_agent.profiler.attribution import annotate_planning_eligibility, planning_eligibility
 
 
 SENSITIVE_PATTERNS = (
@@ -64,13 +63,15 @@ class EvidenceRecord:
     attribution_confidence: str = "unknown"
     scope: str = "unknown"
     kernel_name: str | None = None
+    device_id: str | None = None
+    tool_version: str | None = None
+    metric_definition: dict[str, Any] = field(default_factory=dict)
+    collection_scope: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.parse_confidence is None:
             self.parse_confidence = self.confidence
-        if self.source == "mcprofiler" and not has_verified_target_attribution(
-            self.attribution_status, self.attribution_confidence, self.scope, self.kernel_name,
-        ):
+        if self.source == "mcprofiler":
             self.confidence = "low"
             self.attribution_status = "unverified"
             self.attribution_confidence = "low"
@@ -78,7 +79,7 @@ class EvidenceRecord:
                 self.parse_warnings.append(UNVERIFIED_ATTRIBUTION_WARNING)
 
     def to_dict(self) -> dict[str, Any]:
-        return redact_sensitive(
+        return annotate_planning_eligibility(redact_sensitive(
             {
                 "evidence_id": self.evidence_id,
                 "metric": self.metric,
@@ -96,8 +97,12 @@ class EvidenceRecord:
                 "attribution_confidence": self.attribution_confidence,
                 "scope": self.scope,
                 "kernel_name": self.kernel_name,
+                "device_id": self.device_id,
+                "tool_version": self.tool_version,
+                "metric_definition": self.metric_definition,
+                "collection_scope": self.collection_scope,
             }
-        )
+        ))
 
 
 def make_evidence_id(trial_id: str | None, observation: MetricObservation, index: int) -> str:
@@ -135,25 +140,15 @@ def observation_to_evidence(
         attribution_confidence=observation.attribution_confidence,
         scope=observation.scope,
         kernel_name=observation.kernel_name,
+        device_id=observation.device_id,
+        tool_version=observation.tool_version,
+        metric_definition=dict(observation.metric_definition),
+        collection_scope=dict(observation.collection_scope),
     )
 
 
 def planning_evidence_allowed(row: dict[str, Any]) -> bool:
-    value = row.get("value")
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        return False
-    try:
-        if not math.isfinite(value):
-            return False
-    except OverflowError:
-        return False
-    return (
-        row.get("available") is True and isinstance(row.get("evidence_id"), str) and bool(row["evidence_id"])
-        and has_verified_target_attribution(row.get("attribution_status"), row.get("attribution_confidence"),
-                                            row.get("scope"), row.get("kernel_name"))
-        and row.get("parse_confidence") in ("medium", "high")
-        and row.get("confidence") in ("medium", "high")
-    )
+    return planning_eligibility(row)[0]
 
 
 def profiler_observations_to_evidence(

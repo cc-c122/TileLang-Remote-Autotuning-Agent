@@ -387,6 +387,15 @@ def collect_remote_mcprofiler_case(
         if check.returncode != 0:
             return finish("unsupported", "tool_unavailable", f"official mcProfiler {label} executable is unavailable in the remote environment")
 
+    tool_version = None
+    try:
+        version = runner.run("mcprofiler_version", shlex.quote(request.executable) + " version")
+        match = re.search(r"\bversion\s*:\s*(\d+(?:\.\d+){1,4})", version.stdout, re.IGNORECASE)
+        if version.returncode == 0 and match:
+            tool_version = match.group(1)
+    except Exception:
+        pass
+
     collection_root = f".kernel_opt_agent/mcprofiler/collections/{collection_id}"
     prepare_command = f"test ! -e {shlex.quote(collection_root)} && mkdir -p {shlex.quote(collection_root)}"
     try:
@@ -515,6 +524,19 @@ def collect_remote_mcprofiler_case(
         from kernel_opt_agent.profiler.mcprofiler.report_import import import_report
         from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
 
+        visible = {key: value for key, value in getattr(runner, "execution_env", {}).items()
+                   if key in {"MACA_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES"}}
+        device_id = ("device_sha256:" + hashlib.sha256(json.dumps(visible, sort_keys=True).encode()).hexdigest()) if visible else None
+        context = {
+            "tool_version": tool_version, "device_id": device_id,
+            "requested_kernel": request.kernel_names[0] if len(request.kernel_names) == 1 else None,
+            "source_sha256": request.source_sha256, "report_sha256": selected_hash,
+            "collection_window": {"started_at": started_at, "finished_at": _utc_now(),
+                                  "kind": "collector_wall_clock", "target_only_window_verified": False},
+        }
+        # An agent sidecar never rewrites native evidence or promotes attribution.
+        (local_case / "agent_collection_context.json").write_text(json.dumps(context, sort_keys=True), encoding="utf-8")
+        execution_manifest["collection_context"] = context
         profiler_result = MxmacaProfiler().collect({"mcprofiler_case_path": str(downloaded_report)})
         if not any(
             item.available and isinstance(item.value, (int, float))

@@ -165,6 +165,9 @@ class JobWorker:
                     source_result.reason or source_result.status,
                     {"status": source_result.status, "accepted_trial_id": source_result.accepted_trial_id},
                 )
+                if source_result.status == "failed":
+                    self.manager.set_status(task_id, "failed", source_result.reason or "source baseline failed")
+                    return
             if self.manager.is_cancel_requested(task_id):
                 self.manager.set_status(task_id, "cancelled")
             else:

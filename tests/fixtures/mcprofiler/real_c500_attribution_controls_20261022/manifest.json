@@ -1,0 +1,198 @@
+{
+  "schema_version": "v2.mcprofiler_attribution_calibration.v1",
+  "fixture_kind": "real_native_report_subset",
+  "synthetic": false,
+  "operator": "native attribution controls; not Paged Attention or TileLang",
+  "environment": {
+    "gpu_model": "MetaX C500",
+    "driver_version": "3.8.30",
+    "mxmaca_version": "3.3.0.15",
+    "torch_version": "2.8.0+metax3.3.0.2",
+    "python_version": "3.10.10",
+    "system_python_version": "3.12.3",
+    "tilelang_version": null,
+    "mctilelang_version": null,
+    "mcprofiler_version": "3.9.0.29",
+    "mcprofiler_build": "c63ea13089"
+  },
+  "source": {
+    "path": "kernel_opt_agent/samples/profiler_smoke/attribution_controls.cpp",
+    "sha256": "4928b7701c38f437ae3e0bdc3bfc9567b2216e89af9962794d3fe2850cf24cdc",
+    "reference": "idle has no target launch; elementwise has no MMA; MMA computes 128 * (16 * 1 * 2) = 4096",
+    "max_error": {
+      "idle": null,
+      "elementwise": 0,
+      "mma": 0
+    }
+  },
+  "codegen": {
+    "path": "attribution_controls.ll",
+    "level": "compiler_device_llvm_ir",
+    "elementwise_mma_calls": 0,
+    "mma_intrinsic": "llvm.mxc.mma.f32.16x16x16f16",
+    "mma_calls": 128,
+    "final_isa_inspected": false
+  },
+  "attribution": {
+    "status": "unverified",
+    "counter_scope": "unknown",
+    "background_workload_excluded": null,
+    "metric_validation": [],
+    "notes": [
+      "Control behavior is calibration evidence, not per-metric target-isolation proof.",
+      "The official 3.9.1 usage manual does not specify per-process PMU isolation or exact counter denominators.",
+      "Requested custom/API window disagrees with generated profile_from_start=true; target-only window remains unknown.",
+      "All metrics remain planning_eligible=false."
+    ]
+  },
+  "cases": [
+    {
+      "mode": "idle",
+      "case_name": "attribution-final-idle-20261022",
+      "collection_id": "mcprof-6ffd4f8a16e95fe535d222ea",
+      "started_at": "2026-10-22T12:24:45.366997Z",
+      "finished_at": "2026-10-22T12:25:41.508244Z",
+      "primary_report": "report_dumped_result.json",
+      "source_sha256": "4928b7701c38f437ae3e0bdc3bfc9567b2216e89af9962794d3fe2850cf24cdc",
+      "status": "collected",
+      "artifact_file_count": 21,
+      "metrics": {
+        "Global Read Instructions": 0,
+        "Global Write Instructions": 0,
+        "Achieved waves": 0,
+        "Dispatched waves": 0,
+        "AP MMA Duty ratio": null
+      }
+    },
+    {
+      "mode": "elementwise",
+      "case_name": "attribution-final-elementwise-20261022",
+      "collection_id": "mcprof-d541943e7451c312234daffd",
+      "started_at": "2026-10-22T12:25:41.641592Z",
+      "finished_at": "2026-10-22T12:26:39.553330Z",
+      "primary_report": "1_attribution_elementwise_dumped_result.json",
+      "source_sha256": "4928b7701c38f437ae3e0bdc3bfc9567b2216e89af9962794d3fe2850cf24cdc",
+      "status": "collected",
+      "artifact_file_count": 25,
+      "metrics": {
+        "Global Read Instructions": 0,
+        "Global Write Instructions": 512,
+        "Achieved waves": 512,
+        "Dispatched waves": 512,
+        "AP MMA Duty ratio": 0
+      }
+    },
+    {
+      "mode": "mma",
+      "case_name": "attribution-final-mma-20261022",
+      "collection_id": "mcprof-9e5918add47f7b937a75a802",
+      "started_at": "2026-10-22T12:26:39.687588Z",
+      "finished_at": "2026-10-22T12:27:36.926831Z",
+      "primary_report": "1_attribution_mma_dumped_result.json",
+      "source_sha256": "4928b7701c38f437ae3e0bdc3bfc9567b2216e89af9962794d3fe2850cf24cdc",
+      "status": "collected",
+      "artifact_file_count": 25,
+      "metrics": {
+        "Global Read Instructions": 0,
+        "Global Write Instructions": 512,
+        "Achieved waves": 128,
+        "Dispatched waves": 128,
+        "AP MMA Duty ratio": 22.141887006642296
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "attribution_controls.ll",
+      "source": "compiler_output",
+      "source_sha256": "08d63a3fc02da0f3f15e707a90f0aaee83af8876afdc07bc1f55bab67e914bb5",
+      "stored_sha256": "08d63a3fc02da0f3f15e707a90f0aaee83af8876afdc07bc1f55bab67e914bb5",
+      "storage_transform": "none_original_bytes_preserved"
+    },
+    {
+      "path": "elementwise/1_attribution_elementwise_dumped_result.json",
+      "source": "mcprofiler_native",
+      "source_sha256": "61516deb784ba6475b678789396e756687c1689dbd40d13a576939bebbdeb7c7",
+      "stored_sha256": "61516deb784ba6475b678789396e756687c1689dbd40d13a576939bebbdeb7c7",
+      "storage_transform": "none_original_bytes_preserved"
+    },
+    {
+      "path": "elementwise/agent_collection_context.json",
+      "source": "agent_metadata",
+      "source_sha256": "7855fabfa369ed7cd72ab3e6e8102a19a012c70ffd4a64e792628b36e7def9b5",
+      "stored_sha256": "7855fabfa369ed7cd72ab3e6e8102a19a012c70ffd4a64e792628b36e7def9b5",
+      "storage_transform": "none_original_bytes_preserved"
+    },
+    {
+      "path": "elementwise/mcProfiler.json",
+      "source": "mcprofiler_native",
+      "source_sha256": "ff25f82c3e33e7da10c58d2bc22ff261079af245155d81b2e89e19919972c602",
+      "stored_sha256": "ff25f82c3e33e7da10c58d2bc22ff261079af245155d81b2e89e19919972c602",
+      "storage_transform": "none_original_bytes_preserved"
+    },
+    {
+      "path": "elementwise/report_dumped_result.json",
+      "source": "mcprofiler_native",
+      "source_sha256": "3a55934801a5b8dacf861a7e40c4dc627df6a542cc036d8ec313e1e35577bbe8",
+      "stored_sha256": "3a55934801a5b8dacf861a7e40c4dc627df6a542cc036d8ec313e1e35577bbe8",
+      "storage_transform": "none_original_bytes_preserved"
+    },
+    {
+      "path": "idle/agent_collection_context.json",
+      "source": "agent_metadata",
+      "source_sha256": "f01e55f3efb6595a3ec46e23a6aa716b377c5ae4a087384f9702f095128c42d6",
+      "stored_sha256": "f01e55f3efb6595a3ec46e23a6aa716b377c5ae4a087384f9702f095128c42d6",
+      "storage_transform": "none_original_bytes_preserved"
+    },
+    {
+      "path": "idle/mcProfiler.json",
+      "source": "mcprofiler_native",
+      "source_sha256": "b594f2f51f5f9fcd3afcfd49618d57794a9798d4997d5828a7ba7416b3db174e",
+      "stored_sha256": "b594f2f51f5f9fcd3afcfd49618d57794a9798d4997d5828a7ba7416b3db174e",
+      "storage_transform": "none_original_bytes_preserved"
+    },
+    {
+      "path": "idle/report_dumped_result.json",
+      "source": "mcprofiler_native",
+      "source_sha256": "8164a2556a054cb30fa1039332e225652c3bbb005424205fbf2944a99a5da101",
+      "stored_sha256": "8164a2556a054cb30fa1039332e225652c3bbb005424205fbf2944a99a5da101",
+      "storage_transform": "none_original_bytes_preserved"
+    },
+    {
+      "path": "mma/1_attribution_mma_dumped_result.json",
+      "source": "mcprofiler_native",
+      "source_sha256": "b7fe7ed54875722b9ce931bd965c08d9f6d28fcf2af6506bf0843472c6ecdc0b",
+      "stored_sha256": "b7fe7ed54875722b9ce931bd965c08d9f6d28fcf2af6506bf0843472c6ecdc0b",
+      "storage_transform": "none_original_bytes_preserved"
+    },
+    {
+      "path": "mma/agent_collection_context.json",
+      "source": "agent_metadata",
+      "source_sha256": "0bce256c33c761c5317c8677c47adb01136a0b4b3091e69fdef9e36d014c6964",
+      "stored_sha256": "0bce256c33c761c5317c8677c47adb01136a0b4b3091e69fdef9e36d014c6964",
+      "storage_transform": "none_original_bytes_preserved"
+    },
+    {
+      "path": "mma/mcProfiler.json",
+      "source": "mcprofiler_native",
+      "source_sha256": "4682b4184152d2caae15d80bb624d5847c34cdc5455d56cf47341ca030183c73",
+      "stored_sha256": "4682b4184152d2caae15d80bb624d5847c34cdc5455d56cf47341ca030183c73",
+      "storage_transform": "none_original_bytes_preserved"
+    },
+    {
+      "path": "mma/report_dumped_result.json",
+      "source": "mcprofiler_native",
+      "source_sha256": "e067468d53fb24d6db1597cf992b0d7ac77f36bc743b8bda9864c01ddfb58222",
+      "stored_sha256": "e067468d53fb24d6db1597cf992b0d7ac77f36bc743b8bda9864c01ddfb58222",
+      "storage_transform": "none_original_bytes_preserved"
+    }
+  ],
+  "sanitization": [
+    "Native reports/config and LLVM IR retain their original bytes.",
+    "Full native Cases, databases and vendor logs remain in the untracked managed workspace.",
+    "Device selectors are represented only by SHA-256; no SSH endpoint, username or credentials are included."
+  ],
+  "official_references": [
+    "https://developer.metax-tech.com/api/client/document/preview/%E6%80%A7%E8%83%BD%E6%B5%8B%E8%AF%95%E5%8F%8A%E5%88%86%E6%9E%90%E5%B7%A5%E5%85%B7/mcProfiler%E4%BD%BF%E7%94%A8%E6%89%8B%E5%86%8C/%E6%9B%A6%E4%BA%91C500%E7%B3%BB%E5%88%97/3.9.1/split_files/mcprofiler.html"
+  ]
+}

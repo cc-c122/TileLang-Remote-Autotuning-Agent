@@ -1,6 +1,6 @@
 schema_version: v2.paged_attention_baseline.v1
 project_name: c500-paged-attention-decode-baseline
-status: blocked_sshrunner_session_channel
+status: blocked_dependency_unavailable
 operator: Paged Attention Decode
 not_substitutes:
   - GEMM
@@ -52,8 +52,9 @@ mcprofiler:
   collection_mode: report_import
   native_artifacts_required: true
   status: not_collected
-  blocked_reason: SSHRunner password authentication reaches the host, but opening session channels for exec and SFTP closes with EOFError before upload or command execution.
+  blocked_reason: Latest SSHRunner Web tasks connected and uploaded, but the Paged Attention build failed because TileLang/mcTileLang is not installed.
 sshrunner_probe:
+  historical_attempt: true
   attempted: true
   auth_type: password_env
   connection: <redacted>
@@ -62,12 +63,28 @@ sshrunner_probe:
   error_type: EOFError
   blocker_log: kernel_opt_agent/samples/paged_attention_decode/ssh_collection_blocker.yaml
 environment:
-  mxmaca_version: null
-  driver_version: null
+  mxmaca_version: 3.3.0.15
+  driver_version: 3.8.30
   tilelang_version: null
   mctilelang_version: null
-  mcprofiler_version: null
+  mcprofiler_version: 3.9.0.29
   gpu_model: MetaX C500
+latest_attempt:
+  date: '2026-10-22'
+  path: normal_web_task_with_ssh_session
+  ssh_connect: passed
+  sample_upload: passed
+  device_binding: passed
+  build: failed
+  failure_reason: No module named 'tilelang'
+  correctness: not_run
+  benchmark: not_run
+  optimization_patch: not_applied
+  contexts_attempted: [128, 512]
+  task_ids:
+    - 70ae6424838e4ebd8105461294bdf71d
+    - 7b2f2881adad467eb1b683991aa65e5f
+  evidence_summary: docs/artifacts/paged_attention_web_attempts_20261022.json
 reproduction_commands:
   command_guard_validated: true
   commands:
@@ -84,4 +101,5 @@ reproduction_commands:
 notes:
   - This manifest is a reproducibility checklist for a real C500 Paged Attention Decode baseline.
   - No optimization patch is generated or claimed by this baseline.
-  - Current PR includes report_import parser coverage; real mcProfiler native artifacts must be imported after SSHRunner can open exec/SFTP session channels or after manual mcProfiler report export.
+  - The historical SSH blocker is retained; the latest attempt reached remote build and is blocked by missing TileLang/mcTileLang instead.
+  - Native attribution-control Cases are separate calibration evidence, not Paged Attention data.

@@ -369,7 +369,7 @@ def run_trial(
     source_sha256 = hashlib.sha256(paths["kernel"].read_bytes()).hexdigest()
     collection_record = None
     profiler_context: dict[str, Any] = {}
-    if config.profiler.enabled and on_event:
+    if error is None and config.profiler.enabled and on_event:
         on_event("profiling_started", "collecting profiler evidence")
     if (
         error is None

@@ -1,0 +1,9 @@
+{
+  "fixture_kind": "real_native_report_subset",
+  "case_name": "attribution-final-elementwise-20261022",
+  "collection_id": "mcprof-d541943e7451c312234daffd",
+  "mcprofiler_version": "3.9.0.29",
+  "operator": "native_attribution_control_elementwise",
+  "kernel_name": "attribution_elementwise",
+  "attribution_status": "unverified"
+}

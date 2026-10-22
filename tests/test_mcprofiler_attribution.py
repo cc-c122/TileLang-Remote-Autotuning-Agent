@@ -27,10 +27,11 @@ from tests.test_source_optimizer import FakeRunner, RecordingPlanner, _config, _
 
 def _verified_row(evidence_id="verified", **overrides):
     row = {
-        "evidence_id": evidence_id, "metric": "fixture_metric", "value": 42,
+        "evidence_id": evidence_id, "metric": "register_count", "value": 42,
         "available": True, "confidence": "high", "parse_confidence": "high",
         "attribution_status": "verified", "attribution_confidence": "high",
         "scope": "kernel", "kernel_name": "fixture_kernel", "source_trial_id": "source-baseline",
+        "source": "compiler_log", "artifact_id": "fixture:compiler-log",
     }
     row.update(overrides)
     return row
@@ -147,7 +148,8 @@ class McProfilerAttributionTests(unittest.TestCase):
         for key, value in (("scope", "aggregate"), ("attribution_status", "unknown"),
                            ("attribution_confidence", "low"), ("attribution_confidence", []),
                            ("kernel_name", None), ("parse_confidence", "low"), ("value", float("nan")),
-                           ("value", 10 ** 400), ("available", False)):
+                           ("value", 10 ** 400), ("available", False), ("source", "unknown"),
+                           ("metric", "l2c_hit_rate"), ("metric", [])):
             with self.subTest(key=key, value=str(value)[:20]):
                 self.assertFalse(planning_evidence_allowed(_verified_row(**{key: value})))
 

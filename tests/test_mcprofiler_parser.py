@@ -304,7 +304,7 @@ class McProfilerParserTests(unittest.TestCase):
         diagnoses = diagnose_from_evidence_records(profiler_observations_to_evidence(result, "trial-private"))
         self.assertEqual(diagnoses[0].bottleneck_type, "insufficient_evidence")
 
-    def test_private_memory_traffic_with_compiler_evidence_can_support_spill_diagnosis(self) -> None:
+    def test_claimed_verified_private_traffic_does_not_establish_spill_diagnosis(self) -> None:
         result = ProfilerResult(
             observations=[
                 MetricObservation(
@@ -334,8 +334,8 @@ class McProfilerParserTests(unittest.TestCase):
             ]
         )
         diagnoses = diagnose_from_evidence_records(profiler_observations_to_evidence(result, "trial-private"))
-        self.assertEqual(diagnoses[0].bottleneck_type, "private_memory_spill")
-        self.assertEqual(len(diagnoses[0].evidence_ids), 2)
+        self.assertEqual(diagnoses[0].bottleneck_type, "insufficient_evidence")
+        self.assertEqual(diagnoses[0].confidence, "low")
 
     def test_unknown_metric_only_produces_insufficient_evidence(self) -> None:
         result = ProfilerResult(
