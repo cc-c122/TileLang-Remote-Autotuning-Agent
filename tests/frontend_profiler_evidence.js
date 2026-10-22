@@ -8,6 +8,8 @@ async (page) => {
   const baselineHash = "a".repeat(64);
   const bestHash = "b".repeat(64);
   const commandHash = "c".repeat(64);
+  // Explicitly verified attribution is a contract scenario, not a claim about real C500 reports.
+  const attribution = {scope: "kernel", kernel_name: "contract_kernel", attribution_status: "verified", attribution_confidence: "medium"};
   function collection(trialId, shape, value) {
     return {
       schema_version: "v2.mcprofiler_collection.v1", status: "collected", mode: "remote_official_cli",
@@ -17,13 +19,15 @@ async (page) => {
       metrics_requested: ["hbm_read_bandwidth", "warp_active_ratio", "boolean_only"],
       available_metrics: {hbm_read_bandwidth: true, warp_active_ratio: false, boolean_only: true},
       metric_observations: [
-        {metric_name: "hbm_read_bandwidth", value, unit: "GB/s", source: "mcprofiler", available: true, confidence: "low"},
-        {metric_name: "warp_active_ratio", value: null, unit: "%", source: "mcprofiler", available: false},
+        {...attribution, metric_name: "hbm_read_bandwidth", value, unit: "GB/s", source: "mcprofiler", available: true, confidence: "low"},
+        {...attribution, metric_name: "warp_active_ratio", value: null, unit: "%", source: "mcprofiler", available: false},
       ],
-      kernel_names: ["contract_kernel"], warnings: ["Counter attribution is not verified"],
-      primary_report: "report_dumped_result.json", case_dir: "raw/contract_case",
-      artifact_manifest: [{relative_path: "report_dumped_result.json", source: "mcprofiler_auto_collection"}],
-      execution_manifest: {tool: "mcProfiler", target_command_sha256: commandHash, returncode: 0, guard_denied: false},
+      kernel_names: ["contract_kernel"], warnings: ["Browser contract scenario only"],
+      primary_report: "1_contract_kernel_dumped_result.json", case_dir: "raw/contract_case",
+      artifact_manifest: [{relative_path: "1_contract_kernel_dumped_result.json", source: "mcprofiler_auto_collection"}],
+      execution_manifest: {tool: "mcProfiler", target_command_sha256: commandHash, returncode: 0, guard_denied: false,
+        report_scope: "named_kernel", report_sha256: (trialId === "source-baseline" ? "d" : "e").repeat(64),
+        target_attribution: {status: "verified", confidence: "medium"}},
       fallback: "benchmark_log",
     };
   }
@@ -54,7 +58,7 @@ async (page) => {
   const copy = () => JSON.parse(JSON.stringify(results));
 
   let comparison = await render(results);
-  check(comparison.pairs.length === 1 && comparison.pairs[0].metrics.filter((metric) => metric.comparable).length === 1, "Same shape, trial binding, source hash and command produce one explicit metric pair");
+  check(comparison.pairs.length === 1 && comparison.pairs[0].metrics.filter((metric) => metric.comparable).length === 1, "Same shape, trial, source hash, command and explicitly verified target report produce one metric pair");
   let main = await page.locator("#profilerCollectionPanel").innerText();
   check(main.includes("已尝试执行工具") && main.includes("已采集") && main.includes("1 / 3"), "Tool execution, collection state and numeric availability are separate");
   check(main.includes("baseline") && main.includes("source-trial-1") && main.includes("1 个指标"), "Main region summarizes the verified before/after evidence");
@@ -69,8 +73,8 @@ async (page) => {
   value.profiler_collections.forEach((row) => {
     row.metrics_requested = ["Global Read Instructions"];
     row.available_metrics = {global_read_instructions: true};
-    row.metric_observations = [{metric_name: "global_read_instructions", source_field_name: "Global Read Instructions", value: 851256,
-      unit: "instructions", source: "mcprofiler", available: true, confidence: "low", parse_warnings: ["Attribution unverified"]}];
+    row.metric_observations = [{...attribution, metric_name: "global_read_instructions", source_field_name: "Global Read Instructions", value: 851256,
+      unit: "instructions", source: "mcprofiler", available: true, confidence: "low", parse_warnings: ["Contract scenario only"]}];
   });
   comparison = await render(value);
   check(comparison.pairs[0].metrics.length === 1 && comparison.pairs[0].metrics[0].comparable, "Native requested name maps to the canonical metric only through source_field_name");
@@ -78,7 +82,7 @@ async (page) => {
   await page.locator("#apiResultsAdvanced > summary").click();
   await page.locator("#apiResultsAdvanced .source-trial > summary").first().click();
   const nativeRow = page.locator("#apiResultsAdvanced .source-trial table tbody tr").first();
-  check((await nativeRow.innerText()).includes("Global Read Instructions") && (await nativeRow.innerText()).includes("851256") && (await nativeRow.innerText()).includes("low") && (await nativeRow.innerText()).includes("Attribution unverified"), "Native name, value, confidence and parse warning stay in one detail row");
+  check((await nativeRow.innerText()).includes("Global Read Instructions") && (await nativeRow.innerText()).includes("851256") && (await nativeRow.innerText()).includes("low") && (await nativeRow.innerText()).includes("Contract scenario only"), "Native name, value, confidence and parse warning stay in one detail row");
   value.profiler_collections.forEach((row) => { delete row.metric_observations[0].source_field_name; });
   comparison = await render(value);
   check(comparison.pairs[0].metrics.length === 2 && comparison.pairs[0].metrics.filter((metric) => metric.comparable).length === 1, "Unmapped vendor names are never guessed from spelling");
@@ -120,6 +124,64 @@ async (page) => {
   value = copy();
   value.profiler_collections[1].execution_manifest.target_command_sha256 = "d".repeat(64);
   check(!(await render(value)).pairs.length, "Different target commands are not compared");
+
+  for (const aggregateIndex of [0, 1]) {
+    value = copy();
+    value.profiler_collections[aggregateIndex].execution_manifest.report_scope = "aggregate";
+    value.profiler_collections[aggregateIndex].primary_report = "report_dumped_result.json";
+    comparison = await render(value);
+    check(!comparison.pairs.length, `Aggregate and named-kernel reports never pair, aggregate side ${aggregateIndex}`);
+    main = await page.locator("#profilerCollectionPanel").innerText();
+    check(!main.includes("相同采集条件") && main.includes("实际报告范围"), "Mixed scopes explain the missing alignment without claiming identical collection conditions");
+    await page.locator("#apiResultsAdvanced > summary").click();
+    const details = page.locator("#apiResultsAdvanced .source-trial");
+    for (const record of await details.all()) await record.locator("summary").click();
+    const originalValue = (index) => details.nth(index).locator("table tbody tr").filter({hasText: "hbm_read_bandwidth"}).locator("td").nth(1).innerText();
+    check(await originalValue(0) === "8" && await originalValue(1) === "12", "Mixed scopes retain each original value separately in advanced details");
+    if (aggregateIndex === 1) {
+      await page.locator("#apiResultsAdvanced > summary").click();
+      await page.setViewportSize({width: 1440, height: 1000});
+      await page.locator("#profilerCollectionPanel").scrollIntoViewIfNeeded();
+      await page.screenshot({path: "output/playwright/profiler-scope-mismatch.png"});
+    }
+  }
+  for (const scope of [undefined, null, "", "unknown", "future_scope", "aggregate"]) {
+    value = copy();
+    value.profiler_collections.forEach((row) => {
+      row.execution_manifest.report_scope = scope;
+      if (scope === "aggregate") row.primary_report = "report_dumped_result.json";
+    });
+    check(!(await render(value)).pairs.length, `Two matching but absent, unknown or aggregate scopes do not identify a target kernel: ${scope}`);
+  }
+  for (const report of [undefined, null, "", "unknown", "report_dumped_result.json", "0_period0_dumped_result.json", "../1_contract_kernel_dumped_result.json"]) {
+    value = copy();
+    value.profiler_collections.forEach((row) => { row.primary_report = report; });
+    check(!(await render(value)).pairs.length, `Missing or inconsistent actual reports cannot be inferred from requested kernel_names: ${report}`);
+  }
+  value = copy();
+  value.profiler_collections[1].primary_report = "1_other_kernel_dumped_result.json";
+  value.profiler_collections[1].metric_observations.forEach((row) => { row.kernel_name = "other_kernel"; });
+  check(!(await render(value)).pairs.length, "Different actual target kernels never pair even with identical requested kernel_names");
+  value = copy();
+  value.profiler_collections[1].primary_report = "2_contract_kernel_dumped_result.json";
+  check(!(await render(value)).pairs.length, "Different actual report instances are not normalized into a match");
+  for (const identity of [undefined, null, {}, {status: "unverified", confidence: "low"}, {status: "verified", confidence: "unknown"}]) {
+    value = copy();
+    value.profiler_collections.forEach((row) => { row.execution_manifest.target_attribution = identity; });
+    check(!(await render(value)).pairs.length, `Unconfirmed report attribution stays unpaired: ${JSON.stringify(identity)}`);
+  }
+  for (const [field, changed] of [["scope", "aggregate"], ["scope", undefined], ["kernel_name", "other_kernel"], ["kernel_name", undefined], ["attribution_status", "unverified"], ["attribution_status", undefined], ["attribution_confidence", "low"]]) {
+    value = copy();
+    value.profiler_collections[1].metric_observations.forEach((row) => { row[field] = changed; });
+    check(!(await render(value)).pairs.length, `Actual metric attribution must agree with the selected target report: ${field}=${changed}`);
+  }
+  value = copy();
+  value.profiler_collections.forEach((row) => { row.kernel_names = []; });
+  comparison = await render(value);
+  check(comparison.pairs.length === 1, "Explicit report and verified observation identities do not depend on a requested kernel filter");
+  check(!((await page.locator("#profilerCollectionPanel").innerText()).includes("相同采集条件")), "Even aligned targets do not claim unreturned device, tool-version or measurement conditions");
+  check(value.profiler_collections[0].execution_manifest.report_sha256 !== value.profiler_collections[1].execution_manifest.report_sha256, "Separate before/after measurements need not have identical report contents");
+
   value = copy();
   value.profiler_collections.push({...value.profiler_collections[1], collection_id: "retry"});
   check(!(await render(value)).pairs.length, "Repeated collection attempts are ambiguous, not auto-selected");

@@ -4161,8 +4161,27 @@
           return `<tr><td>${escapeHtml(display(profilerCollectionTool(row)))}<br>${escapeHtml(display(row.source_trial_id || "trial 未记录"))}<br>${escapeHtml(display(row.shape_id || "shape 未记录"))}</td><td>${escapeHtml(profilerToolAvailability(row))}</td><td>${profilerCollectionStatusBadge(row)}</td><td>${metrics.length ? `${metrics.filter((metric) => metric.hasValue).length} / ${metrics.length}` : "未采集"}</td><td>${sourceBadge(source)}${source === "synthetic" ? `<div class="muted">仅解析测试，不是性能证据</div>` : ""}</td><td class="reason-cell">${escapeHtml(profilerCollectionReason(row))}</td></tr>`;
         }).join("")}</tbody></table></div>` : `<div class="empty">等待后端采集记录；工具可用性和缺失原因尚未返回，不据此判定工具已安装或采集成功。</div>`}
         <h3>优化前后证据对比</h3>
-        ${comparison.pairs.length ? `<div class="kv"><div>对比对象</div><div>baseline → ${escapeHtml(display(comparison.trialId))}</div><div>相同采集条件</div><div>${comparison.pairs.length} 组 shape；${comparison.pairs.reduce((count, pair) => count + pair.metrics.filter((metric) => metric.comparable).length, 0)} 个指标有同源、同单位的前后数值。具体数值见高级详情。</div></div>` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
+        ${comparison.pairs.length ? `<div class="kv"><div>并列查看对象</div><div>baseline → ${escapeHtml(display(comparison.trialId))}</div><div>已对齐的目标报告</div><div>${comparison.pairs.length} 组 shape；${comparison.pairs.reduce((count, pair) => count + pair.metrics.filter((metric) => metric.comparable).length, 0)} 个指标有同源、同单位的前后数值。设备绑定、工具版本和指标定义等完整采集条件尚未确认，不据此判断收益。具体数值见高级详情。</div></div>` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
       </section>`;
+    }
+
+    function profilerTargetReport(record) {
+      const manifest = record.execution_manifest || record.command_audit;
+      const attribution = manifest?.target_attribution;
+      if (manifest?.report_scope !== "named_kernel" || attribution?.status !== "verified"
+        || !["medium", "high"].includes(attribution.confidence)) return null;
+      const report = record.primary_report;
+      if (typeof report !== "string" || /[\\:\x00-\x1f]/.test(report)) return null;
+      const parts = report.split("/");
+      if (parts.some((part) => !part || part === "." || part === "..")) return null;
+      // The selected Case report is not the request's kernel filter. Preserve its full identity.
+      const selected = /^(\d+)_(.+)_dumped_result\.json$/.exec(parts[parts.length - 1]);
+      if (!selected || !selected[2].trim() || /^period\d+$/.test(selected[2])) return null;
+      const observations = record.metric_observations;
+      if (!Array.isArray(observations) || !observations.length || !observations.every((item) =>
+        item?.scope === "kernel" && item.kernel_name === selected[2] && item.attribution_status === "verified"
+        && ["medium", "high"].includes(item.attribution_confidence))) return null;
+      return report;
     }
 
     function profilerEvidenceComparison(results) {
@@ -4182,6 +4201,8 @@
         const candidate = candidates[0];
         const baselineManifest = baseline.execution_manifest || baseline.command_audit;
         const candidateManifest = candidate.execution_manifest || candidate.command_audit;
+        const baselineReport = profilerTargetReport(baseline);
+        if (!baselineReport || baselineReport !== profilerTargetReport(candidate)) return;
         const commandHash = baselineManifest?.target_command_sha256;
         if (typeof commandHash !== "string" || !/^[a-f0-9]{64}$/.test(commandHash)
           || commandHash !== candidateManifest?.target_command_sha256
@@ -4201,14 +4222,14 @@
         });
         if (metrics.length) pairs.push({shapeId: baseline.shape_id, metrics});
       });
-      return {trialId: trial.trial_id, pairs, reason: "未采集到可对齐的前后证据：需要相同 shape、采集命令、工具、kernel 范围，以及匹配 baseline / best 源码的唯一采集记录。缺失、重复或 synthetic 数据不参与对比。"};
+      return {trialId: trial.trial_id, pairs, reason: "未采集到可对齐的前后证据：需要相同 shape、采集命令、工具、实际报告范围与目标身份，以及匹配 baseline / best 源码的唯一采集记录。范围不同、目标归因未确认、字段缺失、重复或 synthetic 数据仅分别展示，不参与对比。"};
     }
 
     function renderProfilerDetails(results) {
       const rows = profilerCollectionRows(results);
       const comparison = profilerEvidenceComparison(results);
       const valueLabel = (metric) => metric?.hasValue ? `${display(metric.value)} ${display(metric.unit || "单位未返回")}` : "未采集";
-      return `<h3>性能证据对比明细</h3>${comparison.pairs.length ? comparison.pairs.map((pair) => `<h4>${escapeHtml(display(pair.shapeId))}：baseline → ${escapeHtml(display(comparison.trialId))}</h4><div class="table-wrap"><table><thead><tr><th>指标</th><th>优化前</th><th>优化后</th><th>来源</th><th>可比性</th></tr></thead><tbody>${pair.metrics.map((metric) => `<tr><td>${escapeHtml(display(metric.name))}</td><td>${escapeHtml(valueLabel(metric.before))}</td><td>${escapeHtml(valueLabel(metric.after))}</td><td>${escapeHtml(display(metric.before?.source || "unknown"))} → ${escapeHtml(display(metric.after?.source || "unknown"))}</td><td>${metric.comparable ? "同源 / 同单位；不推算收益" : "值、单位或来源不完整 / 不一致，未比较"}</td></tr>`).join("")}</tbody></table></div>`).join("") : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
+      return `<h3>性能证据对比明细</h3>${comparison.pairs.length ? `<p class="muted">仅并列后端返回值；设备绑定、工具版本和指标定义等完整采集条件尚未确认，不推断性能收益。</p>${comparison.pairs.map((pair) => `<h4>${escapeHtml(display(pair.shapeId))}：baseline → ${escapeHtml(display(comparison.trialId))}</h4><div class="table-wrap"><table><thead><tr><th>指标</th><th>优化前</th><th>优化后</th><th>来源</th><th>可比性</th></tr></thead><tbody>${pair.metrics.map((metric) => `<tr><td>${escapeHtml(display(metric.name))}</td><td>${escapeHtml(valueLabel(metric.before))}</td><td>${escapeHtml(valueLabel(metric.after))}</td><td>${escapeHtml(display(metric.before?.source || "unknown"))} → ${escapeHtml(display(metric.after?.source || "unknown"))}</td><td>${metric.comparable ? "同源 / 同单位；不推算收益" : "值、单位或来源不完整 / 不一致，未比较"}</td></tr>`).join("")}</tbody></table></div>`).join("")}` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
         <h3>采集指标与原始报告</h3>${rows.length ? `<div class="source-trials">${rows.map(renderProfilerCollection).join("")}</div>` : `<div class="empty">暂无采集指标或原始报告。</div>`}`;
     }
 
