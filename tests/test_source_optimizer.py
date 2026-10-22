@@ -226,7 +226,11 @@ class SourceAnalyzerTests(unittest.TestCase):
 
     def test_llm_prompt_contains_target_summaries_and_evidence(self) -> None:
         analysis = analyze_source(_source())
-        evidence = [{"evidence_id": "ev-1", "metric": "l2c_hit_rate", "value": 46.1, "available": True}]
+        evidence = [{
+            "evidence_id": "ev-1", "metric": "l2c_hit_rate", "value": 46.1, "available": True,
+            "confidence": "high", "parse_confidence": "high", "attribution_status": "verified",
+            "attribution_confidence": "high", "scope": "kernel", "kernel_name": "fixture_kernel",
+        }]
         planner = RecordingPlanner(
             {"target_id": analysis.targets[0].target_id, "template": "parallel_copy_to_t_copy", "hypothesis": "bulk copy", "evidence_ids": ["ev-1"]}
         )
@@ -317,6 +321,9 @@ class SourceEngineTests(unittest.TestCase):
                             "value": 46.1,
                             "available": True,
                             "source_trial_id": "source-baseline",
+                            "confidence": "high", "parse_confidence": "high",
+                            "attribution_status": "verified", "attribution_confidence": "high",
+                            "scope": "kernel", "kernel_name": "fixture_kernel",
                         }) + "\n")
                 return SimpleNamespace(
                     status="collected",
@@ -339,6 +346,7 @@ class SourceEngineTests(unittest.TestCase):
 
             self.assertEqual(result.status, "completed")
             self.assertEqual(calls[0].source_trial_id, "source-baseline")
+            self.assertTrue(all(request.per_kernel for request in calls))
             self.assertEqual(calls[0].source_sha256, hashlib.sha256(entry.read_bytes()).hexdigest())
             self.assertEqual(len(calls), 2)
             self.assertTrue(calls[1].source_trial_id.startswith("source-"))

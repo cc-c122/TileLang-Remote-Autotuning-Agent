@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from kernel_opt_agent.profiler.base import redact_sensitive
+from kernel_opt_agent.profiler.base import UNVERIFIED_ATTRIBUTION_WARNING, redact_sensitive
 from kernel_opt_agent.runner.command_guard import validate
 
 
@@ -481,15 +481,19 @@ def collect_remote_mcprofiler_case(
     except (OSError, ValueError):
         return finish("failed", "artifact_hash_mismatch", "downloaded report could not be verified", logs=log_paths, execution_manifest=execution_manifest)
 
-    if request.per_kernel and request.kernel_names:
+    if request.per_kernel:
         candidates = [
             path for path in local_case.rglob("*_dumped_result.json")
-            if any(re.fullmatch(r"\d+_" + re.escape(name) + r"_dumped_result\.json", path.name)
-                   for name in request.kernel_names)
+            if re.fullmatch(r"\d+_.+_dumped_result\.json", path.name)
+            and not re.fullmatch(r"\d+_period\d+_dumped_result\.json", path.name)
+            and (not request.kernel_names or any(
+                re.fullmatch(r"\d+_" + re.escape(name) + r"_dumped_result\.json", path.name)
+                for name in request.kernel_names
+            ))
         ]
         if len(candidates) != 1:
             return finish(
-                "failed", "target_report_not_found", "expected exactly one matching per-kernel report",
+                "failed", "target_report_not_found", "expected exactly one unambiguous per-kernel report; aggregate reports are not a target fallback",
                 case_dir=f"mcprofiler_cases/{collection_id}", artifact_manifest=_artifact_manifest(local_case),
                 logs=log_paths, execution_manifest=execution_manifest,
             )
@@ -533,7 +537,10 @@ def collect_remote_mcprofiler_case(
     except Exception as exc:
         return finish("failed", "parse_failed", f"collected mcProfiler Case could not be parsed: {type(exc).__name__}: {exc}", logs=log_paths, execution_manifest=execution_manifest)
     available = dict(profiler_result.available_metrics)
-    warnings = [] if any(available.values()) else ["mcProfiler Case was collected, but no normalized metrics were available"]
+    warnings = [UNVERIFIED_ATTRIBUTION_WARNING]
+    if not any(available.values()):
+        warnings.append("mcProfiler Case was collected, but no normalized metrics were available")
+    execution_manifest["target_attribution"] = {"status": "unverified", "confidence": "low"}
     execution_manifest["report_sha256"] = selected_hash
     execution_manifest["import_artifact_id"] = imported.get("artifact_id")
     return finish(

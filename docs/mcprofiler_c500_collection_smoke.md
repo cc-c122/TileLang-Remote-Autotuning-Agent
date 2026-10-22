@@ -149,3 +149,31 @@ Rerunning the three affected tests together passed local API and real-execution
 checks, but the web CPU timing assertion failed again (`focused_existing_regressions.log`).
 No optimization algorithm or timing acceptance threshold was changed to force a pass.
 Keep the PR Draft pending stable full-suite verification and counter-attribution review.
+
+## Review Hardening (2026-10-22)
+
+Both regular trial execution and source optimization now request per-kernel collection.
+If no kernel selector is configured, only a unique non-`period` native kernel report
+is accepted. Missing/ambiguous reports return `target_report_not_found`; benchmark-only
+fallback remains available, but the aggregate report is never substituted as target evidence.
+Regular-task regression with this unchanged real Case reads Global Read Instructions
+851256, not the aggregate 1030268527.
+
+Observations and evidence now keep separate `parse_confidence`, `attribution_status`,
+`attribution_confidence`, `scope`, and `kernel_name` fields. Native parsing can be high
+confidence while target attribution remains unverified/low; overall `confidence` is
+then low and a runtime warning is attached to parsing, collection and evidence records.
+Selecting a named report alone does not prove isolated PMU attribution. User-imported
+manifest claims cannot set verification status; no automatic verifier is implemented.
+
+Only explicitly verified, sufficiently confident kernel-scoped evidence is eligible
+for the planner. Source optimization additionally requires the current baseline trial.
+Unverified/legacy rows and bare evidence IDs cannot reach the LLM or appear in plan
+citations; the same policy is checked at the planner boundary and rule-based fallback.
+Excluded evidence counts/warnings are recorded. Diagnostics also reject unverified
+private traffic as spill evidence even when compiler memory hints are present.
+
+Validation: 69 focused tests PASS; full suite 271/271 PASS on this revision. These are
+normal task/collector/planner regressions using the unchanged real report fixture,
+not a new SSH resampling or a claim that PMU attribution is now verified. Prior failed
+test logs remain preserved; ncu/nsys and optimization algorithms are unchanged.

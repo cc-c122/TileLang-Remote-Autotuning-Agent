@@ -316,6 +316,10 @@ class McProfilerParserTests(unittest.TestCase):
                     available=True,
                     confidence="high",
                     artifact="case:sha",
+                    attribution_status="verified",
+                    attribution_confidence="high",
+                    scope="kernel",
+                    kernel_name="verified_fixture_kernel",
                 ),
                 MetricObservation(
                     metric_name="private_memory_bytes",

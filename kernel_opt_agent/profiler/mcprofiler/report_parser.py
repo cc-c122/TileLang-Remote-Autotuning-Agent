@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kernel_opt_agent.profiler.base import MetricObservation
+from kernel_opt_agent.profiler.base import MetricObservation, UNVERIFIED_ATTRIBUTION_WARNING
 
 from .metric_mapping import MAPPING_BY_SOURCE
 from .report_discovery import McProfilerCase, discover_case
@@ -219,6 +219,15 @@ def parse_discovered_case(case: McProfilerCase) -> McProfilerParseResult:
         "sha256": _sha256(case.report_path),
     }
     artifacts["artifact_id"] = _artifact_id(metadata, case, artifacts["report_dumped_result"]["sha256"])
+    kernel_match = re.fullmatch(r"\d+_(.+)_dumped_result\.json", case.report_path.name)
+    kernel_name = kernel_match.group(1) if kernel_match else None
+    if kernel_name and re.fullmatch(r"period\d+", kernel_name):
+        kernel_name = None
+    scope = "kernel" if kernel_name else "aggregate"
+    artifacts["target_attribution"] = {
+        "status": "unverified", "confidence": "low", "scope": scope, "kernel_name": kernel_name,
+    }
+    warnings.append(UNVERIFIED_ATTRIBUTION_WARNING)
     expected = artifacts["sha256_manifest"].get(case.report_path.relative_to(case.case_root).as_posix())
     if expected and expected != artifacts["report_dumped_result"]["sha256"]:
         warnings.append("report_dumped_result.json sha256 does not match SHA256SUMS.txt")
@@ -253,6 +262,9 @@ def parse_discovered_case(case: McProfilerCase) -> McProfilerParseResult:
                     source=_redact_sensitive("mcprofiler"),
                     available=value is not None and not bool(row.get("isError")),
                     confidence=mapping.confidence,
+                    parse_confidence=mapping.confidence,
+                    scope=scope,
+                    kernel_name=_redact_sensitive(kernel_name),
                     artifact=_redact_sensitive(artifacts["artifact_id"]),
                     parse_warnings=_redact_sensitive(
                         list(mapping.warnings) + ([str(row.get("message"))] if row.get("message") else [])

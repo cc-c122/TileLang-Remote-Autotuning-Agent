@@ -17,6 +17,7 @@ from kernel_opt_agent.benchmark.correctness import STRICT_RE as CORRECTNESS_STRI
 from kernel_opt_agent.benchmark.correctness import parse_correctness
 from kernel_opt_agent.benchmark.parser import parse_benchmark
 from kernel_opt_agent.config_model import AppConfig, resolve_path
+from kernel_opt_agent.diagnosis.evidence import planning_evidence_allowed
 from kernel_opt_agent.main import build_runner, command_failure_status
 from kernel_opt_agent.profiler.mcprofiler import McProfilerCollectionRequest
 from kernel_opt_agent.profiler.registry import collect_mcprofiler_case as collect_remote_mcprofiler_case
@@ -315,6 +316,7 @@ def _collect_source_profiler(
         "source_sha256": source_sha256,
         "shape_id": _shape_id(config),
         "kernel_names": tuple(config.profiler.kernel_names),
+        "per_kernel": True,
         "executable": config.profiler.mcprofiler_executable,
         "server_executable": config.profiler.mcprofiler_server_executable,
         "service_port": config.profiler.service_port,
@@ -505,6 +507,7 @@ def _append_report(results_dir: Path, result: SourceOptimizationResult) -> None:
 
 
 def _plans_for_targets(targets: tuple[SourceOptimizationTarget, ...], evidence_rows: list[dict[str, Any]], max_candidates: int, planning_client: Any | None) -> list[tuple[SourcePlan, str]]:
+    evidence_rows = [row for row in evidence_rows if planning_evidence_allowed(row)]
     first, source = choose_plan(targets, evidence_rows, planning_client)
     plans = [(first, source)]
     selected = {first.target_id}
@@ -610,15 +613,25 @@ def run_source_optimization(
     baseline_best_config_bytes = (results_dir / "best_config.yaml").read_bytes()
     baseline_median = statistics.median(baseline_outcome.samples)
     evidence_rows: list[dict[str, Any]] = []
+    excluded_evidence_count = 0
     evidence_path = results_dir / "metric_observations.jsonl"
     if evidence_path.is_file():
         for line in evidence_path.read_text(encoding="utf-8").splitlines():
             try:
                 row = json.loads(line)
-                if row.get("available") is True and row.get("evidence_id"):
-                    evidence_rows.append(_redact_value(config, row))
+                if isinstance(row, dict) and row.get("available") is True:
+                    if row.get("source_trial_id") == "source-baseline" and planning_evidence_allowed(row):
+                        evidence_rows.append(_redact_value(config, row))
+                    else:
+                        excluded_evidence_count += 1
             except json.JSONDecodeError:
                 pass
+    evidence_warnings = []
+    if excluded_evidence_count:
+        evidence_warnings.append(
+            f"{excluded_evidence_count} available evidence records excluded from planning: "
+            "target attribution is unverified or does not match the current baseline"
+        )
     plans = _plans_for_targets(
         analysis.targets,
         evidence_rows,
@@ -685,7 +698,7 @@ def run_source_optimization(
             diff=diff,
             baseline_latency_ms=list(baseline_outcome.samples),
             baseline_median_latency_ms=baseline_median,
-            artifacts={"planner": {"source": plan_source, "attempts": plan.planning_attempts, "fallback_reason": redact_source_text(config, plan.fallback_reason), "confidence": target.confidence}, "baseline_logs": baseline_artifacts, "source_before": str(source_before_path), "source_after": str(source_after_path), "diff": str(diff_path), "rollback_snapshot": str(snapshot_dir)},
+            artifacts={"planner": {"source": plan_source, "attempts": plan.planning_attempts, "fallback_reason": redact_source_text(config, plan.fallback_reason), "confidence": target.confidence, "evidence_warnings": evidence_warnings, "excluded_evidence_count": excluded_evidence_count}, "baseline_logs": baseline_artifacts, "source_before": str(source_before_path), "source_after": str(source_after_path), "diff": str(diff_path), "rollback_snapshot": str(snapshot_dir)},
         )
         result.trials.append(trial)
         write_source_result(results_dir, result, config)

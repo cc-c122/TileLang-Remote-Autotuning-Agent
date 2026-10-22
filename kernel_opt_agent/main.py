@@ -386,6 +386,7 @@ def run_trial(
             "source_sha256": source_sha256,
             "shape_id": None,
             "kernel_names": tuple(config.profiler.kernel_names),
+            "per_kernel": True,
             "executable": config.profiler.mcprofiler_executable,
             "server_executable": config.profiler.mcprofiler_server_executable,
             "service_port": config.profiler.service_port,
