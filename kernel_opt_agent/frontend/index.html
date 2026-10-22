@@ -276,31 +276,6 @@
       font-weight: 760;
     }
 
-    .profiler-option {
-      display: grid;
-      gap: 5px;
-      margin-top: 12px;
-    }
-
-    .profiler-option[hidden] { display: none; }
-
-    .profiler-toggle {
-      display: flex;
-      align-items: flex-start;
-      gap: 9px;
-      cursor: pointer;
-      color: #344054;
-      font-size: 13px;
-      font-weight: 760;
-    }
-
-    .profiler-toggle input {
-      width: 16px;
-      height: 16px;
-      margin: 2px 0 0;
-      flex: 0 0 auto;
-    }
-
     input, select, textarea {
       width: 100%;
       min-width: 0;
@@ -1347,6 +1322,7 @@
               </div>
             </div>
             <div id="sourceOptimizationCapabilityHint" class="settings-note" style="margin-top:12px">正在确认后端是否支持源码优化；未确认前仅可验证与测量。</div>
+            <div id="profilerToolSelectionHint" class="settings-note" style="margin-top:12px" aria-live="polite">性能采集工具自动选择，等待后端返回支持能力。</div>
             <div class="status-grid" style="margin-top:12px">
               <span class="chip" id="startSshStatus">SSH：未配置</span>
               <span class="chip" id="startLlmStatus">LLM：未配置</span>
@@ -1382,13 +1358,6 @@
                   <label for="v2MinImprovementPercent">最低提升门槛 (%)</label>
                   <input id="v2MinImprovementPercent" type="number" min="0" step="0.1" value="1.0" disabled>
                 </div>
-              </div>
-              <div id="mcProfilerAutoCollectionField" class="profiler-option" hidden>
-                <label class="profiler-toggle" for="v2McProfilerAutoCollect">
-                  <input id="v2McProfilerAutoCollect" type="checkbox">
-                  <span>自动采集 mcProfiler</span>
-                </label>
-                <div id="mcProfilerAutoCollectionHint" class="muted">可选采集。远端未安装或采集不可用时，任务会保留 benchmark + 日志分析，不会伪造 profiler 指标。</div>
               </div>
             </details>
           </section>
@@ -1802,8 +1771,7 @@
       v2TimeoutSeconds: document.getElementById("v2TimeoutSeconds"),
       v2ProfilerEnabled: document.getElementById("v2ProfilerEnabled"),
       v2ProfilerType: document.getElementById("v2ProfilerType"),
-      v2McProfilerAutoCollect: document.getElementById("v2McProfilerAutoCollect"),
-      mcProfilerAutoCollectionField: document.getElementById("mcProfilerAutoCollectionField"),
+      profilerToolSelectionHint: document.getElementById("profilerToolSelectionHint"),
       v2PatchingEnabled: document.getElementById("v2PatchingEnabled"),
       v2SampleFile: document.getElementById("v2SampleFile"),
       v2SampleDirectory: document.getElementById("v2SampleDirectory"),
@@ -1903,10 +1871,9 @@
     el.resolveHardwareBtn.addEventListener("click", resolveHardwareProfile);
     el.startOptimizationBtn.addEventListener("click", startOptimization);
     el.v2RunnerType.addEventListener("change", () => {
-      el.v2McProfilerAutoCollect.checked = false;
       syncMcProfilerAutoCollectionUi();
+      updateStartButtonState();
     });
-    el.v2McProfilerAutoCollect.addEventListener("change", updateStartButtonState);
     el.v2ExecutionIntent.addEventListener("change", () => {
       state.sourceOptimizationChoiceTouched = true;
       syncSourceOptimizationUi();
@@ -2437,7 +2404,6 @@
       const requestSettingsKey = sshSettingsKey(settings);
       clearSessionState("connecting", "正在建立真实 SSH 会话，等待后端认证结果。");
       el.v2RunnerType.value = "ssh";
-      el.v2McProfilerAutoCollect.checked = false;
       syncMcProfilerAutoCollectionUi();
       const version = state.sshVersion;
       state.sshPendingSettingsKey = requestSettingsKey;
@@ -2502,6 +2468,7 @@
       el.hardwareDetectionMessage.textContent = [message, ...state.hardwareWarnings.map((item) => sanitizeText(String(item)))].filter(Boolean).join("\n");
       el.resolveHardwareBtn.disabled = state.hardwareResolving || remote && !sessionIsActive();
       el.resolveHardwareBtn.textContent = state.hardwareResolving ? "正在识别硬件" : remote ? "重新识别硬件" : "解析硬件参数";
+      syncMcProfilerAutoCollectionUi();
     }
 
     function readSettings() {
@@ -3043,17 +3010,24 @@
     }
 
     function mcProfilerAutoCollectionRequested() {
-      return mcProfilerAutoCollectionAvailable()
+      const device = currentRemoteDevice();
+      return state.apiHealthy && mcProfilerAutoCollectionAvailable()
         && el.v2RunnerType.value === "ssh"
-        && el.v2McProfilerAutoCollect.checked;
+        && sessionIsActive() && !state.hardwareResolving
+        && device?.identity_verified === true
+        && (device.backend || device.fields?.backend) === "mxmaca";
     }
 
     function syncMcProfilerAutoCollectionUi() {
-      const visible = state.apiHealthy && mcProfilerAutoCollectionAvailable() && el.v2RunnerType.value === "ssh";
-      el.mcProfilerAutoCollectionField.hidden = !visible;
-      el.v2McProfilerAutoCollect.disabled = !visible;
-      if (!visible) el.v2McProfilerAutoCollect.checked = false;
-      updateStartButtonState();
+      el.profilerToolSelectionHint.textContent = !state.apiHealthy
+        ? "性能采集工具自动选择，等待后端返回支持能力。"
+        : el.v2RunnerType.value !== "ssh"
+          ? "local demo 使用 benchmark + 日志分析，不代表真实 GPU profiler 数据。"
+          : !sessionIsActive() || !currentRemoteDevice() || state.hardwareResolving
+            ? "连接并识别 GPU 后自动选择性能采集工具，无需填写 profiler 命令。"
+            : mcProfilerAutoCollectionRequested()
+              ? "已自动选择 mcProfiler 采集；实际工具可用性与采集结果以后端返回为准。未安装或采集不可用时保留 benchmark + 日志分析，无需填写 profiler 命令。"
+              : "当前设备或后端未声明支持的自动采集工具，使用 benchmark + 日志分析；不生成缺失的硬件指标。";
     }
 
     function readBudgetInputs() {
@@ -4036,31 +4010,43 @@
         ? record.available_metrics
         : {};
       const observations = Array.isArray(record?.metric_observations) ? record.metric_observations.filter((item) => item && typeof item === "object") : [];
+      // Native requests use vendor names; use only the backend's explicit mapping.
+      const canonicalName = (name) => {
+        const matches = observations.filter((item) => item.metric_name === name || item.source_field_name === name);
+        const mapped = new Set(matches.map((item) => item.metric_name).filter((value) => typeof value === "string" && value.trim()));
+        return mapped.size === 1 ? [...mapped][0] : name;
+      };
       const names = new Set();
-      requested.forEach((name) => { if (typeof name === "string" && name.trim()) names.add(name.trim()); });
-      Object.keys(available).forEach((name) => { if (name.trim()) names.add(name.trim()); });
+      requested.forEach((name) => { if (typeof name === "string" && name.trim()) names.add(canonicalName(name)); });
+      Object.keys(available).forEach((name) => { if (name.trim()) names.add(canonicalName(name)); });
       observations.forEach((item) => {
         if (typeof item.metric_name === "string" && item.metric_name.trim()) names.add(item.metric_name.trim());
       });
       return Array.from(names).map((name) => {
-        const observation = observations.find((item) => item.metric_name === name) || null;
+        const matches = observations.filter((item) => item.metric_name === name || item.source_field_name === name);
+        const observation = matches.length === 1 ? matches[0] : null;
+        const flags = Object.entries(available).filter(([key]) => canonicalName(key) === name).map(([, value]) => value);
+        const availability = flags.includes(false) ? false : flags.includes(true) ? true : undefined;
         const hasValue = !!observation
-          && Object.prototype.hasOwnProperty.call(observation, "value")
-          && observation.value !== null
-          && observation.value !== undefined
-          && observation.value !== "";
+          && typeof observation.value === "number" && Number.isFinite(observation.value)
+          && observation.available !== false && availability !== false;
         return {
           name,
           hasValue,
           value: hasValue ? observation.value : null,
           unit: observation?.unit,
           source: observation?.source,
-          available: Object.prototype.hasOwnProperty.call(available, name) ? available[name] : undefined,
+          sourceField: observation?.source_field_name,
+          confidence: observation?.confidence,
+          warnings: Array.isArray(observation?.parse_warnings) ? observation.parse_warnings : [],
+          ambiguous: matches.length > 1,
+          available: availability,
         };
       });
     }
 
     function profilerMetricAvailability(metric) {
+      if (metric.ambiguous) return `<span class="badge warn">多条观测，未合并</span>`;
       if (metric.hasValue) return `<span class="badge ok">有数值</span>`;
       if (metric.available === true) return `<span class="badge warn">可用标记，数值未返回</span>`;
       if (metric.available === false) return `<span class="badge warn">缺失</span>`;
@@ -4070,12 +4056,63 @@
     function profilerCollectionMetricTable(record) {
       const metrics = profilerCollectionMetrics(record);
       if (!metrics.length) return `<div class="empty">后端未返回请求指标或指标观测。</div>`;
-      return `<div class="table-wrap"><table><thead><tr><th>指标</th><th>值</th><th>单位</th><th>来源</th><th>可用性</th></tr></thead><tbody>${metrics.map((metric) => `<tr><td>${escapeHtml(display(metric.name))}</td><td>${metric.hasValue ? escapeHtml(display(metric.value)) : "未返回数值"}</td><td>${escapeHtml(display(metric.unit))}</td><td>${escapeHtml(display(metric.source))}</td><td>${profilerMetricAvailability(metric)}</td></tr>`).join("")}</tbody></table></div>`;
+      return `<div class="table-wrap"><table><thead><tr><th>指标 / 原始名称</th><th>值</th><th>单位</th><th>来源 / 置信度</th><th>可用性 / 解析说明</th></tr></thead><tbody>${metrics.map((metric) => `<tr><td>${escapeHtml(display(metric.name))}${metric.sourceField && metric.sourceField !== metric.name ? `<div class="muted">${escapeHtml(display(metric.sourceField))}</div>` : ""}</td><td>${metric.hasValue ? escapeHtml(display(metric.value)) : "未返回数值"}</td><td>${escapeHtml(display(metric.unit))}</td><td>${escapeHtml(display(metric.source))} ${confidenceBadgeFor(metric.confidence || "unknown")}</td><td class="reason-cell">${profilerMetricAvailability(metric)}${metric.warnings.length ? `<div class="muted">${escapeHtml(display(metric.warnings.join("；")))}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
     }
 
     function profilerCollectionFallback(value) {
       if (value === "benchmark_log") return "benchmark + 日志分析";
       return display(value);
+    }
+
+    function profilerCollectionRows(results) {
+      return Array.isArray(results?.profiler_collections)
+        ? results.profiler_collections.filter((item) => item && typeof item === "object" && !Array.isArray(item)) : [];
+    }
+
+    function profilerCollectionTool(record) {
+      return pick(record?.execution_manifest?.tool, record?.command_audit?.tool, "mcProfiler");
+    }
+
+    function profilerToolAvailability(record) {
+      if (record.schema_version !== MCPROFILER_COLLECTION_SCHEMA) return "未确认";
+      if (record.reason_category === "tool_unavailable") return "远端工具不可用";
+      if (record.status === "imported") return "仅导入报告，未检查工具";
+      const manifest = record.execution_manifest || record.command_audit;
+      return typeof manifest?.returncode === "number" && manifest.guard_denied !== true ? "已尝试执行工具" : "未确认";
+    }
+
+    function profilerCollectionReason(record) {
+      const labels = {
+        tool_unavailable: "远端未找到采集工具", runner_unsupported: "当前 runner 不支持采集",
+        guard_denied: "安全检查拒绝执行", timeout: "采集超时", collection_failed: "采集命令失败",
+        collection_workspace_failed: "采集工作区准备失败", discovery_failed: "无法定位采集报告",
+        report_not_found: "未生成原始报告", ambiguous_reports: "多份报告，无法确定目标",
+        report_invalid: "报告无效或没有有效计数器", parse_failed: "报告解析失败",
+        adapter_exception: "采集适配器异常", runner_exception: "远端执行异常",
+        secret_in_command: "命令包含敏感信息，已阻止采集", cleanup_unverified: "无法确认采集进程已停止",
+        cancelled: "采集已取消",
+      };
+      const category = record.reason_category;
+      const message = typeof record.message === "string" ? record.message.trim() : "";
+      if (category && category !== "none") return sanitizeText([labels[category] || category, message].filter(Boolean).join("："));
+      const missingCount = profilerCollectionMetrics(record).filter((metric) => !metric.hasValue).length;
+      return missingCount ? `${missingCount} 个指标未返回有效数值，详细原因见高级详情。` : sanitizeText(message) || "后端未返回原因。";
+    }
+
+    function profilerCollectionSource(record) {
+      const provenance = JSON.stringify([record.mode, record.source, record.provenance, record.warnings, record.metric_observations]);
+      if (/synthetic/i.test(provenance)) return "synthetic";
+      return record.schema_version === MCPROFILER_COLLECTION_SCHEMA && record.status === "collected"
+        && record.mode === "remote_official_cli" ? "real_profiler" : "unknown";
+    }
+
+    function profilerStatusLabel(results) {
+      const labels = {
+        disabled: "未启用采集", collection_failed: "采集未获得可用数据",
+        benchmark_only: "仅 benchmark / 日志", profiler_metrics_available: "后端返回可用 profiler 数据",
+      };
+      const status = results?.profiler_status;
+      return labels[status] || (status ? `未知采集状态：${display(status)}` : "后端未返回采集状态");
     }
 
     function renderProfilerCollection(record, index) {
@@ -4084,28 +4121,17 @@
       const statusKnown = MCPROFILER_COLLECTION_STATUSES.has(status);
       const missingCount = profilerCollectionMetrics(record).filter((metric) => !metric.hasValue).length;
       const collectionName = pick(record?.case_name, record?.collection_id, `采集记录 ${index + 1}`);
-      const sourceHash = typeof record?.source_sha256 === "string" && record.source_sha256.trim()
-        ? record.source_sha256.trim().slice(0, 12)
-        : "未返回";
-      const advanced = {
-        collection_id: record?.collection_id ?? null,
-        case_name: record?.case_name ?? null,
-        metrics_requested: Array.isArray(record?.metrics_requested) ? record.metrics_requested : [],
-        available_metrics: record?.available_metrics ?? {},
-        artifact_manifest: Array.isArray(record?.artifact_manifest) ? record.artifact_manifest : [],
-        logs: record?.logs ?? null,
-        warnings: Array.isArray(record?.warnings) ? record.warnings : [],
-        execution_manifest: record?.execution_manifest ?? record?.command_audit ?? null,
-      };
-      return `<details class="source-trial" ${index === 0 ? "open" : ""}>
+      const sourceHash = sourceSha256(record?.source_sha256)?.slice(0, 12) || "未返回";
+      return `<details class="source-trial">
         <summary><span>${escapeHtml(display(collectionName))}</span><span>${profilerCollectionStatusBadge(record)}</span></summary>
         <div class="source-trial-body">
           ${schemaValid ? "" : `<div class="alert warn">schema_version 未识别，以下内容仅按兼容字段保守展示。</div>`}
           ${schemaValid && !statusKnown ? `<div class="alert warn">后端返回了未知采集状态，前端不会将它解释为采集成功。</div>` : ""}
           ${schemaValid && status === "collected" && missingCount ? `<div class="alert warn">采集完成不代表所有指标可用；${missingCount} 个指标没有显式数值。</div>` : ""}
+          ${profilerCollectionSource(record) === "synthetic" ? `<div class="alert warn">synthetic：仅解析测试，不是性能证据。</div>` : ""}
           <div class="kv">
-            <div>reason category</div><div>${escapeHtml(display(record?.reason_category))}</div>
-            <div>原因说明</div><div>${escapeHtml(display(record?.message))}</div>
+            <div>原因分类</div><div>${escapeHtml(display(record?.reason_category))}</div>
+            <div>原因说明</div><div>${escapeHtml(profilerCollectionReason(record))}</div>
             <div>source trial</div><div>${escapeHtml(display(record?.source_trial_id))}</div>
             <div>source SHA 摘要</div><div>${escapeHtml(sourceHash)}</div>
             <div>shape</div><div>${escapeHtml(display(record?.shape_id))}</div>
@@ -4113,21 +4139,98 @@
           </div>
           <h3>指标可用性</h3>
           ${profilerCollectionMetricTable(record)}
-          <details style="margin-top:10px"><summary>采集产物与审计信息</summary><pre>${escapeHtml(JSON.stringify(redactObject(advanced), null, 2))}</pre></details>
+          <h3>原始报告、产物路径与审计信息</h3><pre>${escapeHtml(JSON.stringify(redactObject(record), null, 2))}</pre>
         </div>
       </details>`;
     }
 
     function renderProfilerCollections(results) {
-      const rows = Array.isArray(results?.profiler_collections) ? results.profiler_collections.filter((item) => item && typeof item === "object") : [];
-      const successCount = rows.filter((item) => item.schema_version === MCPROFILER_COLLECTION_SCHEMA && ["collected", "imported"].includes(String(item.status || "").toLowerCase())).length;
-      const failureCount = rows.filter((item) => item.schema_version === MCPROFILER_COLLECTION_SCHEMA && String(item.status || "").toLowerCase() === "failed").length;
-      const summaryKind = failureCount ? successCount ? "warn" : "bad" : successCount ? "ok" : "warn";
-      return `<section class="section">
-        <div class="section-head"><h2>mcProfiler 采集</h2><span class="badge ${summaryKind}">${rows.length ? `${rows.length} 条记录` : "未采集"}</span></div>
-        <p class="section-kicker">采集状态只说明 mcProfiler 接入过程；它不证明所有指标可用，也不影响源码 best 的 correctness 与性能验证门禁。</p>
-        ${rows.length ? `<div class="source-trials">${rows.map(renderProfilerCollection).join("")}</div>` : `<div class="empty">本次任务未采集 mcProfiler；这不是任务错误。</div>`}
+      const rows = profilerCollectionRows(results);
+      const usable = (row) => row.schema_version === MCPROFILER_COLLECTION_SCHEMA
+        && ["collected", "imported"].includes(row.status) && profilerCollectionSource(row) !== "synthetic"
+        && profilerCollectionMetrics(row).some((metric) => metric.hasValue);
+      const summaryKind = rows.length && rows.every(usable) && results.profiler_available === true ? "ok" : "warn";
+      const comparison = profilerEvidenceComparison(results);
+      return `<section class="section" id="profilerCollectionPanel">
+        <div class="section-head"><h2>性能采集与证据</h2><span class="badge ${summaryKind}">${escapeHtml(profilerStatusLabel(results))}</span></div>
+        <p class="section-kicker">工具可执行不等于指标有效；采集记录不替代正确性与性能门禁，也不证明计数器已准确归因到目标 kernel。</p>
+        ${results.profiler_available === false ? `<div class="alert warn">本次任务没有可用的 profiler 数据，诊断基于 benchmark 和日志，置信度较低。</div>` : ""}
+        ${rows.length ? `<p class="muted">${rows.length} 条采集记录</p><div class="table-wrap"><table><thead><tr><th>工具 / trial / shape</th><th>工具可用性</th><th>采集状态</th><th>有数值 / 已声明指标</th><th>数据来源</th><th>缺失原因或说明</th></tr></thead><tbody>${rows.map((row) => {
+          const metrics = profilerCollectionMetrics(row);
+          const source = profilerCollectionSource(row);
+          return `<tr><td>${escapeHtml(display(profilerCollectionTool(row)))}<br>${escapeHtml(display(row.source_trial_id || "trial 未记录"))}<br>${escapeHtml(display(row.shape_id || "shape 未记录"))}</td><td>${escapeHtml(profilerToolAvailability(row))}</td><td>${profilerCollectionStatusBadge(row)}</td><td>${metrics.length ? `${metrics.filter((metric) => metric.hasValue).length} / ${metrics.length}` : "未采集"}</td><td>${sourceBadge(source)}${source === "synthetic" ? `<div class="muted">仅解析测试，不是性能证据</div>` : ""}</td><td class="reason-cell">${escapeHtml(profilerCollectionReason(row))}</td></tr>`;
+        }).join("")}</tbody></table></div>` : `<div class="empty">等待后端采集记录；工具可用性和缺失原因尚未返回，不据此判定工具已安装或采集成功。</div>`}
+        <h3>优化前后证据对比</h3>
+        ${comparison.pairs.length ? `<div class="kv"><div>并列查看对象</div><div>baseline → ${escapeHtml(display(comparison.trialId))}</div><div>已对齐的目标报告</div><div>${comparison.pairs.length} 组 shape；${comparison.pairs.reduce((count, pair) => count + pair.metrics.filter((metric) => metric.comparable).length, 0)} 个指标有同源、同单位的前后数值。设备绑定、工具版本和指标定义等完整采集条件尚未确认，不据此判断收益。具体数值见高级详情。</div></div>` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
       </section>`;
+    }
+
+    function profilerTargetReport(record) {
+      const manifest = record.execution_manifest || record.command_audit;
+      const attribution = manifest?.target_attribution;
+      if (manifest?.report_scope !== "named_kernel" || attribution?.status !== "verified"
+        || !["medium", "high"].includes(attribution.confidence)) return null;
+      const report = record.primary_report;
+      if (typeof report !== "string" || /[\\:\x00-\x1f]/.test(report)) return null;
+      const parts = report.split("/");
+      if (parts.some((part) => !part || part === "." || part === "..")) return null;
+      // The selected Case report is not the request's kernel filter. Preserve its full identity.
+      const selected = /^(\d+)_(.+)_dumped_result\.json$/.exec(parts[parts.length - 1]);
+      if (!selected || !selected[2].trim() || /^period\d+$/.test(selected[2])) return null;
+      const observations = record.metric_observations;
+      if (!Array.isArray(observations) || !observations.length || !observations.every((item) =>
+        item?.scope === "kernel" && item.kernel_name === selected[2] && item.attribution_status === "verified"
+        && ["medium", "high"].includes(item.attribution_confidence))) return null;
+      return report;
+    }
+
+    function profilerEvidenceComparison(results) {
+      const source = sourceOptimizationPayload(results);
+      const trial = acceptedSourceTrial(source);
+      if (!acceptedSourceTrialVerified(source, results, state.task)) return {pairs: [], reason: "尚无已验证的优化后版本，不能生成 baseline 与 best 的证据对比。"};
+      const rows = profilerCollectionRows(results).filter((row) => row.schema_version === MCPROFILER_COLLECTION_SCHEMA
+        && row.status === "collected" && profilerCollectionSource(row) === "real_profiler");
+      const before = rows.filter((row) => row.source_trial_id === "source-baseline" && row.source_sha256 === source.baseline_source_sha256);
+      const after = rows.filter((row) => row.source_trial_id === trial.trial_id && row.source_sha256 === trial.source_after_sha256);
+      const pairs = [];
+      // Pair only explicitly bound collections; never join unrelated shapes or repeated attempts.
+      before.forEach((baseline) => {
+        if (typeof baseline.shape_id !== "string" || !baseline.shape_id.trim()) return;
+        const candidates = after.filter((row) => row.shape_id === baseline.shape_id);
+        if (before.filter((row) => row.shape_id === baseline.shape_id).length !== 1 || candidates.length !== 1) return;
+        const candidate = candidates[0];
+        const baselineManifest = baseline.execution_manifest || baseline.command_audit;
+        const candidateManifest = candidate.execution_manifest || candidate.command_audit;
+        const baselineReport = profilerTargetReport(baseline);
+        if (!baselineReport || baselineReport !== profilerTargetReport(candidate)) return;
+        const commandHash = baselineManifest?.target_command_sha256;
+        if (typeof commandHash !== "string" || !/^[a-f0-9]{64}$/.test(commandHash)
+          || commandHash !== candidateManifest?.target_command_sha256
+          || profilerCollectionTool(baseline) !== profilerCollectionTool(candidate)
+          || JSON.stringify(baseline.kernel_names || []) !== JSON.stringify(candidate.kernel_names || [])) return;
+        const beforeMetrics = profilerCollectionMetrics(baseline);
+        const afterMetrics = profilerCollectionMetrics(candidate);
+        const names = new Set([...beforeMetrics, ...afterMetrics].map((metric) => metric.name));
+        const metrics = Array.from(names).map((name) => {
+          const beforeMetric = beforeMetrics.find((metric) => metric.name === name);
+          const afterMetric = afterMetrics.find((metric) => metric.name === name);
+          const comparable = !!beforeMetric?.hasValue && !!afterMetric?.hasValue
+            && typeof beforeMetric.unit === "string" && !!beforeMetric.unit.trim() && beforeMetric.unit === afterMetric.unit
+            && typeof beforeMetric.source === "string" && !!beforeMetric.source.trim()
+            && beforeMetric.source.trim().toLowerCase() !== "unknown" && beforeMetric.source === afterMetric.source;
+          return {name, before: beforeMetric, after: afterMetric, comparable};
+        });
+        if (metrics.length) pairs.push({shapeId: baseline.shape_id, metrics});
+      });
+      return {trialId: trial.trial_id, pairs, reason: "未采集到可对齐的前后证据：需要相同 shape、采集命令、工具、实际报告范围与目标身份，以及匹配 baseline / best 源码的唯一采集记录。范围不同、目标归因未确认、字段缺失、重复或 synthetic 数据仅分别展示，不参与对比。"};
+    }
+
+    function renderProfilerDetails(results) {
+      const rows = profilerCollectionRows(results);
+      const comparison = profilerEvidenceComparison(results);
+      const valueLabel = (metric) => metric?.hasValue ? `${display(metric.value)} ${display(metric.unit || "单位未返回")}` : "未采集";
+      return `<h3>性能证据对比明细</h3>${comparison.pairs.length ? `<p class="muted">仅并列后端返回值；设备绑定、工具版本和指标定义等完整采集条件尚未确认，不推断性能收益。</p>${comparison.pairs.map((pair) => `<h4>${escapeHtml(display(pair.shapeId))}：baseline → ${escapeHtml(display(comparison.trialId))}</h4><div class="table-wrap"><table><thead><tr><th>指标</th><th>优化前</th><th>优化后</th><th>来源</th><th>可比性</th></tr></thead><tbody>${pair.metrics.map((metric) => `<tr><td>${escapeHtml(display(metric.name))}</td><td>${escapeHtml(valueLabel(metric.before))}</td><td>${escapeHtml(valueLabel(metric.after))}</td><td>${escapeHtml(display(metric.before?.source || "unknown"))} → ${escapeHtml(display(metric.after?.source || "unknown"))}</td><td>${metric.comparable ? "同源 / 同单位；不推算收益" : "值、单位或来源不完整 / 不一致，未比较"}</td></tr>`).join("")}</tbody></table></div>`).join("")}` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
+        <h3>采集指标与原始报告</h3>${rows.length ? `<div class="source-trials">${rows.map(renderProfilerCollection).join("")}</div>` : `<div class="empty">暂无采集指标或原始报告。</div>`}`;
     }
 
     function evidenceRecordsFromSummary(summary) {
@@ -4621,20 +4724,21 @@
         </div>
         ${renderSourceOptimization(results, executionMode, state.task)}
         ${renderProfilerCollections(results)}
-        ${shapeResultsHtml || renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable)}
         <h3>${baselineOnly ? baselineSucceeded ? "已验证基线 kernel" : "基线 kernel 未通过验证" : sourceMode && !acceptedVerified ? sourceBaselineVerified ? "最终 kernel（baseline）" : "baseline kernel 待核验" : verifiedArtifact ? "best kernel" : "尚无 best kernel"}</h3>
         <pre>${escapeHtml(verifiedArtifact ? results.best_kernel || "等待结果文件：best_kernel.py" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
         <h3>${baselineOnly ? baselineSucceeded ? "基线配置产物" : "基线配置未通过验证" : "best_config.yaml"}</h3>
         <pre>${escapeHtml(verifiedArtifact && results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "没有可作为 best 的已验证配置。")}</pre>
         <h3>report.md</h3>
         <pre>${escapeHtml(reportMarkdown || "等待结果文件：report.md")}</pre>
-        <details style="margin-top:12px">
+        <details id="apiResultsAdvanced" style="margin-top:12px">
           <summary>高级详情</summary>
+          ${renderProfilerDetails(results)}
+          ${shapeResultsHtml}
+          ${renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable)}
           <h3>summary.csv</h3>
           <div class="table-wrap">${summary.length ? `<table><thead><tr>${Object.keys(summary[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${summary.map((row) => `<tr>${Object.keys(summary[0]).map((key) => `<td>${escapeHtml(display(row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录。</div>`}</div>
           <h3>failed_cases.jsonl</h3>
           <div class="table-wrap">${failedCases.length ? `<table><thead><tr>${Object.keys(failedCases[0]).map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${failedCases.map((row) => `<tr>${Object.keys(failedCases[0]).map((key) => `<td>${escapeHtml(display(typeof row[key] === "object" ? JSON.stringify(redactObject(row[key])) : row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="empty">暂无记录。</div>`}</div>
-          ${shapeResultsHtml ? renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable) : ""}
           ${shapeResultsHtml ? `<h3>原始 shape_results</h3><pre>${escapeHtml(JSON.stringify(redactObject(results.shape_results ?? results.shapeResults), null, 2))}</pre>` : ""}
           ${renderObservationsDetails(evidenceSummary, diagnosisRows, results)}
           ${sourceOptimization ? `<h3>原始 source_optimization</h3><pre>${escapeHtml(JSON.stringify(redactObject(sourceOptimization), null, 2))}</pre>` : ""}
