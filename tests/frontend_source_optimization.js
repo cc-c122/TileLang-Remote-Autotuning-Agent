@@ -220,7 +220,7 @@ async (page) => {
   await page.locator("#apiResultsPanel .source-trial > summary").click();
   const failedTrialText = await page.locator("#apiResultsPanel .source-trial").innerText();
   check(failedTrialText.includes("正确性失败") && failedTrialText.includes("未通过"), "Correctness failure is not shown as verified");
-  check(failedTrialText.includes("source: benchmark/log") && failedTrialText.includes("confidence: medium"), "Evidence references preserve source and confidence");
+  check(failedTrialText.includes("source: benchmark/log") && failedTrialText.includes("综合置信度：medium"), "Evidence references preserve source and confidence");
   check(await page.locator("#apiResultsPanel img").count() === 0 && await page.locator("#apiResultsPanel script").count() === 0, "Diff and LLM text are HTML-escaped");
 
   text = await renderResult({
@@ -232,7 +232,7 @@ async (page) => {
     accepted_trial_id: null,
     trials: [{trial_id: "no-gain", optimization_name: "coalescing attempt", status: "no_improvement", correctness: {passed: true, max_error: 0, reason: "ok"}, baseline_latency_ms: [1, 1], candidate_latency_ms: [1.01, 1.02], improvement_percent: -1.5, decision_reason: "below threshold", diff: "- old\n+ new", rollback_verified: true}],
   });
-  check(text.includes("无收益") && text.includes("未接受源码修改"), "No-improvement trial keeps the baseline without a success claim");
+  check(text.includes("无明显改善") && text.includes("未接受源码修改"), "No-improvement trial keeps the baseline without a success claim");
 
   const acceptedSourceOptimization = {
     schema_version: "v2.source_optimization.v1",
@@ -254,7 +254,8 @@ async (page) => {
   check(acceptedMetrics[0] === "1.1" && acceptedMetrics[1] === "0.85" && acceptedMetrics[2] === "22.7%", "Accepted summary uses only that trial's measurement arrays and improvement");
   check(await page.locator("#apiResultsPanel .source-trial[open]").count() === 1, "Only the accepted trial is expanded by default");
   check((await page.locator("#apiResultsPanel .source-trial[open]").innerText()).includes("accepted vector load"), "The accepted trial is the default expanded change");
-  check(text.includes("回滚状态未返回") && !text.includes("回滚已验证\n"), "Null rollback state is not presented as rollback success");
+  const acceptedTrialText = await page.locator("#apiResultsPanel .source-trial[open]").innerText();
+  check(acceptedTrialText.includes("回滚状态未返回") && !acceptedTrialText.includes("已回滚"), "Null rollback state is not presented as rollback success");
 
   const gateLabels = {
     accepted: "已验证提升",
@@ -328,7 +329,7 @@ async (page) => {
   }
 
   text = await renderResult(sourceResultWithGate("codegen_unchanged", "generated source hash stayed equal", {status: "no_improvement"}));
-  check(text.includes("无收益") && text.includes("生成代码未变化") && text.includes("未采纳"), "Rejected gate keeps the existing no_improvement trial status");
+  check(text.includes("无明显改善") && text.includes("生成代码未变化") && text.includes("未采纳"), "Rejected gate keeps the existing no_improvement trial status");
 
   for (const malformedGate of [
     {schema_version: "future.performance_gate", decision: "accepted", reason: "unknown schema", baseline_recheck_passed: true},

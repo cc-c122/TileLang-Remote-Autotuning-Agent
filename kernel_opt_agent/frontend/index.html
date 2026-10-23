@@ -510,6 +510,15 @@
 
     .failed-table { min-width: 1180px; }
 
+    #evidenceTrustTable { min-width: 1280px; table-layout: fixed; }
+    #evidenceTrustTable th:nth-child(1) { width: 200px; }
+    #evidenceTrustTable th:nth-child(2) { width: 150px; }
+    #evidenceTrustTable th:nth-child(3) { width: 100px; }
+    #evidenceTrustTable th:nth-child(4) { width: 170px; }
+    #evidenceTrustTable th:nth-child(5) { width: 140px; }
+    #evidenceTrustTable th:nth-child(6) { width: 200px; }
+    #evidenceTrustTable th:nth-child(7) { width: 320px; }
+
     .hardware-table {
       min-width: 1120px;
       table-layout: fixed;
@@ -3966,6 +3975,7 @@
         ${executionModeReasonNotice(task)}
         ${taskCompletionNotice(task, state.taskResults)}
         ${sourceMode ? sourceBestVerificationNotice(state.taskResults, task) : ""}
+        ${sourceMode ? `<div class="alert">源码结果：${escapeHtml(sourceOutcomeLabel(sourceOptimization, state.taskResults, task))}</div>` : ""}
         ${state.cancellationPending ? `<div class="alert warn">取消请求已提交，仍在等待后端确认终态。</div>` : ""}
         ${task.error ? `<div class="empty">失败原因：${escapeHtml(task.error)}</div>` : ""}
         <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${events.slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(latestEventLabel(event)))}</td><td>${escapeHtml(display(eventMessage(event)))}</td></tr>`).join("") || `<tr><td colspan="3">暂无任务事件</td></tr>`}</tbody></table></div>
@@ -4002,6 +4012,86 @@
       };
       const kind = status === "collected" || status === "imported" ? "ok" : status === "failed" ? "bad" : "warn";
       return `<span class="badge ${kind}">${labels[status]}</span>`;
+    }
+
+    function evidenceAttributionStatus(record) {
+      if (record?.attribution_status === "unverified") return "unverified";
+      return record?.attribution_status === "verified" && ["medium", "high"].includes(record.attribution_confidence)
+        && record.scope === "kernel" && typeof record.kernel_name === "string" && !!record.kernel_name.trim()
+        && ["mcprofiler", "benchmark", "compiler_log", "tilelang_log"].includes(record.source) ? "verified" : "unknown";
+    }
+
+    function evidencePlanningStatus(record) {
+      if (record?.planning_eligible === false) return "excluded";
+      if (record?.planning_eligible !== true) return "unknown";
+      if (evidenceAttributionStatus(record) !== "verified"
+        || !Array.isArray(record.eligibility_reasons) || record.eligibility_reasons.length) return "conflict";
+      return "eligible";
+    }
+
+    function evidenceEligibilityReasons(record) {
+      const labels = {
+        source_unrecognized: "证据来源未识别", source_metric_mismatch: "来源与指标不匹配",
+        metric_unavailable_or_non_numeric: "指标不可用或没有数值", evidence_id_missing: "缺少证据标识",
+        provenance_missing: "缺少来源或产物标识", parse_confidence_insufficient: "解析置信度不足",
+        confidence_insufficient: "综合置信度不足", target_attribution_unverified: "目标归因未验证",
+        kernel_scope_unconfirmed: "kernel 统计范围未确认", target_kernel_unconfirmed: "采集目标未确认",
+        target_kernel_mismatch: "采集目标不匹配", counter_scope_unknown: "计数器统计范围未知",
+        background_workload_not_excluded: "未排除后台负载", device_binding_unknown: "设备绑定未确认",
+        tool_version_unknown: "工具版本未知", metric_definition_unconfirmed: "指标口径未确认",
+        metric_attribution_not_validated: "当前工具版本的该指标尚未通过归因验证",
+      };
+      const reasons = Array.isArray(record?.eligibility_reasons) ? record.eligibility_reasons : null;
+      if (!reasons) return "后端未返回原因";
+      return reasons.length ? reasons.map((reason) => labels[reason] || display(reason)).join("；")
+        : record.planning_eligible === true ? "后端未列出排除原因" : "后端未说明排除原因";
+    }
+
+    function evidencePlanningLabel(record) {
+      return {eligible: "可用于优化分析", excluded: "不可用于优化分析", unknown: "分析资格未返回", conflict: "资格与归因字段冲突"}[evidencePlanningStatus(record)];
+    }
+
+    function sourceSpeedupVerified(results, task) {
+      const source = sourceOptimizationPayload(results);
+      const trial = acceptedSourceTrial(source);
+      const gate = sourceTrialPerformanceGate(trial);
+      return results?.source_best_verified === true && acceptedSourceTrialVerified(source, results, task)
+        && gate.accepted && numeric(gate.gate?.conservative_improvement_percent) > 0;
+    }
+
+    function renderEvidenceTrust(results) {
+      const records = evidenceRecordsFromSummary(evidenceSummaryFromResults(results));
+      const collected = profilerCollectionRows(results).filter((row) => row.schema_version === MCPROFILER_COLLECTION_SCHEMA && row.status === "collected").length;
+      const unverified = records.filter((row) => evidenceAttributionStatus(row) === "unverified").length;
+      const verified = records.filter((row) => evidenceAttributionStatus(row) === "verified").length;
+      const eligible = records.filter((row) => evidencePlanningStatus(row) === "eligible").length;
+      const excluded = records.filter((row) => evidencePlanningStatus(row) === "excluded").length;
+      const uncertain = records.length - eligible - excluded;
+      const speedup = sourceSpeedupVerified(results, state.task);
+      return `<div class="kv" id="evidenceTrustSummary">
+        <div>采集成功</div><div>${collected ? `${collected} 条采集成功记录；不代表归因或分析资格已通过。` : "尚无后端确认的采集成功记录。"}</div>
+        <div>目标归因</div><div>${records.length ? `${unverified} 条归因未验证；${verified} 条归因已验证；${records.length - unverified - verified} 条归因未确认。` : "归因状态未返回，不默认可信。"}</div>
+        <div>优化分析资格</div><div>${records.length ? `${eligible} 条可用于优化分析；${excluded} 条被后端排除；${uncertain} 条未确认。` : "分析资格未返回，不依据指标数值推断。"}</div>
+        <div>已验证提速</div><div><span class="badge ${speedup ? "ok" : "warn"}">${speedup ? "已验证提速" : "未确认已验证提速"}</span> ${speedup ? "依据最终采纳结果、正确性、性能门禁和产物核验，不依据 profiler 数值。" : "采集成功或任务结束不代表提速；最终选择见源码优化结果。"}</div>
+      </div>${unverified ? `<div class="alert warn">归因未验证：仅供检查，未用于优化决策。</div>` : ""}`;
+    }
+
+    function renderEvidenceTrustDetails(results) {
+      const records = evidenceRecordsFromSummary(evidenceSummaryFromResults(results));
+      if (!records.length) return `<h3>证据可信度与规划记录</h3><div class="empty">后端未返回逐指标可信度与规划资格；旧结果不默认可信。</div>`;
+      const trials = sourceOptimizationTrials(sourceOptimizationPayload(results));
+      return `<h3>证据可信度与规划记录</h3><div class="table-wrap"><table id="evidenceTrustTable"><thead><tr><th>指标 / trial</th><th>原始值 / 单位</th><th>解析置信度</th><th>归因状态 / 置信度</th><th>优化分析资格</th><th>规划使用记录</th><th>原因</th></tr></thead><tbody>${records.map((record) => {
+        const id = evidenceId(record);
+        const duplicate = id && records.filter((row) => evidenceId(row) === id).length !== 1;
+        const references = id && !duplicate ? trials.filter((trial) => Array.isArray(trial.evidence_ids) && trial.evidence_ids.includes(id)).map((trial) => trial.trial_id) : [];
+        const planning = evidencePlanningStatus(record);
+        const usage = duplicate ? "证据标识重复，引用未确认" : planning === "excluded"
+          ? references.length ? "规划引用与排除决定冲突，需核查" : "未用于规划"
+          : references.length ? `后端记录规划引用：${references.join("、")}` : "未返回规划使用记录";
+        const value = Object.prototype.hasOwnProperty.call(record, "value") ? display(record.value) : "未采集";
+        const attribution = {verified: "归因已验证", unverified: "归因未验证"}[evidenceAttributionStatus(record)] || "归因未确认";
+        return `<tr><td>${escapeHtml(display(record.metric || record.metric_name))}<br>${escapeHtml(display(record.source_trial_id || "trial 未返回"))}</td><td>${escapeHtml(value)} ${escapeHtml(display(record.unit))}</td><td>${confidenceBadgeFor(record.parse_confidence || "unknown")}</td><td>${attribution} ${confidenceBadgeFor(record.attribution_confidence || "unknown")}</td><td>${escapeHtml(evidencePlanningLabel(record))}</td><td>${escapeHtml(usage)}${record.attribution_status === "unverified" ? `<div class="muted">仅供检查，未用于优化决策</div>` : ""}</td><td class="reason-cell">${escapeHtml(evidenceEligibilityReasons(record))}</td></tr>`;
+      }).join("")}</tbody></table></div>`;
     }
 
     function profilerCollectionMetrics(record) {
@@ -4041,6 +4131,7 @@
           warnings: Array.isArray(observation?.parse_warnings) ? observation.parse_warnings : [],
           ambiguous: matches.length > 1,
           available: availability,
+          observation,
         };
       });
     }
@@ -4148,12 +4239,13 @@
       const rows = profilerCollectionRows(results);
       const usable = (row) => row.schema_version === MCPROFILER_COLLECTION_SCHEMA
         && ["collected", "imported"].includes(row.status) && profilerCollectionSource(row) !== "synthetic"
-        && profilerCollectionMetrics(row).some((metric) => metric.hasValue);
+        && results.profiler_available === true;
       const summaryKind = rows.length && rows.every(usable) && results.profiler_available === true ? "ok" : "warn";
       const comparison = profilerEvidenceComparison(results);
       return `<section class="section" id="profilerCollectionPanel">
         <div class="section-head"><h2>性能采集与证据</h2><span class="badge ${summaryKind}">${escapeHtml(profilerStatusLabel(results))}</span></div>
         <p class="section-kicker">工具可执行不等于指标有效；采集记录不替代正确性与性能门禁，也不证明计数器已准确归因到目标 kernel。</p>
+        ${renderEvidenceTrust(results)}
         ${results.profiler_available === false ? `<div class="alert warn">本次任务没有可用的 profiler 数据，诊断基于 benchmark 和日志，置信度较低。</div>` : ""}
         ${rows.length ? `<p class="muted">${rows.length} 条采集记录</p><div class="table-wrap"><table><thead><tr><th>工具 / trial / shape</th><th>工具可用性</th><th>采集状态</th><th>有数值 / 已声明指标</th><th>数据来源</th><th>缺失原因或说明</th></tr></thead><tbody>${rows.map((row) => {
           const metrics = profilerCollectionMetrics(row);
@@ -4161,7 +4253,7 @@
           return `<tr><td>${escapeHtml(display(profilerCollectionTool(row)))}<br>${escapeHtml(display(row.source_trial_id || "trial 未记录"))}<br>${escapeHtml(display(row.shape_id || "shape 未记录"))}</td><td>${escapeHtml(profilerToolAvailability(row))}</td><td>${profilerCollectionStatusBadge(row)}</td><td>${metrics.length ? `${metrics.filter((metric) => metric.hasValue).length} / ${metrics.length}` : "未采集"}</td><td>${sourceBadge(source)}${source === "synthetic" ? `<div class="muted">仅解析测试，不是性能证据</div>` : ""}</td><td class="reason-cell">${escapeHtml(profilerCollectionReason(row))}</td></tr>`;
         }).join("")}</tbody></table></div>` : `<div class="empty">等待后端采集记录；工具可用性和缺失原因尚未返回，不据此判定工具已安装或采集成功。</div>`}
         <h3>优化前后证据对比</h3>
-        ${comparison.pairs.length ? `<div class="kv"><div>并列查看对象</div><div>baseline → ${escapeHtml(display(comparison.trialId))}</div><div>已对齐的目标报告</div><div>${comparison.pairs.length} 组 shape；${comparison.pairs.reduce((count, pair) => count + pair.metrics.filter((metric) => metric.comparable).length, 0)} 个指标有同源、同单位的前后数值。设备绑定、工具版本和指标定义等完整采集条件尚未确认，不据此判断收益。具体数值见高级详情。</div></div>` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
+        ${comparison.pairs.length ? `<div class="kv"><div>并列查看对象</div><div>baseline → ${escapeHtml(display(comparison.trialId))}</div><div>已对齐的目标报告</div><div>${comparison.pairs.length} 组 shape；${comparison.pairs.reduce((count, pair) => count + pair.metrics.length, 0)} 个指标有同源、同单位的前后数值。已核对后端返回的设备标识、目标、shape、工具版本和指标口径；仅并列原始值，不计算指标改善。具体数值见高级详情。</div></div>` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
       </section>`;
     }
 
@@ -4184,10 +4276,54 @@
       return report;
     }
 
+    function profilerMetricContext(metric, record, results) {
+      const observation = metric?.observation;
+      if (!metric?.hasValue || evidencePlanningStatus(observation) !== "eligible") return null;
+      const artifactId = observation.artifact_id || observation.artifact;
+      if (typeof artifactId !== "string" || !artifactId.trim()) return null;
+      const evidence = evidenceRecordsFromSummary(evidenceSummaryFromResults(results)).filter((row) =>
+        row.artifact_id === artifactId && row.source_trial_id === record.source_trial_id && row.metric === metric.name
+        && row.source === metric.source && row.value === metric.value && row.unit === metric.unit);
+      if (evidence.length !== 1 || evidencePlanningStatus(evidence[0]) !== "eligible") return null;
+      // The results API recomputes eligibility; stored collection flags cannot override it.
+      const binding = (row) => Object.fromEntries(["device_id", "tool_version", "kernel_name", "scope", "attribution_status",
+        "attribution_confidence", "metric_definition", "collection_scope"].map((key) => [key, row[key]]));
+      if (!sameEvidenceContext(binding(observation), binding(evidence[0]))) return null;
+      const definition = observation.metric_definition;
+      const scope = observation.collection_scope;
+      const manifest = record.execution_manifest || record.command_audit;
+      const knownText = (value) => typeof value === "string" && value.trim() && !["unknown", "unconfirmed"].includes(value.trim().toLowerCase());
+      if (!/^device_sha256:[a-f0-9]{64}$/.test(observation.device_id || "") || !knownText(observation.tool_version)
+        || !knownText(observation.kernel_name) || observation.scope !== "kernel"
+        || !knownText(metric.source) || !knownText(metric.unit)
+        || !definition || definition.status !== "documented" || !knownText(definition.name)
+        || !knownText(definition.source) || definition.unit !== metric.unit
+        || !scope || scope.report_layout !== "named_kernel" || scope.counter_scope !== "kernel"
+        || scope.requested_kernel !== observation.kernel_name || scope.per_kernel_actual !== true
+        || !Array.isArray(scope.configured_kernels) || !scope.configured_kernels.includes(observation.kernel_name)
+        || typeof scope.profile_from_start_actual !== "boolean" || !Number.isInteger(scope.counts_actual) || scope.counts_actual < 1
+        || scope.background_workload_excluded !== true || !knownText(scope.device_binding)
+        || scope.collection_window?.target_only_window_verified !== true || !knownText(scope.collection_window?.kind)
+        || !sourceSha256(scope.source_sha256) || scope.source_sha256 !== record.source_sha256
+        || !sourceSha256(scope.report_sha256) || scope.report_sha256 !== manifest?.report_sha256) return null;
+      // Collection timestamps and source/report hashes differ between runs; validate their binding, not equality.
+      return {device: observation.device_id, target: observation.kernel_name, toolVersion: observation.tool_version,
+        definition, reportLayout: scope.report_layout, counterScope: scope.counter_scope,
+        configuredKernels: scope.configured_kernels, perKernel: scope.per_kernel_actual,
+        profileFromStart: scope.profile_from_start_actual, counts: scope.counts_actual,
+        deviceBinding: scope.device_binding, windowKind: scope.collection_window.kind};
+    }
+
+    function sameEvidenceContext(left, right) {
+      const ordered = (value) => Array.isArray(value) ? value.map(ordered)
+        : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, ordered(value[key])])) : value;
+      return !!left && !!right && JSON.stringify(ordered(left)) === JSON.stringify(ordered(right));
+    }
+
     function profilerEvidenceComparison(results) {
       const source = sourceOptimizationPayload(results);
       const trial = acceptedSourceTrial(source);
-      if (!acceptedSourceTrialVerified(source, results, state.task)) return {pairs: [], reason: "尚无已验证的优化后版本，不能生成 baseline 与 best 的证据对比。"};
+      if (!sourceSpeedupVerified(results, state.task)) return {pairs: [], reason: "尚无已验证的优化后版本，不能生成 baseline 与 best 的证据对比。原始记录分别展示；旧结果不会默认可信。"};
       const rows = profilerCollectionRows(results).filter((row) => row.schema_version === MCPROFILER_COLLECTION_SCHEMA
         && row.status === "collected" && profilerCollectionSource(row) === "real_profiler");
       const before = rows.filter((row) => row.source_trial_id === "source-baseline" && row.source_sha256 === source.baseline_source_sha256);
@@ -4217,19 +4353,20 @@
           const comparable = !!beforeMetric?.hasValue && !!afterMetric?.hasValue
             && typeof beforeMetric.unit === "string" && !!beforeMetric.unit.trim() && beforeMetric.unit === afterMetric.unit
             && typeof beforeMetric.source === "string" && !!beforeMetric.source.trim()
-            && beforeMetric.source.trim().toLowerCase() !== "unknown" && beforeMetric.source === afterMetric.source;
+            && beforeMetric.source.trim().toLowerCase() !== "unknown" && beforeMetric.source === afterMetric.source
+            && sameEvidenceContext(profilerMetricContext(beforeMetric, baseline, results), profilerMetricContext(afterMetric, candidate, results));
           return {name, before: beforeMetric, after: afterMetric, comparable};
-        });
+        }).filter((metric) => metric.comparable);
         if (metrics.length) pairs.push({shapeId: baseline.shape_id, metrics});
       });
-      return {trialId: trial.trial_id, pairs, reason: "未采集到可对齐的前后证据：需要相同 shape、采集命令、工具、实际报告范围与目标身份，以及匹配 baseline / best 源码的唯一采集记录。范围不同、目标归因未确认、字段缺失、重复或 synthetic 数据仅分别展示，不参与对比。"};
+      return {trialId: trial.trial_id, pairs, reason: "未采集到可对齐的前后证据：需要核对实际设备、目标、shape、工具版本、指标口径、实际报告范围与采集设置，以及匹配 baseline / best 源码的唯一记录。归因或分析资格未确认、字段缺失、不兼容、重复或 synthetic 数据仅分别展示，不计算指标改善。"};
     }
 
     function renderProfilerDetails(results) {
       const rows = profilerCollectionRows(results);
       const comparison = profilerEvidenceComparison(results);
       const valueLabel = (metric) => metric?.hasValue ? `${display(metric.value)} ${display(metric.unit || "单位未返回")}` : "未采集";
-      return `<h3>性能证据对比明细</h3>${comparison.pairs.length ? `<p class="muted">仅并列后端返回值；设备绑定、工具版本和指标定义等完整采集条件尚未确认，不推断性能收益。</p>${comparison.pairs.map((pair) => `<h4>${escapeHtml(display(pair.shapeId))}：baseline → ${escapeHtml(display(comparison.trialId))}</h4><div class="table-wrap"><table><thead><tr><th>指标</th><th>优化前</th><th>优化后</th><th>来源</th><th>可比性</th></tr></thead><tbody>${pair.metrics.map((metric) => `<tr><td>${escapeHtml(display(metric.name))}</td><td>${escapeHtml(valueLabel(metric.before))}</td><td>${escapeHtml(valueLabel(metric.after))}</td><td>${escapeHtml(display(metric.before?.source || "unknown"))} → ${escapeHtml(display(metric.after?.source || "unknown"))}</td><td>${metric.comparable ? "同源 / 同单位；不推算收益" : "值、单位或来源不完整 / 不一致，未比较"}</td></tr>`).join("")}</tbody></table></div>`).join("")}` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
+      return `${renderEvidenceTrustDetails(results)}<h3>性能证据对比明细</h3>${comparison.pairs.length ? `<p class="muted">仅并列已对齐的后端原始值，不推算指标改善或性能收益；无法核对的记录保留在各自采集详情中。</p>${comparison.pairs.map((pair) => `<h4>${escapeHtml(display(pair.shapeId))}：baseline → ${escapeHtml(display(comparison.trialId))}</h4><div class="table-wrap"><table><thead><tr><th>指标</th><th>优化前</th><th>优化后</th><th>来源</th><th>可比性</th></tr></thead><tbody>${pair.metrics.map((metric) => `<tr><td>${escapeHtml(display(metric.name))}</td><td>${escapeHtml(valueLabel(metric.before))}</td><td>${escapeHtml(valueLabel(metric.after))}</td><td>${escapeHtml(display(metric.before?.source || "unknown"))} → ${escapeHtml(display(metric.after?.source || "unknown"))}</td><td>同源 / 同单位；不推算收益</td></tr>`).join("")}</tbody></table></div>`).join("")}` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
         <h3>采集指标与原始报告</h3>${rows.length ? `<div class="source-trials">${rows.map(renderProfilerCollection).join("")}</div>` : `<div class="empty">暂无采集指标或原始报告。</div>`}`;
     }
 
@@ -4457,15 +4594,32 @@
       </section>`;
     }
 
+    function sourceOutcomeLabel(sourceOptimization, results, task) {
+      const status = sourceOptimizationStatus(sourceOptimization);
+      if (sourceSpeedupVerified(results, task)) return "已验证提速，采用已核验的源码修改";
+      if (acceptedSourceTrialVerified(sourceOptimization, results, task)) return "已接受源码修改；提速结论待完整核验";
+      if (status === "unavailable") return "没有适用变换，未执行源码修改";
+      if (status === "not_requested") return "未请求源码优化";
+      if (status === "running") return "源码验证中，尚无最终选择";
+      if (status === "cancelled") return "任务已取消；保留后端返回的验证和回滚记录";
+      if (status === "failed") return "源码验证失败，未采纳修改";
+      if (status !== "completed") return "源码结果未确认";
+      if (sourceOptimization.accepted_trial_id) return "接受记录待核验，不能确认最终源码";
+      const trials = sourceOptimizationTrials(sourceOptimization);
+      const noImprovement = trials.some((trial) => sourceTrialStatus(trial) === "no_improvement");
+      const rolledBack = trials.some((trial) => trial.rollback_verified === true);
+      return `${noImprovement ? "无明显改善" : "没有候选被采纳"}${rolledBack ? "；已回滚（校验通过）" : ""}；保留 baseline`;
+    }
+
     function sourceOptimizationStatusBadge(sourceOptimization, results, task) {
       const status = sourceOptimizationStatus(sourceOptimization);
       const acceptedVerified = acceptedSourceTrialVerified(sourceOptimization, results, task);
-      const kind = status === "completed" && acceptedVerified ? "ok" : status === "failed" ? "bad" : "warn";
+      const kind = status === "completed" && sourceSpeedupVerified(results, task) ? "ok" : status === "failed" ? "bad" : "warn";
       const labels = {
         not_requested: "未请求",
-        unavailable: "不可用",
+        unavailable: "没有适用变换",
         running: "运行中",
-        completed: acceptedVerified ? "已完成并接受修改" : "已完成，保留 baseline",
+        completed: sourceSpeedupVerified(results, task) ? "已验证提速" : acceptedVerified ? "已接受修改，提速待核验" : "验证结束，保留 baseline",
         failed: "失败",
         cancelled: "已取消",
         unknown: "未知状态",
@@ -4483,10 +4637,10 @@
         proposed: "待验证",
         running: "验证中",
         validation_failed: "验证失败",
-        build_failed: "构建失败",
+        build_failed: "编译失败",
         correctness_failed: "正确性失败",
         benchmark_failed: "性能测量失败",
-        no_improvement: "无收益",
+        no_improvement: "无明显改善",
         accepted: verifiedAcceptance ? "已接受" : acceptedByBackend ? "接受状态待核验" : "接受状态不完整",
         cancelled: "已取消",
         unknown: "未知状态",
@@ -4521,7 +4675,7 @@
     }
 
     function sourceRollbackBadge(value) {
-      if (value === true) return `<span class="badge ok">回滚已验证</span>`;
+      if (value === true) return `<span class="badge warn">已回滚（校验通过）</span>`;
       if (value === false) return `<span class="badge bad">回滚未验证</span>`;
       return `<span class="badge warn">回滚状态未返回</span>`;
     }
@@ -4566,7 +4720,7 @@
         const record = evidenceMap.get(id);
         if (!record) return `<li>${escapeHtml(id)}：证据记录未返回</li>`;
         const confidence = pick(record.confidence, "unknown");
-        return `<li>${escapeHtml(evidenceRecordLabel(record, id))}；confidence: ${escapeHtml(display(confidence))}</li>`;
+        return `<li>${escapeHtml(evidenceRecordLabel(record, id))}；综合置信度：${escapeHtml(display(confidence))}；${escapeHtml(evidencePlanningLabel(record))}。${escapeHtml(evidenceEligibilityReasons(record))}${record.attribution_status === "unverified" ? "；仅供检查，未用于优化决策" : ""}</li>`;
       }).join("")}</ul>`;
     }
 
@@ -4592,14 +4746,17 @@
         stdout_path: trial.stdout_path ?? null,
         stderr_path: trial.stderr_path ?? null,
         performance_gate: performanceGate.present ? performanceGate.gate ?? null : null,
+        artifacts: trial.artifacts ?? null,
       };
       return `<details class="source-trial" ${selected ? "open" : ""}>
-        <summary><span>${escapeHtml(display(title))}</span><span>${sourceTrialStatusBadge(trial, selected, acceptedVerified)}</span></summary>
+        <summary><span>${escapeHtml(display(title))}</span><span>${sourceTrialStatusBadge(trial, selected, acceptedVerified)} ${trial.rollback_verified === true ? sourceRollbackBadge(true) : ""}</span></summary>
         <div class="source-trial-body">
           <div class="kv">
             <div>trial_id</div><div>${escapeHtml(trialId)}</div>
             <div>目标位置</div><div>${escapeHtml([trial.target_file, trial.target_function].filter(Boolean).map(display).join(" / ") || "未返回")}</div>
             <div>优化假设</div><div>${escapeHtml(display(trial.hypothesis))}</div>
+            <div>规划来源</div><div>${escapeHtml(display(trial.artifacts?.planner?.source))}</div>
+            <div>被规划排除的证据</div><div>${escapeHtml(display(trial.artifacts?.planner?.excluded_evidence_count))}；${escapeHtml(display(trial.artifacts?.planner?.evidence_warnings))}</div>
             <div>correctness</div><div>${sourceCorrectnessBadge(correctness)} max_error: ${escapeHtml(correctness && Object.prototype.hasOwnProperty.call(correctness, "max_error") ? display(correctness.max_error) : "未返回")}</div>
             <div>correctness 原因</div><div>${escapeHtml(correctness ? display(correctness.reason) : "未返回")}</div>
             <div>baseline 测量</div><div>${escapeHtml(sourceMeasurementSummary(trial.baseline_latency_ms))}</div>
@@ -4667,6 +4824,7 @@
       return `<section class="section">
         <div class="section-head"><h2>源码优化结果</h2>${sourceOptimizationStatusBadge(sourceOptimization, results, task)}</div>
         ${schemaValid ? "" : `<div class="alert warn">source_optimization schema_version 缺失或不匹配，以下字段按兼容方式展示。</div>`}
+        <p>${escapeHtml(sourceOutcomeLabel(sourceOptimization, results, task))}</p>
         ${decision}
         ${status === "unavailable" ? `<div class="alert warn">后端没有在本次 entry_file 中识别到当前实现可安全修改的目标，因此当前 sample 无法安全进入源码优化，本次未执行源码修改并保留 baseline。这不表示算子没有优化空间；请核对 entry_file 是否指向实际算子源码。</div>` : ""}
         <div class="source-trials">${trials.length ? trials.map((trial) => renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified)).join("") : `<div class="empty">暂无源码候选记录。</div>`}</div>
