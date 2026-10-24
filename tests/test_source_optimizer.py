@@ -6,8 +6,10 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import time
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -127,6 +129,45 @@ class FakeRunner:
 
     def close(self) -> None:
         return None
+
+
+class BaselineStopRunner(FakeRunner):
+    """Exercise the cancellable runner contract, not GPU execution."""
+
+    def __init__(self, workspace, stage, state, failure=None):
+        super().__init__(workspace)
+        self.stage = stage
+        self.state = state
+        self.failure = failure
+
+    def run_cancellable(self, name, command, should_cancel, timeout_seconds=None):
+        self.state["commands"].append(name)
+        if name != self.stage:
+            return super().run(name, command)
+        if "ready" in self.state:
+            self.state["ready"].set()
+            if not self.state["release"].wait(5):
+                raise TimeoutError("test did not release cancelled command")
+        self.state["cancel"] = self.failure != "no_request"
+        if self.failure == "runner_exception":
+            raise RuntimeError("runner failed after cancellation request")
+        if self.failure == "audit_failed":
+            (self.workspace / "kernel.py").write_text("# unexpected mutation\n", encoding="utf-8")
+        code = {"command_failed": 1, "stop_unverified": 1, "timeout": 124, "guard_denied": 126}.get(self.failure, 130)
+        error = "remote process-group stop could not be verified" if self.failure == "stop_unverified" else "command stopped"
+        return CommandResult(name, command, code, "partial command output\n", "", 0, 0.1, 0.1,
+                             timeout=self.failure == "timeout", guard_denied=self.failure == "guard_denied", error_message=error)
+
+    def upload(self, snapshot):
+        self.state["restores"] += 1
+        if self.failure == "restore_failed":
+            raise RuntimeError("baseline restore failed")
+        shutil.copytree(snapshot, self.workspace, dirs_exist_ok=True)
+
+    def close(self):
+        self.state["closed"] += 1
+        if self.failure == "cleanup_failed":
+            raise RuntimeError("baseline cleanup failed")
 
 
 class InvalidPlanner:
@@ -1062,6 +1103,141 @@ class SourceOptimizationApiTests(unittest.TestCase):
             self.assertIsNone(task["improvement_percent"])
             download = client.get(f"/api/tasks/{task_id}/download/best_kernel")
             self.assertEqual(download.status_code, 409)
+
+
+class SourceBaselineCancellationTests(unittest.TestCase):
+    def run_baseline(self, stage, failure=None, cancelled_before_execution=False):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        sample = root / "sample"
+        sample.mkdir()
+        entry = sample / "kernel.py"
+        entry.write_text(_source(), encoding="utf-8")
+        results = root / "results"
+        state = {"commands": [], "cancel": cancelled_before_execution, "restores": 0, "closed": 0}
+        factory = lambda config, trial_dir: BaselineStopRunner(trial_dir, stage, state, failure)
+        with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=factory), patch(
+            "kernel_opt_agent.source_optimizer.engine.choose_plan",
+        ) as planner:
+            result = run_source_optimization(_config(sample), root / "workspace", results,
+                                             analyze_source(_source()), entry, should_cancel=lambda: state["cancel"])
+        planner.assert_not_called()
+        self.assertEqual(result.trials, [])
+        self.assertFalse(result.baseline_verified)
+        self.assertIsNone(result.accepted_trial_id)
+        self.assertEqual(json.loads((results / "source_optimization.json").read_text())["status"], result.status)
+        restored = root / "workspace/source_trials/baseline/workspace/kernel.py"
+        self.assertEqual(restored.read_bytes(), entry.read_bytes())
+        return result, state
+
+    def assert_cancelled_stage(self, stage):
+        result, state = self.run_baseline(stage)
+        self.assertEqual(result.status, "cancelled")
+        self.assertIn("cancelled", result.reason)
+        commands = ["build", "correctness", "benchmark_1"]
+        self.assertEqual(state["commands"], commands[:commands.index(stage) + 1])
+        self.assertEqual(state["restores"], 1)
+        self.assertEqual(state["closed"], 1)
+
+    def test_cancel_during_source_baseline_build(self):
+        self.assert_cancelled_stage("build")
+
+    def test_cancel_during_source_baseline_correctness(self):
+        self.assert_cancelled_stage("correctness")
+
+    def test_cancel_during_source_baseline_benchmark(self):
+        self.assert_cancelled_stage("benchmark_1")
+
+    def test_cancel_before_runner_creation_is_not_a_restore_failure(self):
+        result, state = self.run_baseline("build", cancelled_before_execution=True)
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(state["commands"], [])
+
+    def test_pending_cancel_does_not_hide_real_command_audit_or_cleanup_failures(self):
+        for stage in ("build", "correctness", "benchmark_1"):
+            for failure in ("command_failed", "runner_exception", "stop_unverified", "timeout", "guard_denied", "no_request",
+                            "audit_failed", "restore_failed", "cleanup_failed"):
+                with self.subTest(stage=stage, failure=failure):
+                    result, _ = self.run_baseline(stage, failure)
+                    self.assertEqual(result.status, "failed")
+                    if failure == "restore_failed":
+                        self.assertIn("rollback failed", result.reason)
+                    if failure == "cleanup_failed":
+                        self.assertIn("cleanup failed", result.reason)
+
+
+class SourceBaselineCancellationApiTests(unittest.TestCase):
+    def assert_task_outcome(self, stage, failure=None):
+        import kernel_opt_agent.server.app as server
+        from kernel_opt_agent.server.job_worker import JobWorker
+        from kernel_opt_agent.server.task_manager import TaskManager
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manager = TaskManager(root / "tasks")
+            state = {"commands": [], "cancel": False, "restores": 0, "closed": 0,
+                     "ready": threading.Event(), "release": threading.Event()}
+            factory = lambda config, trial_dir: BaselineStopRunner(trial_dir, stage, state, failure)
+            with patch.object(server, "manager", manager), patch.object(server, "worker", JobWorker(manager)), patch(
+                "kernel_opt_agent.server.job_worker.agent_main.run",
+            ), patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=factory), (
+                patch("kernel_opt_agent.source_optimizer.engine._save_logs", side_effect=OSError("cancelled command log could not be saved"))
+                if failure == "artifact_write_failed" else nullcontext()
+            ):
+                client = TestClient(app)
+                response = client.post("/api/tasks", json={
+                    "sample": {"source_type": "inline", "inline_text": _source(), "entry_file": "kernel.py"},
+                    "commands": {"build_command": "build", "correctness_command": "correctness", "benchmark_command": "benchmark"},
+                    "profiler": {"enabled": False}, "optimization": {"enabled": True, "benchmark_repeats": 3},
+                })
+                self.assertEqual(response.status_code, 200)
+                task_id = response.json()["task_id"]
+                try:
+                    self.assertTrue(state["ready"].wait(5))
+                    self.assertEqual(client.post(f"/api/tasks/{task_id}/cancel").status_code, 200)
+                finally:
+                    state["release"].set()
+                for _ in range(100):
+                    task = manager.get(task_id)
+                    if task.status in {"completed", "failed", "cancelled"}:
+                        break
+                    time.sleep(0.02)
+                expected = "failed" if failure else "cancelled"
+                self.assertEqual(task.status, expected)
+                self.assertTrue(task.cancel_requested)
+                payload = client.get(f"/api/tasks/{task_id}/results")
+                self.assertEqual(payload.status_code, 200)
+                source = payload.json()["results"]["source_optimization"]
+                self.assertEqual(source["status"], expected)
+                self.assertFalse(source["baseline_verified"])
+                self.assertIsNone(payload.json()["results"]["best_kernel"])
+                self.assertEqual(client.get(f"/api/tasks/{task_id}/download/best_kernel").status_code, 409)
+                events = client.get(f"/api/tasks/{task_id}/events").json()["events"]
+                types = [event["type"] for event in events]
+                self.assertEqual(types[-1], "task_" + expected)
+                self.assertNotIn("task_cancelled" if failure else "task_failed", types)
+                if failure == "artifact_write_failed":
+                    self.assertNotIn("source_optimization_completed", types)
+                else:
+                    completed = next(event for event in events if event["type"] == "source_optimization_completed")
+                    self.assertEqual(completed["data"]["status"], expected)
+                commands = ["build", "correctness", "benchmark_1"]
+                self.assertEqual(state["commands"], commands[:commands.index(stage) + 1])
+
+    def test_api_cancel_during_source_baseline_build(self):
+        self.assert_task_outcome("build")
+
+    def test_api_cancel_during_source_baseline_correctness(self):
+        self.assert_task_outcome("correctness")
+
+    def test_api_cancel_during_source_baseline_benchmark(self):
+        self.assert_task_outcome("benchmark_1")
+
+    def test_api_pending_cancel_does_not_hide_stop_restore_or_cleanup_failure(self):
+        for failure in ("command_failed", "runner_exception", "stop_unverified", "restore_failed", "cleanup_failed", "artifact_write_failed"):
+            with self.subTest(failure=failure):
+                self.assert_task_outcome("build", failure)
 
 
 if __name__ == "__main__":
