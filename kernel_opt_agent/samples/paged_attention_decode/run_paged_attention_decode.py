@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -146,6 +147,7 @@ def _compiled_kernel_call(upstream, sparse_attn, query, key_cache, value_cache, 
     def run_once():
         return kernel(query, key_cache, value_cache, block_indices, cache_seqlens, block_table, glse, output_partial)
 
+    run_once.generated_kernel_source = kernel.get_kernel_source()
     return run_once
 
 
@@ -153,8 +155,18 @@ def run_baseline(shape: ShapeConfig, warmup: int, repeat: int, atol: float, rtol
     upstream, sparse_attn, query, key_cache, value_cache, block_indices, cache_seqlens, block_table = _make_inputs(shape)
     run_kernel_once = _compiled_kernel_call(upstream, sparse_attn, query, key_cache, value_cache, block_indices, cache_seqlens, block_table)
     output = run_kernel_once()
-    if mode == "build":
-        return {"operator": "Paged Attention Decode", "mode": mode, "compiled_and_ran": True, "seed": 42}
+    if mode in {"build", "profile"}:
+        payload = {"operator": "Paged Attention Decode", "mode": mode, "compiled_and_ran": True,
+                   "operator_calls": 1, "seed": 42}
+        source = getattr(run_kernel_once, "generated_kernel_source", None)
+        if source:
+            artifact = Path("results/generated_kernel_source.cc")
+            artifact.parent.mkdir(exist_ok=True)
+            artifact.write_text(source, encoding="utf-8")
+            payload["generated_source_sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            payload["generated_source_path"] = artifact.as_posix()
+            print("GENERATED_SOURCE_SHA256=" + payload["generated_source_sha256"])
+        return payload
     reference = upstream.ref_program_torch_paged(
         query,
         key_cache,
@@ -205,7 +217,9 @@ def run_baseline(shape: ShapeConfig, warmup: int, repeat: int, atol: float, rtol
             "median_ms": statistics.median(samples) if samples else None,
             "p90_ms": _percentile(samples, 0.9) if samples else None,
             "stddev_ms": statistics.stdev(samples) if len(samples) > 1 else None,
-            "measurement_protocol": "one precompiled TileLang paged-attention kernel invocation per sample after fixed warmup; inputs and intermediate buffers are preallocated before timing",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "latency_scope": "operator_end_to_end",
+            "output_allocation_included": True,
             "timing": "host_perf_counter_with_device_synchronization",
         },
     }
@@ -213,7 +227,7 @@ def run_baseline(shape: ShapeConfig, warmup: int, repeat: int, atol: float, rtol
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["all", "build", "correctness", "benchmark"], default="all")
+    parser.add_argument("--mode", choices=["all", "build", "correctness", "benchmark", "profile"], default="all")
     parser.add_argument("--context-length", type=int, required=True)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--repeat", type=int, default=5)

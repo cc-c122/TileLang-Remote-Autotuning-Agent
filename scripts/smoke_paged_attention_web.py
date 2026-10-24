@@ -10,7 +10,8 @@ from urllib.parse import urlsplit
 import httpx
 
 
-def run_smoke(base_url: str, ssh: dict, password: str, evidence_dir: Path) -> dict:
+def run_smoke(base_url: str, ssh: dict, password: str, evidence_dir: Path, *,
+              command_prefix: str = "python3", profiler_options: dict | None = None) -> dict:
     from kernel_opt_agent.main import WORKSPACE_ROOT
     from kernel_opt_agent.server.security import validate_loopback_host
 
@@ -64,25 +65,29 @@ def run_smoke(base_url: str, ssh: dict, password: str, evidence_dir: Path) -> di
             uploaded.raise_for_status()
             upload_id = uploaded.json()["upload_id"]
             for context in (128, 512):
-                command = f"python3 run_paged_attention_decode.py --context-length {context} --warmup 3 --repeat 5"
+                command = f"{command_prefix} run_paged_attention_decode.py --context-length {context} --warmup 3 --repeat 5"
                 payload = {
                     "project_name": f"c500-paged-attention-attribution-ctx{context}",
                     "ssh_session_id": session_id, "runner": {"type": "ssh"},
                     "sample": {"source_type": "upload", "upload_id": upload_id,
                                "entry_file": "_upstream_sparse_gqa_decode_paged.py"},
-                    "target": {"gpu_model": "MetaX C500", "backend": "mxmaca", "device_id": device_id},
+                    "target": {"gpu_model": "MetaX C500", "backend": "mxmaca", "device_id": device_id,
+                               "user_overrides": {"shape_id": f"paged_attention_decode_b1_qh32_kvh8_d128_page16_ctx{context}_fp16"}},
                     "commands": {"build_command": command + " --mode build",
                                  "correctness_command": command + " --mode correctness",
                                  "benchmark_command": command + " --mode benchmark"},
                     "optimization": {"enabled": True, "max_candidates": 1, "benchmark_repeats": 5,
                                      "min_improvement_percent": 1.0},
                     "budget": {"timeout_seconds": 180, "max_iterations": 1, "candidates_per_iteration": 1},
-                    "profiler": {"enabled": True, "type": "mxmaca", "auto_collect": True},
+                    "profiler": {"enabled": True, "type": "mxmaca", "auto_collect": True,
+                                 **(profiler_options or {})},
                 }
+                if payload["profiler"].get("command"):
+                    payload["profiler"]["command"] = payload["profiler"]["command"].replace("{context_length}", str(context))
                 response = client.post("/api/tasks", json=payload)
                 response.raise_for_status()
                 task_id = response.json()["task_id"]
-                record = {"task_id": task_id, "context_length": context}
+                record = {"task_id": task_id, "context_length": context, "commands": payload["commands"]}
                 evidence["tasks"].append(record)
                 deadline = time.monotonic() + 1200
                 while time.monotonic() < deadline:
@@ -96,7 +101,7 @@ def run_smoke(base_url: str, ssh: dict, password: str, evidence_dir: Path) -> di
                     continue
                 results = client.get(f"/api/tasks/{task_id}/results").json()["results"]
                 events = client.get(f"/api/tasks/{task_id}/events").json()
-                record.update({"status": task["status"], "execution_mode": task["execution_mode"],
+                record.update({"status": task["status"], "error": task.get("error"), "execution_mode": task["execution_mode"],
                                "results_dir": results["results_dir"],
                                "source_optimization": results.get("source_optimization"),
                                "summary_table": results.get("summary_table"), "events": events.get("events"),
@@ -110,6 +115,13 @@ def run_smoke(base_url: str, ssh: dict, password: str, evidence_dir: Path) -> di
             return evidence
         except Exception as exc:
             evidence["failure"] = {"stage": "http_smoke", "exception_type": type(exc).__name__}
+            if isinstance(exc, httpx.HTTPStatusError):
+                evidence["failure"].update({"status": exc.response.status_code,
+                                            "path": exc.request.url.path})
+                try:
+                    evidence["failure"]["response"] = exc.response.json()
+                except ValueError:
+                    evidence["failure"]["response"] = "non-JSON error response"
             return evidence
         finally:
             if session_id:

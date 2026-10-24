@@ -31,7 +31,7 @@ for candidate in dict.fromkeys(candidates):
     label='interpreter['+str(attempted)+']'
     attempted+=1
     try:
-        completed=subprocess.run([candidate,'-B','-c',query_script],capture_output=True,text=True,timeout=min(15,remaining))
+        completed=subprocess.run([candidate,'-B','-c',query_script],capture_output=True,text=True,timeout=min(25,remaining))
         if completed.returncode:
             warnings.append(label+': query_failed')
             continue

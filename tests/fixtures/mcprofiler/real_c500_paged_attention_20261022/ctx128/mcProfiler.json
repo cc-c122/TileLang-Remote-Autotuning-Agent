@@ -1,0 +1,46 @@
+{
+  "perfList": {
+    "ISU": [
+      [
+        26,
+        "AP_PERF_INST_PRIVATE_RD"
+      ],
+      [
+        43,
+        "AP_PERF_INST_CYCLES_MMA"
+      ],
+      [
+        73,
+        "AP_PERF_BSM_WR_CYCLES"
+      ],
+      [
+        19,
+        "AP_PERF_INST_GLOBAL_WR"
+      ],
+      [
+        72,
+        "AP_PERF_BSM_RD_CYCLES"
+      ],
+      [
+        15,
+        "AP_PERF_INSTS_BSM"
+      ]
+    ],
+    "L2C": [
+      [
+        19,
+        "perf_hit"
+      ]
+    ]
+  },
+  "action": "config,disable,read_dump,enable,kernel_collect",
+  "conditions": {
+    "kernelnames": [
+      "main_kernel"
+    ],
+    "include": true,
+    "is_perkernel": true,
+    "is_multi_device": false,
+    "counts": 100
+  }
+}

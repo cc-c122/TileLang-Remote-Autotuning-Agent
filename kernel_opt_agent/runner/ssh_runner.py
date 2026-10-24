@@ -116,11 +116,15 @@ class SSHRunner:
                 look_for_keys=True,
                 allow_agent=True,
             )
+        transport = self.client.get_transport()
+        # Some gateways return partial authentication without raising in connect().
+        # Do not open channels or persist first-use trust until authentication ends.
+        if transport is None or not transport.is_active() or not transport.is_authenticated():
+            self.close()
+            raise paramiko.AuthenticationException("SSH authentication did not complete")
         if self.server_fingerprint:
             self.host_key_store.remember(self.info.host, self.info.port, self.server_fingerprint, self.info.host_key_fingerprint)
-        transport = self.client.get_transport()
-        if transport:
-            transport.set_keepalive(30)
+        transport.set_keepalive(30)
         self.sftp = self.client.open_sftp()
         self.sftp.get_channel().settimeout(self.info.connect_timeout_seconds)
         self._mkdir_p(self.info.remote_workspace)
@@ -507,15 +511,18 @@ class SSHRunner:
             f"child=''; cleanup() {{ if [ -n \"$child\" ]; then kill -TERM -- \"-$child\" 2>/dev/null || true; "
             "wait \"$child\" 2>/dev/null || true; fi; "
             f"rm -f {shlex.quote(pid_file)}; }}; trap cleanup EXIT HUP INT TERM; "
-            f"env KERNEL_AGENT_PROCESS_TOKEN={shlex.quote(process_token)} setsid sh -c {shlex.quote(command)} & child=$!; "
+            f'env KERNEL_AGENT_PROCESS_TOKEN={shlex.quote(process_token)} setsid sh -c "$1" & child=$!; '
             f"printf '%s %s\n' \"$child\" {shlex.quote(process_token)} > {shlex.quote(pid_file)}; "
             "wait \"$child\"; rc=$?; child=''; exit \"$rc\""
         )
-        managed_command = f"sh -c {shlex.quote(wrapped)}"
-        managed_guard = validate(managed_command, self.info.remote_workspace, self.info.remote_workspace, self.denied_commands)
+        # Guard the fixed supervisor separately from the already-guarded user
+        # command. Pass user text only as a quoted positional argument, not code
+        # in the supervisor: read-only paths must not taint its relative cleanup.
+        managed_guard = validate(wrapped, self.info.remote_workspace, self.info.remote_workspace, self.denied_commands)
         if not managed_guard.allowed:
             end = time.time()
             return CommandResult(name, command, 126, "", managed_guard.reason, start, end, end - start, guard_denied=True, error_message=managed_guard.reason)
+        managed_command = f"sh -c {shlex.quote(wrapped)} kernel-agent {shlex.quote(command)}"
         remote_command = self._build_remote_command(managed_command)
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []

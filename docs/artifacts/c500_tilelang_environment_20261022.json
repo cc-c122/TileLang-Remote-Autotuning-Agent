@@ -1,0 +1,35 @@
+{
+  "compiler": {
+    "returncode": 0,
+    "stdout": "mxcc version 1.0.0 (6477545d4d)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /opt/maca-3.5.3/mxgpu_llvm/bin"
+  },
+  "detected_target": "maca",
+  "gpu_model": "MetaX C500",
+  "mcprofiler": {
+    "returncode": 0,
+    "stdout": "version:3.9.0.29\ntime:20260917210711\nhash:c63ea13089\ndistro:ubuntu18"
+  },
+  "notes": [
+    "No driver or system configuration was changed.",
+    "TileLang was found as a source build, not a pip distribution.",
+    "The version string contains cuda; the actual detected target and generated MACA code are separate evidence."
+  ],
+  "observed_at": "2026-10-22T14:36:54.340936+00:00",
+  "os": "Linux-5.15.0-58-generic-x86_64-with-glibc2.35",
+  "python_executable": "/opt/conda/bin/python",
+  "python_version": "3.12.11",
+  "runtime_uuid_sha256": "e612d74b1563b764144d9cb7aea74b6e65358fe858d804bc548dab0648d7d4f4",
+  "schema_version": "v2.environment_receipt.v1",
+  "source": "SSHRunner guarded read-only probe",
+  "tilelang_build_flags": [
+    "USE_CUDA:STRING=OFF"
+  ],
+  "tilelang_library_sha256": "466ecd2aaa14b999783eba0b4486a70b46be271c7c51e9cb0a6f3114450c3e7e",
+  "tilelang_module": "/app/tilelang-metax/tilelang/__init__.py",
+  "tilelang_source_commit": "f1ca0fb9c018f2807f789cef04a1303c1b68ab20",
+  "tilelang_source_dirty": null,
+  "tilelang_version": "0.1.9+cuda.gitf1ca0fb9",
+  "torch_maca_version": "3.5.3.9",
+  "torch_version": "2.8.0+metax3.5.3.9",
+  "visible_device_count": 1
+}

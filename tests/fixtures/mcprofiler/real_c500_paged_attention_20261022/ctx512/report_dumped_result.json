@@ -1,0 +1,82 @@
+{
+    "Memory Statistics": [
+        {
+            "data": 3226,
+            "isError": false,
+            "message": "",
+            "name": "Global Read Instructions"
+        },
+        {
+            "data": 7077,
+            "isError": false,
+            "message": "",
+            "name": "Global Write Instructions"
+        },
+        {
+            "data": 0,
+            "isError": false,
+            "message": "",
+            "name": "Private Read Instructions"
+        },
+        {
+            "data": 0,
+            "isError": false,
+            "message": "",
+            "name": "Private Write Instructions"
+        },
+        {
+            "data": 85.45388515184088,
+            "isError": false,
+            "message": "",
+            "name": "VL1 Hit Rate"
+        },
+        {
+            "data": 33.76830560229326,
+            "isError": false,
+            "message": "",
+            "name": "L2C Hit Rate"
+        },
+        {
+            "data": 233.4097720557197,
+            "isError": false,
+            "message": "",
+            "name": "Dnoc Read Average Latency"
+        }
+    ],
+    "Workgroup Memory": [
+        {
+            "data": 1.0806193272824347,
+            "isError": false,
+            "message": "",
+            "name": "average conflict cycles per instruction"
+        },
+        {
+            "data": 75.00308756329504,
+            "isError": false,
+            "message": "",
+            "name": "shared memory access efficiency"
+        }
+    ],
+    "Occupancy": [
+        {
+            "data": 6418.0,
+            "isError": false,
+            "message": "",
+            "name": "Achieved waves"
+        },
+        {
+            "data": 6476.0,
+            "isError": false,
+            "message": "",
+            "name": "Dispatched waves"
+        }
+    ],
+    "GPU Throughput Statistics": [
+        {
+            "data": 0.5972081547421583,
+            "isError": false,
+            "message": "",
+            "name": "AP MMA Duty ratio"
+        }
+    ]
+}

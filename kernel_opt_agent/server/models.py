@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
+from kernel_opt_agent.run_request import ProfilerRequest
+
 
 TaskStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 ExecutionMode = Literal["parameter_search", "baseline_only", "source_optimization"]
@@ -125,12 +127,8 @@ class BudgetPayload(BaseModel):
         return data
 
 
-class ProfilerPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
-    type: Literal["dummy", "mxmaca"] = "dummy"
-    auto_collect: bool = False
+class ProfilerPayload(ProfilerRequest):
+    pass
 
 
 class PatchingPayload(BaseModel):

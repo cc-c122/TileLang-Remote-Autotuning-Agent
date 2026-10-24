@@ -295,7 +295,10 @@ class FastApiServerTests(unittest.TestCase):
             {
                 "project_name": "api-ssh-demo",
                 "runner": {"type": "ssh"},
-                "profiler": {"enabled": True, "type": "mxmaca", "auto_collect": True},
+                "profiler": {"enabled": True, "type": "mxmaca", "auto_collect": True,
+                             "mcprofiler_executable": "/tmp/managed-tools/mcProfiler",
+                             "kernel_names": ["main_kernel"], "timeout_seconds": 240,
+                             "command": "python profile_target.py"},
                 "sample": {"source_type": "inline", "inline_text": INLINE_KERNEL, "entry_file": "kernel.py"},
                 "commands": {
                     "build_command": "python -m py_compile kernel.py",
@@ -337,6 +340,10 @@ class FastApiServerTests(unittest.TestCase):
             self.assertEqual(config.llm.api_key_env, "KERNEL_AGENT_TEST_OPENAI_KEY")
             self.assertEqual(config.profiler.type, "mxmaca")
             self.assertTrue(config.profiler.auto_collect)
+            self.assertEqual(config.profiler.mcprofiler_executable, "/tmp/managed-tools/mcProfiler")
+            self.assertEqual(config.profiler.kernel_names, ["main_kernel"])
+            self.assertEqual(config.profiler.timeout_seconds, 240)
+            self.assertEqual(config.profiler.command, "python profile_target.py")
             effective = yaml.safe_load((root / "task" / "effective_config.yaml").read_text(encoding="utf-8"))
             self.assertEqual(effective["runner"]["type"], "ssh")
             self.assertEqual(effective["remote"]["password_env"], "KERNEL_AGENT_TEST_SSH_PASSWORD")

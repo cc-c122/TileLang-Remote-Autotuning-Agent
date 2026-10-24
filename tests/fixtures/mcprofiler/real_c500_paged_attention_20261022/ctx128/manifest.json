@@ -1,0 +1,248 @@
+{
+  "schema_version": "v2.paged_attention_real_fixture.v1",
+  "fixture_kind": "real_native_report_subset",
+  "synthetic": false,
+  "case_name": "paged-attention-ctx128-baseline-20261022",
+  "exec_id": null,
+  "collection_id": "mcprof-667ab77860746a74d66b6e3b",
+  "task_id": "363df1fb4e9b442c9813738d8f516cca",
+  "collection_mode": "remote_official_cli",
+  "collection_status": "collected",
+  "operator": "Paged Attention Decode",
+  "target_subkernel": "Paged Attention Decode split",
+  "kernel_name": "main_kernel",
+  "dtype": "fp16",
+  "shape": {
+    "batch": 1,
+    "context_length": 128,
+    "head_dim": 128,
+    "kv_heads": 8,
+    "page_size": 16,
+    "query_heads": 32
+  },
+  "correctness": {
+    "max_error": 0.0009765625,
+    "passed": true,
+    "reference": "torch_scaled_dot_product_attention_over_paged_kv_cache",
+    "tolerance": {
+      "atol": 0.002,
+      "rtol": 0.002
+    }
+  },
+  "benchmark": {
+    "latency_scope": "operator_end_to_end",
+    "command_repeats": 5,
+    "measurement_records": [
+      {
+        "latency_scope": "operator_end_to_end",
+        "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+        "measurement_runs": 5,
+        "median_ms": 0.08272100239992142,
+        "output_allocation_included": true,
+        "p90_ms": 0.0906387809664011,
+        "raw_samples_ms": [
+          0.09229802526533604,
+          0.0881499145179987,
+          0.0823090085759759,
+          0.08272100239992142,
+          0.08089293260127306
+        ],
+        "stddev_ms": 0.004798711741956924,
+        "timing": "host_perf_counter_with_device_synchronization",
+        "warmup_runs": 3
+      },
+      {
+        "latency_scope": "operator_end_to_end",
+        "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+        "measurement_runs": 5,
+        "median_ms": 0.0785409938544035,
+        "output_allocation_included": true,
+        "p90_ms": 0.08645241614431143,
+        "raw_samples_ms": [
+          0.08952000644057989,
+          0.08185103069990873,
+          0.0785409938544035,
+          0.07825798820704222,
+          0.07541500963270664
+        ],
+        "stddev_ms": 0.0054238314782889185,
+        "timing": "host_perf_counter_with_device_synchronization",
+        "warmup_runs": 3
+      },
+      {
+        "latency_scope": "operator_end_to_end",
+        "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+        "measurement_runs": 5,
+        "median_ms": 0.08072203490883112,
+        "output_allocation_included": true,
+        "p90_ms": 0.08593520615249872,
+        "raw_samples_ms": [
+          0.08853001054376364,
+          0.08204299956560135,
+          0.07971096783876419,
+          0.07931096479296684,
+          0.08072203490883112
+        ],
+        "stddev_ms": 0.0037658519969682005,
+        "timing": "host_perf_counter_with_device_synchronization",
+        "warmup_runs": 3
+      },
+      {
+        "latency_scope": "operator_end_to_end",
+        "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+        "measurement_runs": 5,
+        "median_ms": 0.07994705811142921,
+        "output_allocation_included": true,
+        "p90_ms": 0.08656601421535015,
+        "raw_samples_ms": [
+          0.08884607814252377,
+          0.08314591832458973,
+          0.07994705811142921,
+          0.0789429759606719,
+          0.07852294947952032
+        ],
+        "stddev_ms": 0.004294209813265932,
+        "timing": "host_perf_counter_with_device_synchronization",
+        "warmup_runs": 3
+      },
+      {
+        "latency_scope": "operator_end_to_end",
+        "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+        "measurement_runs": 5,
+        "median_ms": 0.07823202759027481,
+        "output_allocation_included": true,
+        "p90_ms": 0.08460646495223045,
+        "raw_samples_ms": [
+          0.08684606291353703,
+          0.0812470680102706,
+          0.07823202759027481,
+          0.07666298188269138,
+          0.07777998689562082
+        ],
+        "stddev_ms": 0.004107786102978517,
+        "timing": "host_perf_counter_with_device_synchronization",
+        "warmup_runs": 3
+      }
+    ]
+  },
+  "sample_source": {
+    "file": "_upstream_sparse_gqa_decode_paged.py",
+    "sha256": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6",
+    "wrapper_sha256": "cd89ddec7fd2c075073f4d29831dea5d9f593cecee8eb1dbcc11915341fbe338"
+  },
+  "generated_source_sha256_from_build_log": "e4d401a4921b0345f5c0130833bd205687f0595eac8da0a2a6d91237c293ea02",
+  "mcprofiler_version": "3.9.0.29",
+  "gpu_model": "MetaX C500",
+  "environment": {
+    "target_name": "MetaX C500",
+    "driver_version": "3.8.30",
+    "runtime_version": "3.5.3.20",
+    "python_version": "3.12.11",
+    "torch_version": "2.8.0+metax3.5.3.9"
+  },
+  "primary_report": "1_main_kernel_dumped_result.json",
+  "full_case_artifact_count": 31,
+  "full_case_location": "kernel_opt_agent/workspace/tasks/363df1fb4e9b442c9813738d8f516cca/results/mcprofiler_cases/mcprof-667ab77860746a74d66b6e3b",
+  "expected_metrics": {
+    "global_read_instructions": {
+      "value": 750,
+      "unit": "instructions",
+      "available": true
+    },
+    "global_write_instructions": {
+      "value": 495,
+      "unit": "instructions",
+      "available": true
+    },
+    "private_read_instructions": {
+      "value": 0,
+      "unit": "instructions",
+      "available": true
+    },
+    "private_write_instructions": {
+      "value": 0,
+      "unit": "instructions",
+      "available": true
+    },
+    "vl1_hit_rate": {
+      "value": 85.7310893955845,
+      "unit": "percent",
+      "available": true
+    },
+    "l2c_hit_rate": {
+      "value": 57.76093864580787,
+      "unit": "percent",
+      "available": true
+    },
+    "dnoc_read_average_latency": {
+      "value": 188.36596523330283,
+      "unit": "cycles",
+      "available": true
+    },
+    "shared_conflict_cycles": {
+      "value": 1.0161290322580645,
+      "unit": "cycles_per_instruction",
+      "available": true
+    },
+    "shared_memory_access_efficiency": {
+      "value": 77.76797529775034,
+      "unit": "percent",
+      "available": true
+    },
+    "achieved_waves": {
+      "value": 110.0,
+      "unit": "waves",
+      "available": true
+    },
+    "dispatched_waves": {
+      "value": 112.0,
+      "unit": "waves",
+      "available": true
+    },
+    "mma_duty": {
+      "value": 1.5912167361903147,
+      "unit": "percent",
+      "available": true
+    }
+  },
+  "artifacts": [
+    {
+      "path": "1_main_kernel_dumped_result.json",
+      "source_sha256": "e646d914a92370bd2967a7eec61aaf9fac6988afa0205a080077b13ee78d8799",
+      "stored_sha256": "e646d914a92370bd2967a7eec61aaf9fac6988afa0205a080077b13ee78d8799",
+      "storage_transform": "none_original_bytes_preserved",
+      "origin": "mcprofiler_native"
+    },
+    {
+      "path": "report_dumped_result.json",
+      "source_sha256": "224570f3ce3960594abff1c6d465a9eb439fa640f3ec265953c7c2219b1ddcbf",
+      "stored_sha256": "224570f3ce3960594abff1c6d465a9eb439fa640f3ec265953c7c2219b1ddcbf",
+      "storage_transform": "none_original_bytes_preserved",
+      "origin": "mcprofiler_native"
+    },
+    {
+      "path": "mcProfiler.json",
+      "source_sha256": "03f2867cb0c61a2c36929e32ca2068f80977ce99741ce0dae3d1769520a14a06",
+      "stored_sha256": "03f2867cb0c61a2c36929e32ca2068f80977ce99741ce0dae3d1769520a14a06",
+      "storage_transform": "none_original_bytes_preserved",
+      "origin": "mcprofiler_native"
+    },
+    {
+      "path": "agent_collection_context.json",
+      "source_sha256": "725990bab98b5de77d938d921c427901503d1587b5a6f2d78fec87152d8d34e7",
+      "stored_sha256": "725990bab98b5de77d938d921c427901503d1587b5a6f2d78fec87152d8d34e7",
+      "storage_transform": "none_original_bytes_preserved",
+      "origin": "backend_collection_context"
+    }
+  ],
+  "attribution_status": "unverified",
+  "counter_scope": "unknown",
+  "planning_eligible": false,
+  "notes": [
+    "Real normal-Web-task report; not Gate/Up, GEMM or synthetic data.",
+    "The original Case and all logs remain at the task-scoped location; this is a non-identifying regression subset.",
+    "No native Exec ID is present in the exported metric report; collection_id is backend-generated.",
+    "A single operator call is requested by the profile script; vendor replay counts and process isolation remain unverified.",
+    "None of these counters may authorize a bottleneck claim or optimization plan."
+  ]
+}

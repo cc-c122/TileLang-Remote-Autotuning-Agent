@@ -104,6 +104,10 @@ class ProfilerRequest(BaseModel):
     enabled: bool = True
     type: Literal["dummy", "mxmaca"] = "dummy"
     auto_collect: bool = False
+    command: str | None = None
+    timeout_seconds: int = Field(default=120, gt=0, le=3600)
+    mcprofiler_executable: str = "mcProfiler"
+    kernel_names: list[str] = Field(default_factory=list)
 
 
 class PatchingRequest(BaseModel):

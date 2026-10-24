@@ -77,7 +77,11 @@ class McProfilerParserTests(unittest.TestCase):
         manifest_path = WORKSPACE / "kernel_opt_agent" / "samples" / "paged_attention_decode" / "baseline_manifest.yaml"
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["operator"], "Paged Attention Decode")
-        self.assertIn("blocked", manifest["status"])
+        self.assertEqual(manifest["status"], "partially_collected")
+        self.assertEqual(manifest["benchmark"]["contexts_collected"], [128, 512])
+        self.assertEqual(manifest["benchmark"]["contexts_not_collected"], [2048])
+        self.assertIsNone(manifest["mcprofiler"]["baseline_cases"][2048])
+        self.assertFalse(manifest["mcprofiler"]["planning_eligible"])
         self.assertEqual(manifest["sample_source"]["upstream_commit"], "1d155f4b80865edfe0009ad952135b7afbd4f05a")
         self.assertEqual(len(manifest["sample_source"]["vendored_file_sha256"]), 64)
         vendored_path = manifest_path.parent / "_upstream_sparse_gqa_decode_paged.py"
@@ -113,7 +117,9 @@ class McProfilerParserTests(unittest.TestCase):
         self.assertIn("torch.allclose(output, reference, atol=atol, rtol=rtol)", source)
         self.assertIn("max_error", source)
         self.assertIn("raise AssertionError", source)
-        self.assertIn("one precompiled TileLang paged-attention kernel invocation per sample", source)
+        self.assertIn("one precompiled TileLang paged-attention operator call per sample", source)
+        self.assertIn('"latency_scope": "operator_end_to_end"', source)
+        self.assertIn('"output_allocation_included": True', source)
         self.assertIn("_compiled_kernel_call", source)
         self.assertNotIn("upstream.main(", source)
         self.assertNotIn("do_bench", source)

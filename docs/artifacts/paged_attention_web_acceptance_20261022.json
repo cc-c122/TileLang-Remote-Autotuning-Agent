@@ -1,0 +1,70 @@
+{
+  "http_checks": [
+    {
+      "task_id": "363df1fb4e9b442c9813738d8f516cca",
+      "endpoint": "/detail",
+      "status_code": 200
+    },
+    {
+      "task_id": "363df1fb4e9b442c9813738d8f516cca",
+      "endpoint": "/events",
+      "status_code": 200
+    },
+    {
+      "task_id": "363df1fb4e9b442c9813738d8f516cca",
+      "endpoint": "/results",
+      "status_code": 200
+    },
+    {
+      "task_id": "363df1fb4e9b442c9813738d8f516cca",
+      "endpoint": "/download/best_kernel",
+      "status_code": 200,
+      "sha256": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6"
+    },
+    {
+      "task_id": "363df1fb4e9b442c9813738d8f516cca",
+      "endpoint": "/download/report",
+      "status_code": 200
+    },
+    {
+      "task_id": "1a9eed7c98104ed38b78a942c268537b",
+      "endpoint": "/detail",
+      "status_code": 200
+    },
+    {
+      "task_id": "1a9eed7c98104ed38b78a942c268537b",
+      "endpoint": "/events",
+      "status_code": 200
+    },
+    {
+      "task_id": "1a9eed7c98104ed38b78a942c268537b",
+      "endpoint": "/results",
+      "status_code": 200
+    },
+    {
+      "task_id": "1a9eed7c98104ed38b78a942c268537b",
+      "endpoint": "/download/best_kernel",
+      "status_code": 200,
+      "sha256": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6"
+    },
+    {
+      "task_id": "1a9eed7c98104ed38b78a942c268537b",
+      "endpoint": "/download/report",
+      "status_code": 200
+    }
+  ],
+  "credential_scan": {
+    "checked_task_files": 276,
+    "configured_secret_value_matches": 0
+  },
+  "internal_configs": {
+    "363df1fb4e9b442c9813738d8f516cca": {
+      "run_request.yaml": true,
+      "effective_config.yaml": true
+    },
+    "1a9eed7c98104ed38b78a942c268537b": {
+      "run_request.yaml": true,
+      "effective_config.yaml": true
+    }
+  }
+}

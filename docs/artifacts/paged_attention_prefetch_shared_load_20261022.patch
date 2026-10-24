@@ -1,0 +1,18 @@
+--- _upstream_sparse_gqa_decode_paged.py
++++ _upstream_sparse_gqa_decode_paged.py
+@@ -94,6 +94,7 @@
+                     block_tile_idx = T.floormod(logical_block_idx, block_ratio)
+                     physical_block_idx = block_table[bid, block_table_idx]
+                     T.copy(K[physical_block_idx, block_tile_idx * block_N : (block_tile_idx + 1) * block_N, cur_kv_head, :], K_shared)
++                    T.copy(V[physical_block_idx, block_tile_idx * block_N : (block_tile_idx + 1) * block_N, cur_kv_head, :], V_shared)
+                     T.clear(acc_s)
+                     T.gemm(Q_shared, K_shared, acc_s, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)
+                     if k == 0:  # assume block_indices is sorted in reverse order, otherwise, remove this if condition
+@@ -115,7 +116,6 @@
+                     T.copy(acc_s, acc_s_cast)
+                     for i, j in T.Parallel(block_H, dim_v):
+                         acc_o[i, j] *= scores_scale[i]
+-                    T.copy(V[physical_block_idx, block_tile_idx * block_N : (block_tile_idx + 1) * block_N, cur_kv_head, :], V_shared)
+                     T.gemm(acc_s_cast, V_shared, acc_o, policy=T.GemmWarpPolicy.FullRow)
+             if has_valid_block:
+                 for i, j in T.Parallel(block_H, dim_v):
