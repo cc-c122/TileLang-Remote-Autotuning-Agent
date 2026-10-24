@@ -115,7 +115,20 @@ class InterpreterDiscoveryTests(unittest.TestCase):
         for call in run.call_args_list:
             self.assertEqual(call.args[0][1:], ["-B", "-c", QUERY_SCRIPT])
             self.assertGreater(call.kwargs["timeout"], 0)
-            self.assertLessEqual(call.kwargs["timeout"], 15)
+            self.assertLessEqual(call.kwargs["timeout"], 25)
+
+    def test_cold_gpu_runtime_can_use_its_budget_without_extending_total_deadline(self):
+        def execute(arguments, **kwargs):
+            gpu = arguments[0].startswith("/opt/conda/")
+            if gpu and kwargs["timeout"] < 20:
+                raise subprocess.TimeoutExpired("cold-runtime", kwargs["timeout"])
+            return self.completed(self.payload(gpu=gpu, interpreter=arguments[0]))
+
+        payload, run = self.bootstrap(execute)
+        self.assertTrue(payload["devices"][0]["identity_verified"])
+        self.assertEqual(run.call_count, 2)
+        self.assertLessEqual(run.call_args_list[-1].kwargs["timeout"], 25)
+        self.assertIn("deadline=time.monotonic()+50", _BOOTSTRAP)
 
     def test_timeout_and_invalid_output_continue_without_leaking_exception(self):
         count = [0]

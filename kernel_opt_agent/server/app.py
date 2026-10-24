@@ -18,6 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from kernel_opt_agent.hardware.hardware_info import CANONICAL_FIELDS, HardwareInfo
 from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader, normalize_profile_name
 from kernel_opt_agent.main import WORKSPACE_ROOT
+from kernel_opt_agent.profiler.attribution import annotate_planning_eligibility
 from kernel_opt_agent.source_optimizer import read_source_result
 from kernel_opt_agent.source_optimizer.performance import saved_gate_is_accepted
 
@@ -230,7 +231,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
     best_kernel = None if source_mode and not source_best_verified else _read_text(results_dir / "best_kernel.py")
     best_config = None if source_mode and not source_best_verified else _read_yaml(results_dir / "best_config.yaml")
     report = _read_text(results_dir / "report.md")
-    evidence_summary = _read_jsonl(results_dir / "metric_observations.jsonl")
+    evidence_summary = [annotate_planning_eligibility(row) for row in _read_jsonl(results_dir / "metric_observations.jsonl")]
     diagnoses = _read_jsonl(results_dir / "diagnoses.jsonl")
     profiler_rows = _read_jsonl(results_dir / "profiler_results.jsonl")
     profiler_collections = _read_jsonl(results_dir / "mcprofiler_collection.jsonl")

@@ -5,6 +5,7 @@ import json
 import logging
 import hashlib
 import socket
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -137,6 +138,19 @@ class SSHSessionTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 502)
                 self.assertEqual(response.json()["detail"]["code"], expected)
                 self.assertNotIn(password, response.text)
+
+    def test_partial_authentication_returns_auth_failed_without_session_or_secret(self):
+        self.store.runner_factory = SSHRunner
+        client = Mock()
+        client.get_transport.return_value.is_authenticated.return_value = False
+        with patch("paramiko.SSHClient", return_value=client):
+            response = self.create("partial-api-password-sentinel")
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["detail"]["code"], "auth_failed")
+        self.assertNotIn("partial-api-password-sentinel", response.text)
+        self.assertEqual(self.store._sessions, {})
+        client.open_sftp.assert_not_called()
+        self.assertFalse((self.root / "hardware").exists())
 
     def test_session_expiry_and_delete_do_not_revoke_started_lease(self):
         created = self.create().json()
@@ -394,6 +408,31 @@ def kernel(A: T.Tensor([8], "float32")):
             self.assertIn("auth_timeout", arguments)
             self.assertNotIsInstance(client.set_missing_host_key_policy.call_args.args[0], paramiko.AutoAddPolicy)
 
+    def test_incomplete_gateway_authentication_does_not_open_channels_or_save_trust(self):
+        for state in ("partial", "disconnected", "missing"):
+            with self.subTest(state=state):
+                info = SSHConnectionInfo("example.invalid", 22, "user", "password", None, None, "/tmp/managed-test")
+                trust = Mock()
+                runner = SSHRunner(info, 5, password=SecretStr("partial-auth-secret"), host_key_store=trust)
+                client = Mock()
+                transport = client.get_transport.return_value
+                transport.is_active.return_value = state != "disconnected"
+                transport.is_authenticated.return_value = False
+                if state == "missing":
+                    client.get_transport.return_value = None
+                runner.server_fingerprint = "SHA256:test-fingerprint"
+                with patch("paramiko.SSHClient", return_value=client), patch.object(runner, "_mkdir_p") as mkdir:
+                    with self.assertRaisesRegex(paramiko.AuthenticationException, "authentication did not complete") as caught:
+                        runner.connect()
+                self.assertNotIn("partial-auth-secret", str(caught.exception))
+                client.open_sftp.assert_not_called()
+                client.exec_command.assert_not_called()
+                client.close.assert_called_once()
+                trust.remember.assert_not_called()
+                mkdir.assert_not_called()
+                self.assertIsNone(runner.client)
+                self.assertIsNone(runner._password)
+
     def test_cuda_and_metax_properties_never_confuse_sm_with_cu(self):
         properties = SimpleNamespace(name="MetaX C500", uuid="GPU-test", pci_bus_id=16, total_memory=1024,
                                      warp_size=64, multi_processor_count=104, shared_memory_per_block=65536)
@@ -436,6 +475,32 @@ def kernel(A: T.Tensor([8], "float32")):
         result = runner.run_cancellable("build", "python3 kernel.py")
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("cancellable-password-sentinel", result.stderr + str(result.error_message))
+
+    def test_cancellable_runtime_paths_are_data_and_dangerous_commands_stay_denied(self):
+        runner = SSHRunner(SSHConnectionInfo("example.invalid", 22, "user", "key", "unused", None, "/tmp/managed-test"), 5)
+        channel = Mock()
+        channel.exit_status_ready.return_value = True
+        channel.recv_ready.return_value = False
+        channel.recv_stderr_ready.return_value = False
+        channel.recv_exit_status.return_value = 0
+        stream = SimpleNamespace(channel=channel)
+        runner.client = Mock()
+        runner.client.exec_command.return_value = (None, stream, stream)
+        command = "env PYTHONPATH=/app/tilelang-metax PATH=/usr/bin:/bin python3 -c 'print(\"runtime ready\")'"
+        result = runner.run_cancellable("build", command)
+        self.assertEqual(result.returncode, 0, result.error_message)
+        self.assertFalse(result.guard_denied)
+        tokens = shlex.split(runner.client.exec_command.call_args.args[0])
+        self.assertEqual(tokens[-2:], ["kernel-agent", command])
+        supervisor = tokens[-3]
+        self.assertIn('setsid sh -c "$1"', supervisor)
+        self.assertNotIn(command, supervisor)
+        for dangerous in ("rm -rf .", "rm /etc/passwd", "cp kernel.py /usr/bin/kernel.py", "cd .. && python3 kernel.py"):
+            with self.subTest(command=dangerous):
+                runner.client.reset_mock()
+                result = runner.run_cancellable("build", dangerous)
+                self.assertTrue(result.guard_denied)
+                runner.client.exec_command.assert_not_called()
 
 
 if __name__ == "__main__":

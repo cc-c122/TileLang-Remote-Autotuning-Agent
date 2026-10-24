@@ -159,6 +159,14 @@ def _execute_version(
             outcome.error = error
         return ok
 
+    def command_cancelled(command_result: Any, stage: str) -> bool:
+        if (command_result.returncode == 130 and not command_result.timeout
+                and not command_result.guard_denied and should_cancel()):
+            outcome.status = "cancelled"
+            outcome.error = f"cancelled during {stage}; command stop verified"
+            return True
+        return False
+
     try:
         if should_cancel():
             outcome.status = "cancelled"
@@ -176,6 +184,8 @@ def _execute_version(
             outcome.codegen = parse_codegen_evidence(outcome.logs["build"])
             if not audit("after_build"):
                 return outcome
+            if command_cancelled(build, "build"):
+                return outcome
             if build.returncode != 0:
                 outcome.status = "build_failed"
                 outcome.error = _command_error(build, "build")
@@ -188,6 +198,10 @@ def _execute_version(
             event_callback("correctness_started", f"{label}: running strict correctness gate")
         correctness = run_command("correctness", config.kernel.correctness_command)
         outcome.logs["correctness"] = correctness.stdout + correctness.stderr
+        if not audit("after_correctness"):
+            return outcome
+        if command_cancelled(correctness, "correctness"):
+            return outcome
         strict_match = CORRECTNESS_STRICT_RE.search(correctness.stdout + "\n" + correctness.stderr)
         parsed_correctness = parse_correctness(correctness.stdout, correctness.stderr, correctness.returncode)
         outcome.correctness = SourceTrialCorrectness(
@@ -195,8 +209,6 @@ def _execute_version(
             max_error=parsed_correctness.max_error,
             reason=parsed_correctness.reason if strict_match is not None else "strict CORRECTNESS_RESULT record is required",
         )
-        if not audit("after_correctness"):
-            return outcome
         if correctness.returncode != 0 or strict_match is None or not parsed_correctness.passed:
             outcome.status = "correctness_failed"
             outcome.error = outcome.correctness.reason
@@ -211,6 +223,8 @@ def _execute_version(
             benchmark = run_command(f"benchmark_{index + 1}", config.kernel.run_command)
             outcome.logs[f"benchmark_{index + 1}"] = benchmark.stdout + benchmark.stderr
             if not audit(f"after_benchmark_{index + 1}"):
+                return outcome
+            if command_cancelled(benchmark, f"benchmark repeat {index + 1}"):
                 return outcome
             if benchmark.returncode != 0:
                 outcome.status = "benchmark_failed"
@@ -264,12 +278,13 @@ def _restore_execution_workspace(
         return False, redact_source_text(config, f"{type(exc).__name__}: {exc}"), {}
 
 
-def _close_runner(runner: Any | None) -> None:
+def _close_runner(runner: Any | None) -> str | None:
     if runner is not None and hasattr(runner, "close"):
         try:
             runner.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            return f"runner cleanup failed: {type(exc).__name__}: {exc}"
+    return None
 
 
 def _save_logs(artifact_dir: Path, logs: dict[str, str]) -> dict[str, str]:
@@ -560,12 +575,24 @@ def run_source_optimization(
     baseline_manifest = _tree_hashes(baseline_dir)
     baseline_outcome = _execute_version(config, baseline_dir, baseline_manifest, config.source_optimization.benchmark_repeats, cancelled, event_callback, "source baseline", keep_runner=True)
     if baseline_outcome.status != "benchmark_ok":
-        restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, baseline_outcome.runner, baseline_snapshot, baseline_manifest)
-        _close_runner(baseline_outcome.runner)
+        if baseline_outcome.runner is None and baseline_outcome.status == "cancelled":
+            try:
+                rollback_hashes = _tree_hashes(baseline_dir)
+                restored = rollback_hashes == baseline_manifest
+                rollback_error = None if restored else "unstarted baseline workspace changed"
+            except Exception as exc:
+                restored, rollback_error, rollback_hashes = False, f"baseline audit failed: {type(exc).__name__}: {exc}", {}
+        else:
+            restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, baseline_outcome.runner, baseline_snapshot, baseline_manifest)
+        cleanup_error = _close_runner(baseline_outcome.runner)
         baseline_artifacts = _save_logs(trials_root / "baseline" / "logs", baseline_outcome.logs)
         baseline_artifacts["rollback"] = json.dumps({"verified": restored, "error": rollback_error, "hashes": rollback_hashes}, sort_keys=True)
-        result.status = "cancelled" if baseline_outcome.status == "cancelled" else "failed"
-        result.reason = f"source optimization baseline failed: {baseline_outcome.status}: {baseline_outcome.error}"
+        result.status = "cancelled" if baseline_outcome.status == "cancelled" and restored and cleanup_error is None else "failed"
+        result.reason = f"source optimization baseline {result.status}: {baseline_outcome.status}: {baseline_outcome.error}"
+        if not restored:
+            result.reason += f"; rollback failed: {rollback_error}"
+        if cleanup_error:
+            result.reason += f"; {cleanup_error}"
         result = _sanitized_result(config, result)
         write_source_result(results_dir, result)
         _append_report(results_dir, result)

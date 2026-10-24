@@ -11,6 +11,7 @@ from kernel_opt_agent.profiler.base import MetricObservation, UNVERIFIED_ATTRIBU
 
 from .metric_mapping import MAPPING_BY_SOURCE
 from .report_discovery import McProfilerCase, discover_case
+from .report_context import read_report_context
 
 
 SENSITIVE_PATTERNS = (
@@ -223,9 +224,12 @@ def parse_discovered_case(case: McProfilerCase) -> McProfilerParseResult:
     kernel_name = kernel_match.group(1) if kernel_match else None
     if kernel_name and re.fullmatch(r"period\d+", kernel_name):
         kernel_name = None
-    scope = "kernel" if kernel_name else "aggregate"
+    # A named report describes layout, not PMU isolation or counter scope.
+    scope = "unknown"
+    context = _redact_sensitive(read_report_context(case.case_root, metadata, kernel_name))
     artifacts["target_attribution"] = {
         "status": "unverified", "confidence": "low", "scope": scope, "kernel_name": kernel_name,
+        **context,
     }
     warnings.append(UNVERIFIED_ATTRIBUTION_WARNING)
     expected = artifacts["sha256_manifest"].get(case.report_path.relative_to(case.case_root).as_posix())
@@ -265,6 +269,9 @@ def parse_discovered_case(case: McProfilerCase) -> McProfilerParseResult:
                     parse_confidence=mapping.confidence,
                     scope=scope,
                     kernel_name=_redact_sensitive(kernel_name),
+                    **context,
+                    metric_definition={"name": mapping.source_field_name, "unit": mapping.unit,
+                                       "status": "unconfirmed", "source": "report_field_mapping"},
                     artifact=_redact_sensitive(artifacts["artifact_id"]),
                     parse_warnings=_redact_sensitive(
                         list(mapping.warnings) + ([str(row.get("message"))] if row.get("message") else [])

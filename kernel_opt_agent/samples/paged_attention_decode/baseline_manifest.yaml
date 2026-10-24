@@ -1,6 +1,6 @@
 schema_version: v2.paged_attention_baseline.v1
 project_name: c500-paged-attention-decode-baseline
-status: blocked_sshrunner_session_channel
+status: partially_collected
 operator: Paged Attention Decode
 not_substitutes:
   - GEMM
@@ -37,8 +37,12 @@ correctness:
   tolerance:
     atol: 0.002
     rtol: 0.002
-  max_error: null
-  status: not_collected
+  max_error: 0.0009765625
+  max_error_by_context:
+    128: 0.0009765625
+    512: 0.000244140625
+    2048: null
+  status: partially_collected
 benchmark:
   warmup_runs: 3
   measurement_runs: 5
@@ -47,13 +51,38 @@ benchmark:
     - median_ms
     - p90_ms
     - stddev_ms
-  status: not_collected
+  latency_scope: operator_end_to_end
+  output_allocation_included: true
+  benchmark_command_repeats: 5
+  status: partially_collected
+  raw_samples_csv: docs/artifacts/paged_attention_web_raw_samples_20261022.csv
+  measurement_records: docs/artifacts/paged_attention_web_real_20261022.json
+  contexts_collected: [128, 512]
+  contexts_not_collected: [2048]
 mcprofiler:
-  collection_mode: report_import
+  collection_mode: remote_official_cli_and_report_import
   native_artifacts_required: true
-  status: not_collected
-  blocked_reason: SSHRunner password authentication reaches the host, but opening session channels for exec and SFTP closes with EOFError before upload or command execution.
+  status: partially_collected
+  target_kernel: main_kernel
+  per_kernel: true
+  profile_command_mode: profile
+  baseline_cases:
+    128: mcprof-667ab77860746a74d66b6e3b
+    512: mcprof-59bcb7e412d9e2c9d47617fa
+    2048: null
+  candidate_cases:
+    128: mcprof-d8a584ba86a19ec5001529b8
+    512: null
+  failed_candidate_collection:
+    context_length: 512
+    collection_id: mcprof-035c8b0267fa0a56f57261b1
+    reason_category: report_not_found
+    counted_as_success: false
+  attribution_status: unverified
+  counter_scope: unknown
+  planning_eligible: false
 sshrunner_probe:
+  historical_attempt: true
   attempted: true
   auth_type: password_env
   connection: <redacted>
@@ -62,26 +91,62 @@ sshrunner_probe:
   error_type: EOFError
   blocker_log: kernel_opt_agent/samples/paged_attention_decode/ssh_collection_blocker.yaml
 environment:
-  mxmaca_version: null
-  driver_version: null
-  tilelang_version: null
+  mxmaca_version: 3.5.3.20
+  driver_version: 3.8.30
+  tilelang_version: 0.1.9+cuda.gitf1ca0fb9
   mctilelang_version: null
-  mcprofiler_version: null
+  tilelang_source_commit: f1ca0fb9c018f2807f789cef04a1303c1b68ab20
+  tilelang_source_dirty: null
+  detected_target: maca
+  compiler_version: mxcc 1.0.0 (6477545d4d)
+  mcprofiler_version: 3.9.0.29
   gpu_model: MetaX C500
+  receipt: docs/artifacts/c500_tilelang_environment_20261022.json
+latest_attempt:
+  date: '2026-10-22'
+  path: normal_web_task_with_ssh_session_and_source_runtime_environment
+  ssh_connect: passed
+  sample_upload: passed
+  device_binding: passed
+  build: passed
+  failure_reason: null
+  correctness: passed
+  benchmark: passed
+  optimization_patch: applied_then_rolled_back_no_improvement
+  optimization_name: prefetch_shared_load
+  rollback_verified: true
+  baseline_source_sha256: dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6
+  candidate_source_sha256: 9dfd076047df1e98359d5efc5b319cb6ab2f120f763e5db24eeb4dcf9f788956
+  best_improvement_percent: 0.0
+  contexts_attempted: [128, 512]
+  task_ids:
+    - 363df1fb4e9b442c9813738d8f516cca
+    - 1a9eed7c98104ed38b78a942c268537b
+  evidence_summary: docs/artifacts/paged_attention_web_real_20261022.json
+  acceptance_receipt: docs/artifacts/paged_attention_web_acceptance_20261022.json
+  historical_blocked_attempts: docs/artifacts/paged_attention_web_attempts_20261022.json
 reproduction_commands:
   command_guard_validated: true
   commands:
     - label: inspect_environment
-      command: python -c "import torch, tilelang; print('torch', torch.__version__); print('tilelang', getattr(tilelang, '__version__', 'unknown'))"
+      command: env PYTHONPATH=/app/tilelang-metax MACA_PATH=/opt/maca PATH=/opt/maca/mxgpu_llvm/bin:/opt/conda/bin:/usr/bin:/bin LD_LIBRARY_PATH=/opt/maca/lib:/opt/maca/mxgpu_llvm/lib /opt/conda/bin/python -B -c "import torch, tilelang; print('torch', torch.__version__); print('tilelang', tilelang.__version__)"
     - label: run_context_128
-      command: python kernel_opt_agent/samples/paged_attention_decode/run_paged_attention_decode.py --context-length 128 --warmup 3 --repeat 5 --dtype fp16 --batch 1 --query-heads 32 --kv-heads 8 --head-dim 128 --page-size 16
+      command: env PYTHONPATH=/app/tilelang-metax MACA_PATH=/opt/maca PATH=/opt/maca/mxgpu_llvm/bin:/opt/conda/bin:/usr/bin:/bin LD_LIBRARY_PATH=/opt/maca/lib:/opt/maca/mxgpu_llvm/lib TILELANG_CACHE_DIR=.kernel_opt_agent/tilelang_cache XDG_CACHE_HOME=.kernel_opt_agent/cache TMPDIR=. /opt/conda/bin/python -B run_paged_attention_decode.py --context-length 128 --warmup 3 --repeat 5
     - label: run_context_512
-      command: python kernel_opt_agent/samples/paged_attention_decode/run_paged_attention_decode.py --context-length 512 --warmup 3 --repeat 5 --dtype fp16 --batch 1 --query-heads 32 --kv-heads 8 --head-dim 128 --page-size 16
+      command: env PYTHONPATH=/app/tilelang-metax MACA_PATH=/opt/maca PATH=/opt/maca/mxgpu_llvm/bin:/opt/conda/bin:/usr/bin:/bin LD_LIBRARY_PATH=/opt/maca/lib:/opt/maca/mxgpu_llvm/lib TILELANG_CACHE_DIR=.kernel_opt_agent/tilelang_cache XDG_CACHE_HOME=.kernel_opt_agent/cache TMPDIR=. /opt/conda/bin/python -B run_paged_attention_decode.py --context-length 512 --warmup 3 --repeat 5
     - label: run_context_2048
-      command: python kernel_opt_agent/samples/paged_attention_decode/run_paged_attention_decode.py --context-length 2048 --warmup 3 --repeat 5 --dtype fp16 --batch 1 --query-heads 32 --kv-heads 8 --head-dim 128 --page-size 16
+      execution_status: not_run
+      command: env PYTHONPATH=/app/tilelang-metax MACA_PATH=/opt/maca PATH=/opt/maca/mxgpu_llvm/bin:/opt/conda/bin:/usr/bin:/bin LD_LIBRARY_PATH=/opt/maca/lib:/opt/maca/mxgpu_llvm/lib TILELANG_CACHE_DIR=.kernel_opt_agent/tilelang_cache XDG_CACHE_HOME=.kernel_opt_agent/cache TMPDIR=. /opt/conda/bin/python -B run_paged_attention_decode.py --context-length 2048 --warmup 3 --repeat 5
     - label: import_mcprofiler_report
-      command: python -m kernel_opt_agent.profiler.mcprofiler.report_import --case-dir mcprofiler_cases/paged_attention_decode --out-dir kernel_opt_agent/workspace/results/paged_attention_decode_baseline
+      command: python -m kernel_opt_agent.profiler.mcprofiler.report_import --case-dir tests/fixtures/mcprofiler/real_c500_paged_attention_20261022/ctx128/1_main_kernel_dumped_result.json --out-dir kernel_opt_agent/workspace/results/paged_attention_decode_baseline/ctx128
+    - label: import_mcprofiler_context_512
+      command: python -m kernel_opt_agent.profiler.mcprofiler.report_import --case-dir tests/fixtures/mcprofiler/real_c500_paged_attention_20261022/ctx512/1_main_kernel_dumped_result.json --out-dir kernel_opt_agent/workspace/results/paged_attention_decode_baseline/ctx512
 notes:
   - This manifest is a reproducibility checklist for a real C500 Paged Attention Decode baseline.
-  - No optimization patch is generated or claimed by this baseline.
-  - Current PR includes report_import parser coverage; real mcProfiler native artifacts must be imported after SSHRunner can open exec/SFTP session channels or after manual mcProfiler report export.
+  - Two supported shapes completed real controlled source trials; neither candidate was accepted and no speedup is claimed.
+  - The historical SSH/default-import blockers are retained; a source runtime was later found at /app/tilelang-metax without installing a replacement wheel.
+  - Native attribution-control Cases are separate calibration evidence, not Paged Attention data.
+  - This three-context manifest remains partial because context 2048 has not been collected.
+  - Counter scope and background isolation remain unknown; report selection does not verify attribution.
+  - Reproduction leaf commands run at a managed remote workspace containing uploaded sample files; the real acceptance used the Web task API.
+  - Complete requests, individual latency samples, source diff and failed collection metadata are in the referenced evidence files.

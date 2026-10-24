@@ -1,0 +1,61 @@
+{
+  "evidence_summary": [
+    {
+      "evidence_id": "ev_example_unverified",
+      "metric": "global_read_instructions",
+      "value": 851256,
+      "unit": "instructions",
+      "source": "mcprofiler",
+      "source_trial_id": null,
+      "source_field": "Global Read Instructions",
+      "artifact_id": "c500-native-profiler-smoke-20261021-final:45c6178421a6cd66",
+      "available": true,
+      "confidence": "low",
+      "parse_confidence": "high",
+      "attribution_status": "unverified",
+      "attribution_confidence": "low",
+      "scope": "unknown",
+      "kernel_name": "profiler_vector_axpby",
+      "device_id": null,
+      "tool_version": "3.9.0.29",
+      "metric_definition": {
+        "name": "Global Read Instructions",
+        "unit": "instructions",
+        "status": "unconfirmed",
+        "source": "report_field_mapping"
+      },
+      "collection_scope": {
+        "report_layout": "named_kernel",
+        "counter_scope": "unknown",
+        "requested_kernel": null,
+        "configured_kernels": ["profiler_vector_axpby"],
+        "profile_from_start_actual": true,
+        "counts_actual": 100,
+        "background_workload_excluded": null
+      },
+      "planning_eligible": false,
+      "eligibility_reasons": [
+        "confidence_insufficient",
+        "target_attribution_unverified",
+        "kernel_scope_unconfirmed",
+        "target_kernel_unconfirmed",
+        "counter_scope_unknown",
+        "background_workload_not_excluded",
+        "device_binding_unknown",
+        "metric_definition_unconfirmed",
+        "metric_attribution_not_validated"
+      ],
+      "parse_warnings": ["mcProfiler target attribution is unverified; counters may include other device activity. Excluded from optimization planning."]
+    }
+  ],
+  "diagnoses": [
+    {
+      "bottleneck_type": "insufficient_evidence",
+      "confidence": "low",
+      "evidence_ids": ["ev_example_unverified"],
+      "counter_evidence": [],
+      "uncertainty": ["Target-only counter attribution has not been established."],
+      "recommended_actions": ["Validate metric scope before using counters for optimization planning."]
+    }
+  ]
+}

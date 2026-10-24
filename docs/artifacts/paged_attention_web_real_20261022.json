@@ -1,0 +1,1450 @@
+{
+  "schema_version": "v2.paged_attention_web_evidence.v1",
+  "operator": "Paged Attention Decode",
+  "status": "two_shape_source_trials_completed_no_candidate_accepted",
+  "runner": "ssh",
+  "entry_file": "_upstream_sparse_gqa_decode_paged.py",
+  "protocol": {
+    "seed": 42,
+    "dtype": "fp16",
+    "warmup_per_command": 3,
+    "measurements_per_command": 5,
+    "benchmark_command_repeats": 5,
+    "min_improvement_percent": 1.0,
+    "atol": 0.002,
+    "rtol": 0.002,
+    "latency_scope": "operator_end_to_end",
+    "output_allocation_included": true
+  },
+  "attribution": {
+    "status": "unverified",
+    "counter_scope": "unknown",
+    "background_workload_excluded": null,
+    "planning_eligible_count": 0,
+    "metric_validation": []
+  },
+  "tasks": [
+    {
+      "task_id": "363df1fb4e9b442c9813738d8f516cca",
+      "context_length": 128,
+      "task_status": "completed",
+      "baseline_verified": true,
+      "results_location": "kernel_opt_agent/workspace/tasks/363df1fb4e9b442c9813738d8f516cca/results",
+      "environment": {
+        "target_name": "MetaX C500",
+        "driver_version": "3.8.30",
+        "runtime_version": "3.5.3.20",
+        "python_version": "3.12.11",
+        "torch_version": "2.8.0+metax3.5.3.9"
+      },
+      "source_trial": {
+        "trial_id": "source-7e0d5daeb82c",
+        "optimization_name": "prefetch_shared_load",
+        "target_file": "_upstream_sparse_gqa_decode_paged.py",
+        "target_function": "flashattn.main",
+        "hypothesis": "low-confidence scheduling hypothesis: move an independently verified global-to-shared load earlier to test whether additional load/compute overlap is possible; no speedup is assumed",
+        "status": "no_improvement",
+        "decision_reason": "candidate median improvement did not meet the configured threshold",
+        "source_before_sha256": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6",
+        "source_after_sha256": "9dfd076047df1e98359d5efc5b319cb6ab2f120f763e5db24eeb4dcf9f788956",
+        "execution_source_sha256": "9dfd076047df1e98359d5efc5b319cb6ab2f120f763e5db24eeb4dcf9f788956",
+        "diff": "--- _upstream_sparse_gqa_decode_paged.py\n+++ _upstream_sparse_gqa_decode_paged.py\n@@ -94,6 +94,7 @@\n                     block_tile_idx = T.floormod(logical_block_idx, block_ratio)\n                     physical_block_idx = block_table[bid, block_table_idx]\n                     T.copy(K[physical_block_idx, block_tile_idx * block_N : (block_tile_idx + 1) * block_N, cur_kv_head, :], K_shared)\n+                    T.copy(V[physical_block_idx, block_tile_idx * block_N : (block_tile_idx + 1) * block_N, cur_kv_head, :], V_shared)\n                     T.clear(acc_s)\n                     T.gemm(Q_shared, K_shared, acc_s, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)\n                     if k == 0:  # assume block_indices is sorted in reverse order, otherwise, remove this if condition\n@@ -115,7 +116,6 @@\n                     T.copy(acc_s, acc_s_cast)\n                     for i, j in T.Parallel(block_H, dim_v):\n                         acc_o[i, j] *= scores_scale[i]\n-                    T.copy(V[physical_block_idx, block_tile_idx * block_N : (block_tile_idx + 1) * block_N, cur_kv_head, :], V_shared)\n                     T.gemm(acc_s_cast, V_shared, acc_o, policy=T.GemmWarpPolicy.FullRow)\n             if has_valid_block:\n                 for i, j in T.Parallel(block_H, dim_v):\n",
+        "correctness": {
+          "passed": true,
+          "max_error": 0.0009765625,
+          "reason": "Torch paged KV reference; atol=0.002 rtol=0.002"
+        },
+        "improvement_percent": -5.423449922823776,
+        "rollback_verified": true
+      },
+      "baseline_command_medians_ms": [
+        0.08272100239992142,
+        0.0785409938544035,
+        0.08072203490883112,
+        0.07994705811142921,
+        0.07823202759027481
+      ],
+      "candidate_command_medians_ms": [
+        0.08004903793334961,
+        0.0842829467728734,
+        0.09682099334895611,
+        0.10350893717259169,
+        0.07800408639013767
+      ],
+      "baseline_median_of_command_medians_ms": 0.07994705811142921,
+      "candidate_median_of_command_medians_ms": 0.0842829467728734,
+      "performance_gate": {
+        "decision": "no_improvement",
+        "reason": "candidate median improvement did not meet the configured threshold",
+        "schema_version": "v2.performance_gate.v1",
+        "method": "non_overlapping_repeat_envelope_with_baseline_recheck",
+        "minimum_repeats": 3,
+        "threshold_percent": 1.0,
+        "median_improvement_percent": -5.423449922823776,
+        "conservative_improvement_percent": null,
+        "baseline_codegen_hash": "e4d401a4921b0345f5c0130833bd205687f0595eac8da0a2a6d91237c293ea02",
+        "candidate_codegen_hash": "14305ff0e412f12256dfbf66f50b7362081388bd0ee6fa2d9d8753d573238744",
+        "codegen_status": "changed",
+        "codegen_source": "build_log.GENERATED_SOURCE_SHA256",
+        "baseline_samples_ms": [
+          0.08272100239992142,
+          0.0785409938544035,
+          0.08072203490883112,
+          0.07994705811142921,
+          0.07823202759027481
+        ],
+        "candidate_samples_ms": [
+          0.08004903793334961,
+          0.0842829467728734,
+          0.09682099334895611,
+          0.10350893717259169,
+          0.07800408639013767
+        ],
+        "baseline_recheck_samples_ms": [],
+        "baseline_recheck_passed": false,
+        "uncertainty": [
+          "The observed repeat envelope is a conservative screen, not a statistical confidence interval.",
+          "Timing alone does not establish a hardware bottleneck or guarantee reproducible speedup on other workloads."
+        ]
+      },
+      "planner": {
+        "source": "rule_based",
+        "attempts": 0,
+        "fallback_reason": "LLM planner was not configured",
+        "confidence": "low",
+        "evidence_warnings": [
+          "12 available evidence records excluded from planning: target attribution is unverified or does not match the current baseline"
+        ],
+        "excluded_evidence_count": 12
+      },
+      "rollback": {
+        "verified": true,
+        "hashes": {
+          "THIRD_PARTY_NOTICES.md": "7afbe1f24384936fcf9ce3e9b1d79ea165ecbf6c88ddf529c1d848c141af326c",
+          "_upstream_sparse_gqa_decode_paged.py": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6",
+          "heuristic.py": "2c861d5b5a9c449745f63925353c6d98053c43222ae4c06745f6fa49afffd642",
+          "run_paged_attention_decode.py": "cd89ddec7fd2c075073f4d29831dea5d9f593cecee8eb1dbcc11915341fbe338"
+        },
+        "error": null
+      },
+      "best_kernel_sha256": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6",
+      "best_improvement_percent": 0.0,
+      "profiler_available": true,
+      "evidence_count": 24,
+      "planning_eligible_count": 0,
+      "diagnoses": [
+        {
+          "run_id": "20261022-221249",
+          "iteration": 0,
+          "candidate_id": 0,
+          "trial_id": "20261022-221249:iter000_cand000",
+          "config_hash": "e3b0c44298fc",
+          "status": "benchmark_ok",
+          "bottleneck_type": "insufficient_evidence",
+          "confidence": "low",
+          "evidence_ids": [],
+          "counter_evidence": [],
+          "uncertainty": [
+            "profiler did not provide normalized evidence records"
+          ],
+          "recommended_actions": [
+            "collect mcProfiler or backend profiler metrics before bottleneck diagnosis"
+          ]
+        },
+        {
+          "bottleneck_type": "insufficient_evidence",
+          "confidence": "low",
+          "evidence_ids": [
+            "ev_10a8d26ae01d9245",
+            "ev_aacca31a453f72a6",
+            "ev_0b8614113491ec9c",
+            "ev_5b0df68fd837cef5",
+            "ev_d47545838e1e0e3b",
+            "ev_73f58e91592b5434",
+            "ev_9f492f016e6d8caa",
+            "ev_998dfd1810aff171",
+            "ev_bc5f3dab7807afcc",
+            "ev_4bb248174d3d6373",
+            "ev_c0e14187b69994b6",
+            "ev_5119a472704d6331"
+          ],
+          "counter_evidence": [],
+          "uncertainty": [
+            "mcProfiler target attribution is unverified; counters may include other device activity. Excluded from optimization planning."
+          ],
+          "recommended_actions": [
+            "verify isolated target-kernel counter attribution before diagnosing a bottleneck"
+          ]
+        },
+        {
+          "bottleneck_type": "insufficient_evidence",
+          "confidence": "low",
+          "evidence_ids": [
+            "ev_fe01f9f3fe259b89",
+            "ev_28a5ebe89ced8c2b",
+            "ev_d82068e79485e262",
+            "ev_d680d8890f3dce7d",
+            "ev_003f9ec82760fb65",
+            "ev_c170e80e6999e458",
+            "ev_a6ef2efa1ecf06cd",
+            "ev_e61472379ad31553",
+            "ev_d34e26d5e8abe9a8",
+            "ev_d20581fd010d5c10",
+            "ev_350e762e874ece44",
+            "ev_482cb54efefc0e69"
+          ],
+          "counter_evidence": [],
+          "uncertainty": [
+            "mcProfiler target attribution is unverified; counters may include other device activity. Excluded from optimization planning."
+          ],
+          "recommended_actions": [
+            "verify isolated target-kernel counter attribution before diagnosing a bottleneck"
+          ]
+        }
+      ],
+      "profiler_collections": [
+        {
+          "collection_id": "mcprof-667ab77860746a74d66b6e3b",
+          "source_trial_id": "source-baseline",
+          "source_sha256": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6",
+          "shape_id": "paged_attention_decode_b1_qh32_kvh8_d128_page16_ctx128_fp16",
+          "status": "collected",
+          "primary_report": "1_main_kernel_dumped_result.json",
+          "started_at": "2026-10-22T14:17:21.103898Z",
+          "finished_at": "2026-10-22T14:18:33.314396Z",
+          "selected_report_sha256": "e646d914a92370bd2967a7eec61aaf9fac6988afa0205a080077b13ee78d8799",
+          "full_case_location": "kernel_opt_agent/workspace/tasks/363df1fb4e9b442c9813738d8f516cca/results/mcprofiler_cases/mcprof-667ab77860746a74d66b6e3b",
+          "artifact_count": 31,
+          "artifact_manifest": [
+            {
+              "relative_path": ".20261022221738.db",
+              "sha256": "b6219a236a2cab8f6466256d90a7f54e6669969726b72ec7b7690852b9d9463d",
+              "size_bytes": 356352,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/.metax/shadercache/9cfbad7f9f9d7f2da7508da5940f5d79_3.5.3.20.cache",
+              "sha256": "bae3374f088d3a47081ab2e5f3b179f66515cd72422917e3e9e641cea3bd8060",
+              "size_bytes": 112379,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/.metax/shadercache/9cfbad7f9f9d7f2da7508da5940f5d79_3.5.3.20.cache.lock",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size_bytes": 0,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mcRpcPort.ini",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size_bytes": 0,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.11028.1792678661.log",
+              "sha256": "34809a21859ea09948108f420281d6b5e18da9ba5706399ebf6ec198d025b318",
+              "size_bytes": 58686,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.11197.1792678667.log",
+              "sha256": "f6d7012d2bf72faf6ee65f7e3996e51ca88ac84dbfb086c2a7e26d53a6bfa7b3",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.11362.1792678672.log",
+              "sha256": "e6476ad3a5ffd298a92012cfdbcfb2349e4e32103eaa9d3447c422403a012999",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.11740.1792678683.log",
+              "sha256": "cbbed93a6e45a75569ce4272090ba4fcb98b07f341a4b1f746e6f929ccd4adb5",
+              "size_bytes": 58686,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.11909.1792678690.log",
+              "sha256": "5b2b6fb060afed851d0eb3029e3a157596dc3ba58733cef4547149af55776dc2",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.12062.1792678694.log",
+              "sha256": "ba5112140e0a1382ff045c17e5d36922111b3a5fde197ce963f91faa35f56cab",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel.txt",
+              "sha256": "71c6615b37211d1904b108d0c78a6726eebe3faf6663e9cd2349e25196bc782c",
+              "size_bytes": 1760,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel.txt.csv",
+              "sha256": "25c5648c6ba12cae93c5c24f4cd3aa625e99b7158ca5614bb7e91d00de944eb3",
+              "size_bytes": 870,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel.txt.json",
+              "sha256": "b241c2b10d723555a431536b306456f98ed6c9e8063f6caa3d6b2bfdf1c52ef3",
+              "size_bytes": 2115,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel_dumped_result.json",
+              "sha256": "e646d914a92370bd2967a7eec61aaf9fac6988afa0205a080077b13ee78d8799",
+              "size_bytes": 1997,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1.txt",
+              "sha256": "96428a6572f60fd0d59ce8039e4b7b32b9391ecd2c2979f322b9aa7eedb59a24",
+              "size_bytes": 1749,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1.txt.csv",
+              "sha256": "0e160f43735e0b72920bb731ba65250a72ca4e76f84db0b38b5675bde5dc18af",
+              "size_bytes": 859,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1.txt.json",
+              "sha256": "aad2254bd83f0b2428477cca31e31bbb646a0ed8428ff63d2e45ba57e550dab6",
+              "size_bytes": 2104,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1_dumped_result.json",
+              "sha256": "15fe4af66d1b04325841ee2137cde824f93fc14c6254d478e41ea47c08bc613d",
+              "size_bytes": 1936,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "agent_collection_context.json",
+              "sha256": "725990bab98b5de77d938d921c427901503d1587b5a6f2d78fec87152d8d34e7",
+              "size_bytes": 512,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "batches.json",
+              "sha256": "ce4c135a1dfc9961acea5e00c413f5b6ce5aa440c2517b9ca2ded65d04f411fc",
+              "size_bytes": 830,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "event_batch_1.json",
+              "sha256": "124fda38ffd68fac30b4c7bb1e2e399dd51f7a481b1272338934cf50192ed437",
+              "size_bytes": 1305,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "event_batch_2.json",
+              "sha256": "03f2867cb0c61a2c36929e32ca2068f80977ce99741ce0dae3d1769520a14a06",
+              "size_bytes": 703,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "mcProfiler.json",
+              "sha256": "03f2867cb0c61a2c36929e32ca2068f80977ce99741ce0dae3d1769520a14a06",
+              "size_bytes": 703,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "profiler.log",
+              "sha256": "af1e9cf520ce689363bb107294cdc6e734ce732a0f5e041074e30c8f95edc2d8",
+              "size_bytes": 60959,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.pdf",
+              "sha256": "23555aad18b74e3ed4e4bd5a38dec2a7f57b9ea64a7a451e5fccb3a07cff8288",
+              "size_bytes": 2708,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.txt",
+              "sha256": "25ebc2acf33f9165d66581540b0971eb4dd48e5eb1492b4bc361a8646fb990df",
+              "size_bytes": 1768,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.txt.csv",
+              "sha256": "43512316e9766a97db52de352ce34861b3dfb4396db14b2f908906b7bc86f56c",
+              "size_bytes": 886,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.txt.json",
+              "sha256": "6db2955869e9349eb8a1c74bc6c261aba8913825bfae2ffc169eca8857c3f1db",
+              "size_bytes": 2131,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report_dumped_result.json",
+              "sha256": "224570f3ce3960594abff1c6d465a9eb439fa640f3ec265953c7c2219b1ddcbf",
+              "size_bytes": 2003,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report_js.html",
+              "sha256": "d9ea9d27bb02b71dfb61188fe8103e1e8a3e2801834e7fbfe2e6dedb7f1f2ce3",
+              "size_bytes": 32288,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "source-baseline.json",
+              "sha256": "130765b3e2dd7bf64025cde09857769c7287b99c1f5843f8f4b6fc66bc2eda4d",
+              "size_bytes": 308029,
+              "source": "mcprofiler_auto_collection"
+            }
+          ]
+        },
+        {
+          "collection_id": "mcprof-d8a584ba86a19ec5001529b8",
+          "source_trial_id": "source-7e0d5daeb82c",
+          "source_sha256": "9dfd076047df1e98359d5efc5b319cb6ab2f120f763e5db24eeb4dcf9f788956",
+          "shape_id": "paged_attention_decode_b1_qh32_kvh8_d128_page16_ctx128_fp16",
+          "status": "collected",
+          "primary_report": "1_main_kernel_dumped_result.json",
+          "started_at": "2026-10-22T14:21:27.623383Z",
+          "finished_at": "2026-10-22T14:22:39.722442Z",
+          "selected_report_sha256": "1a5f03539aca2f270bf9069085e35a9736e29c146f4a65925d749e9c419775a3",
+          "full_case_location": "kernel_opt_agent/workspace/tasks/363df1fb4e9b442c9813738d8f516cca/results/mcprofiler_cases/mcprof-d8a584ba86a19ec5001529b8",
+          "artifact_count": 31,
+          "artifact_manifest": [
+            {
+              "relative_path": ".20261022222145.db",
+              "sha256": "4f443b2c38da7643edec89b03cf3e0808325427ae0041b0bc50b299eaffa40c7",
+              "size_bytes": 356352,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/.metax/shadercache/3edb7eed894cb655ebbd6584341c58a6_3.5.3.20.cache",
+              "sha256": "6fa707c7a2bf4316df8d45b64225e8d68685491e51f3c43f993bdfaf78812b63",
+              "size_bytes": 112299,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/.metax/shadercache/3edb7eed894cb655ebbd6584341c58a6_3.5.3.20.cache.lock",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size_bytes": 0,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mcRpcPort.ini",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size_bytes": 0,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.13535.1792678907.log",
+              "sha256": "c46a113056c4c8a9db17e6476642cbafd1b248c22519d34e526ab193a3a42576",
+              "size_bytes": 58686,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.13702.1792678914.log",
+              "sha256": "f584a8c4ccf6b2aec009c114d74ddb9235cc46c06fb1cfbc111c8b2c6b572ab5",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.13861.1792678918.log",
+              "sha256": "f4aa1c89e4cc9c99650e6142156285d64de5a092f62bf2efc32212eafeecbbf0",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.14239.1792678929.log",
+              "sha256": "2df0ff2cf6305ebe9c96843bb1a3e8d3b07d45e7f795e2260bb8ac894ec6a0ad",
+              "size_bytes": 58939,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.14410.1792678937.log",
+              "sha256": "b44697acceacc5f7f6d10c7d82dba2db7edf74a79c9e9bbaa29359e73111f213",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.14570.1792678941.log",
+              "sha256": "65e51a315b19b1ee385228bedd7ae233c45dad849004965cd085d9b1a18a98b3",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel.txt",
+              "sha256": "d66a65a1f2c400667078ff5b3e3ca2fe654a42bcf999aa068b9d9cd33706db32",
+              "size_bytes": 1760,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel.txt.csv",
+              "sha256": "719932f146e003ca9c2410e83c92b012e05a4cc496613abac822d5a39f0ce8e8",
+              "size_bytes": 870,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel.txt.json",
+              "sha256": "4221af3f3cc122940db91c874805f4a03d06ce2258aa344c276c0c6dde2e0b42",
+              "size_bytes": 2115,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel_dumped_result.json",
+              "sha256": "1a5f03539aca2f270bf9069085e35a9736e29c146f4a65925d749e9c419775a3",
+              "size_bytes": 1997,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1.txt",
+              "sha256": "c6804124ad37c024c951d5d8523d224632ed0f75c45a403a6f0d160b13f652c9",
+              "size_bytes": 1749,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1.txt.csv",
+              "sha256": "3b5b2f17a795305767ac4ea374f0ab1cf1f5c6818fd22d6c23bb3b168650fc2d",
+              "size_bytes": 859,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1.txt.json",
+              "sha256": "b8ceb847cab66321f80c02e227e233abf2a379d511e71a79b056baae15fda189",
+              "size_bytes": 2104,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1_dumped_result.json",
+              "sha256": "e7cff44864e96b6345019c0f0fc648f3b6f48344f39d2ad95592ead5035d4480",
+              "size_bytes": 1935,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "agent_collection_context.json",
+              "sha256": "ae4b65643c9e6c0a685b883e39cb8d20fa5cc52c52c5825c78a2dde5ef8c2b8c",
+              "size_bytes": 512,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "batches.json",
+              "sha256": "9af930c5136b2e4d9876fec94632b227837743c3aa81095a3004b95753013ba2",
+              "size_bytes": 830,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "event_batch_1.json",
+              "sha256": "be16741151cbd9fcefdb862e24c2e394eca57b68ffc6caef8099b12ddcf5643a",
+              "size_bytes": 1297,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "event_batch_2.json",
+              "sha256": "ad88ebf4e9fa1dedbea0d492ef9b902b28195124691016ae6195149eb37f4f80",
+              "size_bytes": 711,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "mcProfiler.json",
+              "sha256": "ad88ebf4e9fa1dedbea0d492ef9b902b28195124691016ae6195149eb37f4f80",
+              "size_bytes": 711,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "profiler.log",
+              "sha256": "ef09a10e5dd63751c47aaac64cd1d2df952b0db84ccc44f3c11691deae721948",
+              "size_bytes": 60953,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.pdf",
+              "sha256": "eab69cb78419ef4b82367e3eb2c3571fe62a4dadebd5e880bca3a30152eed935",
+              "size_bytes": 2709,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.txt",
+              "sha256": "bc6af2f71d3534f3f84eb8352f8cf3752d783cd80153a5f1a8323f601cca82a8",
+              "size_bytes": 1768,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.txt.csv",
+              "sha256": "64f6ca530af839fc325b0d34fe67cfad1aac1f5eec3a2b45b3d532a166165bba",
+              "size_bytes": 886,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.txt.json",
+              "sha256": "ad953a1631bcee15526ce1e66a3da7b66dab25ce71139362ac6ab2b4008e3c7a",
+              "size_bytes": 2131,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report_dumped_result.json",
+              "sha256": "bd3f2c14f5d9261302ec7c11bf8526a04cbe8d737b9d31e348d4472a5f2af6a5",
+              "size_bytes": 2000,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report_js.html",
+              "sha256": "83b4a108f177ed9243284a88e88ee4485c39f7c69e9593b9bf741824c7e7df72",
+              "size_bytes": 32288,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "source-7e0d5daeb82c.json",
+              "sha256": "618e19eceea4940225fae52ee150f0c71e9a5d4093dfa1a7fabedc48c134ee2f",
+              "size_bytes": 308026,
+              "source": "mcprofiler_auto_collection"
+            }
+          ]
+        }
+      ],
+      "measurement_records": {
+        "baseline": [
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.08272100239992142,
+            "output_allocation_included": true,
+            "p90_ms": 0.0906387809664011,
+            "raw_samples_ms": [
+              0.09229802526533604,
+              0.0881499145179987,
+              0.0823090085759759,
+              0.08272100239992142,
+              0.08089293260127306
+            ],
+            "stddev_ms": 0.004798711741956924,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.0785409938544035,
+            "output_allocation_included": true,
+            "p90_ms": 0.08645241614431143,
+            "raw_samples_ms": [
+              0.08952000644057989,
+              0.08185103069990873,
+              0.0785409938544035,
+              0.07825798820704222,
+              0.07541500963270664
+            ],
+            "stddev_ms": 0.0054238314782889185,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.08072203490883112,
+            "output_allocation_included": true,
+            "p90_ms": 0.08593520615249872,
+            "raw_samples_ms": [
+              0.08853001054376364,
+              0.08204299956560135,
+              0.07971096783876419,
+              0.07931096479296684,
+              0.08072203490883112
+            ],
+            "stddev_ms": 0.0037658519969682005,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.07994705811142921,
+            "output_allocation_included": true,
+            "p90_ms": 0.08656601421535015,
+            "raw_samples_ms": [
+              0.08884607814252377,
+              0.08314591832458973,
+              0.07994705811142921,
+              0.0789429759606719,
+              0.07852294947952032
+            ],
+            "stddev_ms": 0.004294209813265932,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.07823202759027481,
+            "output_allocation_included": true,
+            "p90_ms": 0.08460646495223045,
+            "raw_samples_ms": [
+              0.08684606291353703,
+              0.0812470680102706,
+              0.07823202759027481,
+              0.07666298188269138,
+              0.07777998689562082
+            ],
+            "stddev_ms": 0.004107786102978517,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          }
+        ],
+        "candidate": [
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.08004903793334961,
+            "output_allocation_included": true,
+            "p90_ms": 0.08563620503991842,
+            "raw_samples_ms": [
+              0.08867296855896711,
+              0.08004903793334961,
+              0.07767800707370043,
+              0.08108105976134539,
+              0.0764759024605155
+            ],
+            "stddev_ms": 0.004771552726622509,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.0842829467728734,
+            "output_allocation_included": true,
+            "p90_ms": 0.09134639985859394,
+            "raw_samples_ms": [
+              0.09554997086524963,
+              0.0850410433486104,
+              0.0842829467728734,
+              0.07933995220810175,
+              0.08022796828299761
+            ],
+            "stddev_ms": 0.0064529811638169565,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.09682099334895611,
+            "output_allocation_included": true,
+            "p90_ms": 0.10341142769902945,
+            "raw_samples_ms": [
+              0.1072610029950738,
+              0.09682099334895611,
+              0.09763706475496292,
+              0.08901895489543676,
+              0.09107205551117659
+            ],
+            "stddev_ms": 0.007115626385143877,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.10350893717259169,
+            "output_allocation_included": true,
+            "p90_ms": 0.11123702861368656,
+            "raw_samples_ms": [
+              0.11502904817461967,
+              0.10350893717259169,
+              0.09840994607657194,
+              0.10554899927228689,
+              0.10125001426786184
+            ],
+            "stddev_ms": 0.006330158966513773,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.07800408639013767,
+            "output_allocation_included": true,
+            "p90_ms": 0.08559443522244692,
+            "raw_samples_ms": [
+              0.0858920393511653,
+              0.08514802902936935,
+              0.07800408639013767,
+              0.07607403676956892,
+              0.077785924077034
+            ],
+            "stddev_ms": 0.004577951062336671,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          }
+        ]
+      },
+      "request_summary": {
+        "runner": {
+          "type": "ssh"
+        },
+        "ssh_session_id": "<in-memory-session-redacted>",
+        "sample": {
+          "source_type": "upload",
+          "entry_file": "_upstream_sparse_gqa_decode_paged.py"
+        },
+        "target": {
+          "backend": "mxmaca",
+          "gpu_model": "MetaX C500",
+          "device_id": "<redacted>"
+        },
+        "budget": {
+          "max_iterations": 1,
+          "candidates_per_iteration": 1,
+          "timeout_seconds": 180
+        },
+        "optimization": {
+          "enabled": true,
+          "max_candidates": 1,
+          "benchmark_repeats": 5,
+          "min_improvement_percent": 1.0
+        },
+        "profiler": {
+          "enabled": true,
+          "type": "mxmaca",
+          "auto_collect": true,
+          "kernel_names": [
+            "main_kernel"
+          ],
+          "timeout_seconds": 240,
+          "command_mode": "profile; one operator call per target script; vendor may replay"
+        }
+      }
+    },
+    {
+      "task_id": "1a9eed7c98104ed38b78a942c268537b",
+      "context_length": 512,
+      "task_status": "completed",
+      "baseline_verified": true,
+      "results_location": "kernel_opt_agent/workspace/tasks/1a9eed7c98104ed38b78a942c268537b/results",
+      "environment": {
+        "target_name": "MetaX C500",
+        "driver_version": "3.8.30",
+        "runtime_version": "3.5.3.20",
+        "python_version": "3.12.11",
+        "torch_version": "2.8.0+metax3.5.3.9"
+      },
+      "source_trial": {
+        "trial_id": "source-13ffd42652df",
+        "optimization_name": "prefetch_shared_load",
+        "target_file": "_upstream_sparse_gqa_decode_paged.py",
+        "target_function": "flashattn.main",
+        "hypothesis": "low-confidence scheduling hypothesis: move an independently verified global-to-shared load earlier to test whether additional load/compute overlap is possible; no speedup is assumed",
+        "status": "no_improvement",
+        "decision_reason": "candidate median improvement did not meet the configured threshold",
+        "source_before_sha256": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6",
+        "source_after_sha256": "9dfd076047df1e98359d5efc5b319cb6ab2f120f763e5db24eeb4dcf9f788956",
+        "execution_source_sha256": "9dfd076047df1e98359d5efc5b319cb6ab2f120f763e5db24eeb4dcf9f788956",
+        "diff": "--- _upstream_sparse_gqa_decode_paged.py\n+++ _upstream_sparse_gqa_decode_paged.py\n@@ -94,6 +94,7 @@\n                     block_tile_idx = T.floormod(logical_block_idx, block_ratio)\n                     physical_block_idx = block_table[bid, block_table_idx]\n                     T.copy(K[physical_block_idx, block_tile_idx * block_N : (block_tile_idx + 1) * block_N, cur_kv_head, :], K_shared)\n+                    T.copy(V[physical_block_idx, block_tile_idx * block_N : (block_tile_idx + 1) * block_N, cur_kv_head, :], V_shared)\n                     T.clear(acc_s)\n                     T.gemm(Q_shared, K_shared, acc_s, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)\n                     if k == 0:  # assume block_indices is sorted in reverse order, otherwise, remove this if condition\n@@ -115,7 +116,6 @@\n                     T.copy(acc_s, acc_s_cast)\n                     for i, j in T.Parallel(block_H, dim_v):\n                         acc_o[i, j] *= scores_scale[i]\n-                    T.copy(V[physical_block_idx, block_tile_idx * block_N : (block_tile_idx + 1) * block_N, cur_kv_head, :], V_shared)\n                     T.gemm(acc_s_cast, V_shared, acc_o, policy=T.GemmWarpPolicy.FullRow)\n             if has_valid_block:\n                 for i, j in T.Parallel(block_H, dim_v):\n",
+        "correctness": {
+          "passed": true,
+          "max_error": 0.000244140625,
+          "reason": "Torch paged KV reference; atol=0.002 rtol=0.002"
+        },
+        "improvement_percent": -0.6340495375308911,
+        "rollback_verified": true
+      },
+      "baseline_command_medians_ms": [
+        0.1003149664029479,
+        0.08752499707043171,
+        0.08582405280321836,
+        0.09093200787901878,
+        0.08713605348020792
+      ],
+      "candidate_command_medians_ms": [
+        0.08807994890958071,
+        0.08754990994930267,
+        0.08631602395325899,
+        0.10677892714738846,
+        0.09988504461944103
+      ],
+      "baseline_median_of_command_medians_ms": 0.08752499707043171,
+      "candidate_median_of_command_medians_ms": 0.08807994890958071,
+      "performance_gate": {
+        "decision": "no_improvement",
+        "reason": "candidate median improvement did not meet the configured threshold",
+        "schema_version": "v2.performance_gate.v1",
+        "method": "non_overlapping_repeat_envelope_with_baseline_recheck",
+        "minimum_repeats": 3,
+        "threshold_percent": 1.0,
+        "median_improvement_percent": -0.6340495375308911,
+        "conservative_improvement_percent": null,
+        "baseline_codegen_hash": "84ab058c129e31c77d3b74a3ac58e492f21aeef946b26dc8a281dd28ceef8ef5",
+        "candidate_codegen_hash": "4da398f0a0cfddab4940620a0040c48b6102ab685f8b5085d78a44805d63ce7b",
+        "codegen_status": "changed",
+        "codegen_source": "build_log.GENERATED_SOURCE_SHA256",
+        "baseline_samples_ms": [
+          0.1003149664029479,
+          0.08752499707043171,
+          0.08582405280321836,
+          0.09093200787901878,
+          0.08713605348020792
+        ],
+        "candidate_samples_ms": [
+          0.08807994890958071,
+          0.08754990994930267,
+          0.08631602395325899,
+          0.10677892714738846,
+          0.09988504461944103
+        ],
+        "baseline_recheck_samples_ms": [],
+        "baseline_recheck_passed": false,
+        "uncertainty": [
+          "The observed repeat envelope is a conservative screen, not a statistical confidence interval.",
+          "Timing alone does not establish a hardware bottleneck or guarantee reproducible speedup on other workloads."
+        ]
+      },
+      "planner": {
+        "source": "rule_based",
+        "attempts": 0,
+        "fallback_reason": "LLM planner was not configured",
+        "confidence": "low",
+        "evidence_warnings": [
+          "12 available evidence records excluded from planning: target attribution is unverified or does not match the current baseline"
+        ],
+        "excluded_evidence_count": 12
+      },
+      "rollback": {
+        "verified": true,
+        "hashes": {
+          "THIRD_PARTY_NOTICES.md": "7afbe1f24384936fcf9ce3e9b1d79ea165ecbf6c88ddf529c1d848c141af326c",
+          "_upstream_sparse_gqa_decode_paged.py": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6",
+          "heuristic.py": "2c861d5b5a9c449745f63925353c6d98053c43222ae4c06745f6fa49afffd642",
+          "run_paged_attention_decode.py": "cd89ddec7fd2c075073f4d29831dea5d9f593cecee8eb1dbcc11915341fbe338"
+        },
+        "error": null
+      },
+      "best_kernel_sha256": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6",
+      "best_improvement_percent": 0.0,
+      "profiler_available": true,
+      "evidence_count": 12,
+      "planning_eligible_count": 0,
+      "diagnoses": [
+        {
+          "run_id": "20261022-222326",
+          "iteration": 0,
+          "candidate_id": 0,
+          "trial_id": "20261022-222326:iter000_cand000",
+          "config_hash": "e3b0c44298fc",
+          "status": "benchmark_ok",
+          "bottleneck_type": "insufficient_evidence",
+          "confidence": "low",
+          "evidence_ids": [],
+          "counter_evidence": [],
+          "uncertainty": [
+            "profiler did not provide normalized evidence records"
+          ],
+          "recommended_actions": [
+            "collect mcProfiler or backend profiler metrics before bottleneck diagnosis"
+          ]
+        },
+        {
+          "bottleneck_type": "insufficient_evidence",
+          "confidence": "low",
+          "evidence_ids": [
+            "ev_e07a2bcaac280780",
+            "ev_f52a507e8bc1d5bf",
+            "ev_9a0a8686d0f1b8f5",
+            "ev_9a278ecb765250ee",
+            "ev_58bd078f42795976",
+            "ev_b4271cdc2687e8c6",
+            "ev_91145671ecd9d668",
+            "ev_d0c7e2d17d267a24",
+            "ev_a4d9672ea998e919",
+            "ev_e52cf43b8e0f2100",
+            "ev_627df236f3e40504",
+            "ev_aa80bd613e645c0e"
+          ],
+          "counter_evidence": [],
+          "uncertainty": [
+            "mcProfiler target attribution is unverified; counters may include other device activity. Excluded from optimization planning."
+          ],
+          "recommended_actions": [
+            "verify isolated target-kernel counter attribution before diagnosing a bottleneck"
+          ]
+        }
+      ],
+      "profiler_collections": [
+        {
+          "collection_id": "mcprof-59bcb7e412d9e2c9d47617fa",
+          "source_trial_id": "source-baseline",
+          "source_sha256": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6",
+          "shape_id": "paged_attention_decode_b1_qh32_kvh8_d128_page16_ctx512_fp16",
+          "status": "collected",
+          "primary_report": "1_main_kernel_dumped_result.json",
+          "started_at": "2026-10-22T14:28:01.547863Z",
+          "finished_at": "2026-10-22T14:29:14.122554Z",
+          "selected_report_sha256": "a505ad6b73b0c93380a78762d257ceb26229f718a2f077951765c2d65e0523ca",
+          "full_case_location": "kernel_opt_agent/workspace/tasks/1a9eed7c98104ed38b78a942c268537b/results/mcprofiler_cases/mcprof-59bcb7e412d9e2c9d47617fa",
+          "artifact_count": 31,
+          "artifact_manifest": [
+            {
+              "relative_path": ".20261022222819.db",
+              "sha256": "c5eac0fc19915c90681ab4d2997716062cc57aaf03b1d425a5e6b28e9506ca24",
+              "size_bytes": 544768,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/.metax/shadercache/8cd3e8c917570bea2dbfb686c873f5bd_3.5.3.20.cache",
+              "sha256": "6b6caeabae6399562008e4806c5549e94bc76116693213fcd61f2945d665b223",
+              "size_bytes": 112379,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/.metax/shadercache/8cd3e8c917570bea2dbfb686c873f5bd_3.5.3.20.cache.lock",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size_bytes": 0,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mcRpcPort.ini",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size_bytes": 0,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.16791.1792679301.log",
+              "sha256": "d96ed2f953fd18e802d697d0ef64a92cff9788755c952196620f04c9a1d96ca0",
+              "size_bytes": 129460,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.16959.1792679308.log",
+              "sha256": "e398cf40e700052144d06faad9010456b60bb42aa102eb655dc80f804a5ec5ca",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.17124.1792679312.log",
+              "sha256": "2deeeae128a232ec818a07804771e1a5a4c5ca0cd849e42a0736057743564594",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.17502.1792679324.log",
+              "sha256": "13efd05f80e48bd65d8ae144060019f2151da7ace25d830aa462f72fdfa71a59",
+              "size_bytes": 128953,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.17672.1792679331.log",
+              "sha256": "d5cac491244c336ec2ca5a08fd5ba2ae6ab89e88f8b777713afacec12e16cda8",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": ".home/mxlog/umd/umd.17825.1792679335.log",
+              "sha256": "9a6e8c842dfe2963137dafd68ae14d3dadbc9d1d5935d054904e67f037af5145",
+              "size_bytes": 25785,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel.txt",
+              "sha256": "038dc059f6ccc6f007313121374ac1aba509977c0740c191bbbd0f1d7a150267",
+              "size_bytes": 1762,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel.txt.csv",
+              "sha256": "9cd4dc27fa45b191a3dc845136c420fa01659ee20cf9173ed2622c7703153d43",
+              "size_bytes": 874,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel.txt.json",
+              "sha256": "181bbb499c5400276003e62772fba6e57f885ff1c8497238d8779b175f5a5aa8",
+              "size_bytes": 2119,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "1_main_kernel_dumped_result.json",
+              "sha256": "a505ad6b73b0c93380a78762d257ceb26229f718a2f077951765c2d65e0523ca",
+              "size_bytes": 1999,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1.txt",
+              "sha256": "10288e45fcb1893c1593eace665f3b8766335c5b46383c4a33c47dd70974d378",
+              "size_bytes": 1749,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1.txt.csv",
+              "sha256": "6d3eabfa3542219be43b3a1b11b8f351007127145e5ed0107fe1cc5cb0fcb1c6",
+              "size_bytes": 859,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1.txt.json",
+              "sha256": "1b684f3c29e734731cc9caa7afc98d64bc0518e05156fa208f8014f4ef604aee",
+              "size_bytes": 2104,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "2_main_kernel_1_dumped_result.json",
+              "sha256": "18bf89851bc6ea1a0f65379b3f43d54e5f469cdce2be1d940c2c8a888628f70d",
+              "size_bytes": 1936,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "agent_collection_context.json",
+              "sha256": "8264e17f7f03a1353bfe635676b55bb81c1b5f2670a9deb976e4a98e59eb1008",
+              "size_bytes": 512,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "batches.json",
+              "sha256": "e1880f9f7005e65975553ae8710ebea32d465fb3380e7c13a5bcbe4e44c00045",
+              "size_bytes": 830,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "event_batch_1.json",
+              "sha256": "b0fa595a765903bdbc2105bbec9db812f74195540797557f60bdfa259892dbed",
+              "size_bytes": 1296,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "event_batch_2.json",
+              "sha256": "12a3fcae06610ccc0f35854f0a76edbbf99aca63501d7339b510163a9d8988fa",
+              "size_bytes": 712,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "mcProfiler.json",
+              "sha256": "12a3fcae06610ccc0f35854f0a76edbbf99aca63501d7339b510163a9d8988fa",
+              "size_bytes": 712,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "profiler.log",
+              "sha256": "48975818a4273c17d29c000b9b6b3eb8f5cfa148dafbc829a87b40ce301419ee",
+              "size_bytes": 60949,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.pdf",
+              "sha256": "a1ec77d7c60192bd04ee22eef7189761dc97e8ab31ad43d8b2f4f856c6e294cf",
+              "size_bytes": 2707,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.txt",
+              "sha256": "4b82f47135367737b1ede35ca5913f122309c4d68b34540b8c65a189a9064196",
+              "size_bytes": 1768,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.txt.csv",
+              "sha256": "790da039171e0186798872a19d80e8418d6628d08756c9564a7c603c9aa4bb21",
+              "size_bytes": 886,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report.txt.json",
+              "sha256": "2a4bbe6a5e392199a4a52cc5436cb5040931091391babafbf8bd56ff38aea0ba",
+              "size_bytes": 2131,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report_dumped_result.json",
+              "sha256": "e36bdd0ba1075423f661a4c7152bf74f50bd96e4b7ce6b70040d257f6ad1a8e9",
+              "size_bytes": 2001,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "report_js.html",
+              "sha256": "b90c66429d712e5a06f22642e26d9561641831c5eb98295c41c2b0cb4d2c1dcf",
+              "size_bytes": 32288,
+              "source": "mcprofiler_auto_collection"
+            },
+            {
+              "relative_path": "source-baseline.json",
+              "sha256": "9e02981325e18960d5faa620ec6353b9a23b4e392b3aaf4b9ae281595912517c",
+              "size_bytes": 309815,
+              "source": "mcprofiler_auto_collection"
+            }
+          ]
+        },
+        {
+          "collection_id": "mcprof-035c8b0267fa0a56f57261b1",
+          "source_trial_id": "source-13ffd42652df",
+          "source_sha256": "9dfd076047df1e98359d5efc5b319cb6ab2f120f763e5db24eeb4dcf9f788956",
+          "shape_id": "paged_attention_decode_b1_qh32_kvh8_d128_page16_ctx512_fp16",
+          "status": "failed",
+          "reason_category": "report_not_found",
+          "primary_report": null,
+          "started_at": "2026-10-22T14:32:11.265404Z",
+          "finished_at": "2026-10-22T14:33:27.166537Z",
+          "partial_artifact_location": "kernel_opt_agent/workspace/tasks/1a9eed7c98104ed38b78a942c268537b/results/mcprofiler_failed/mcprof-035c8b0267fa0a56f57261b1",
+          "execution_manifest": {
+            "controlled_remote_directory": ".kernel_opt_agent/mcprofiler/collections/mcprof-035c8b0267fa0a56f57261b1",
+            "credentials_forwarded_to_vendor": false,
+            "duration_seconds": 69.06957769393921,
+            "guard_denied": false,
+            "profile_from_start_requested": true,
+            "returncode": 0,
+            "runner": "ssh",
+            "runtime_profiling_hook": "MCTX_TARGET_INIT=true",
+            "server_mode": "embedded",
+            "shape_id": "paged_attention_decode_b1_qh32_kvh8_d128_page16_ctx512_fp16",
+            "source_sha256": "9dfd076047df1e98359d5efc5b319cb6ab2f120f763e5db24eeb4dcf9f788956",
+            "source_trial_id": "source-13ffd42652df",
+            "target_command_sha256": "22dbbbc5012053de5374c07a4f3c5647dfc454dfb542bd828daf4787505f6630",
+            "timed_out": false,
+            "tool": "mcProfiler",
+            "working_directory_scope": "managed_remote_workspace"
+          },
+          "artifact_count": 15
+        }
+      ],
+      "measurement_records": {
+        "baseline": [
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.1003149664029479,
+            "output_allocation_included": true,
+            "p90_ms": 0.11616956908255816,
+            "raw_samples_ms": [
+              0.12261595111340284,
+              0.10649999603629112,
+              0.1003149664029479,
+              0.09457499254494905,
+              0.09738700464367867
+            ],
+            "stddev_ms": 0.01116420084123068,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.08752499707043171,
+            "output_allocation_included": true,
+            "p90_ms": 0.09282336104661226,
+            "raw_samples_ms": [
+              0.09563297498971224,
+              0.0886089401319623,
+              0.08618400897830725,
+              0.08752499707043171,
+              0.08514500223100185
+            ],
+            "stddev_ms": 0.0041349313891330805,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.08582405280321836,
+            "output_allocation_included": true,
+            "p90_ms": 0.08982857689261436,
+            "raw_samples_ms": [
+              0.0924309715628624,
+              0.08582405280321836,
+              0.08542102295905352,
+              0.08592498488724232,
+              0.08581997826695442
+            ],
+            "stddev_ms": 0.002995168244041172,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.09093200787901878,
+            "output_allocation_included": true,
+            "p90_ms": 0.0956773292273283,
+            "raw_samples_ms": [
+              0.09857094846665859,
+              0.09093200787901878,
+              0.09133690036833286,
+              0.09051605593413115,
+              0.08924794383347034
+            ],
+            "stddev_ms": 0.0036898728517308814,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.08713605348020792,
+            "output_allocation_included": true,
+            "p90_ms": 0.09532815311104059,
+            "raw_samples_ms": [
+              0.09757291991263628,
+              0.09196100290864706,
+              0.08713605348020792,
+              0.08542207069694996,
+              0.08336501196026802
+            ],
+            "stddev_ms": 0.005706349060680926,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          }
+        ],
+        "candidate": [
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.08807994890958071,
+            "output_allocation_included": true,
+            "p90_ms": 0.09799478575587273,
+            "raw_samples_ms": [
+              0.09839795529842377,
+              0.08807994890958071,
+              0.09739003144204617,
+              0.08750404231250286,
+              0.08799310307949781
+            ],
+            "stddev_ms": 0.005512288670349062,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.08754990994930267,
+            "output_allocation_included": true,
+            "p90_ms": 0.09416579268872738,
+            "raw_samples_ms": [
+              0.09755697101354599,
+              0.08907902520149946,
+              0.08754990994930267,
+              0.08748506661504507,
+              0.0868779607117176
+            ],
+            "stddev_ms": 0.004461217523873644,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.08631602395325899,
+            "output_allocation_included": true,
+            "p90_ms": 0.09177413303405046,
+            "raw_samples_ms": [
+              0.09369093459099531,
+              0.0888989306986332,
+              0.08631602395325899,
+              0.08332403376698494,
+              0.08537794928997755
+            ],
+            "stddev_ms": 0.003988293601196849,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.10677892714738846,
+            "output_allocation_included": true,
+            "p90_ms": 0.10831998661160469,
+            "raw_samples_ms": [
+              0.109103973954916,
+              0.10244909208267927,
+              0.10112905874848366,
+              0.10677892714738846,
+              0.10714400559663773
+            ],
+            "stddev_ms": 0.003375648806418903,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          },
+          {
+            "latency_scope": "operator_end_to_end",
+            "measurement_protocol": "one precompiled TileLang paged-attention operator call per sample after fixed warmup; inputs and intermediate buffers are preallocated; split/combine launches and adapter output allocation are included",
+            "measurement_runs": 5,
+            "median_ms": 0.09988504461944103,
+            "output_allocation_included": true,
+            "p90_ms": 0.1086769625544548,
+            "raw_samples_ms": [
+              0.11222297325730324,
+              0.09988504461944103,
+              0.10335794650018215,
+              0.09373994544148445,
+              0.09855290409177542
+            ],
+            "stddev_ms": 0.006890802305808931,
+            "timing": "host_perf_counter_with_device_synchronization",
+            "warmup_runs": 3
+          }
+        ]
+      },
+      "request_summary": {
+        "runner": {
+          "type": "ssh"
+        },
+        "ssh_session_id": "<in-memory-session-redacted>",
+        "sample": {
+          "source_type": "upload",
+          "entry_file": "_upstream_sparse_gqa_decode_paged.py"
+        },
+        "target": {
+          "backend": "mxmaca",
+          "gpu_model": "MetaX C500",
+          "device_id": "<redacted>"
+        },
+        "budget": {
+          "max_iterations": 1,
+          "candidates_per_iteration": 1,
+          "timeout_seconds": 180
+        },
+        "optimization": {
+          "enabled": true,
+          "max_candidates": 1,
+          "benchmark_repeats": 5,
+          "min_improvement_percent": 1.0
+        },
+        "profiler": {
+          "enabled": true,
+          "type": "mxmaca",
+          "auto_collect": true,
+          "kernel_names": [
+            "main_kernel"
+          ],
+          "timeout_seconds": 240,
+          "command_mode": "profile; one operator call per target script; vendor may replay"
+        }
+      }
+    }
+  ],
+  "notes": [
+    "Each engine latency entry is a benchmark-command median, not a single-call raw sample; see measurement_records and the raw CSV.",
+    "Timing is host-synchronized operator end-to-end, including split/combine launches and adapter output allocation, not isolated target-kernel latency.",
+    "The observed degradation does not establish a hardware bottleneck. Native counters were excluded from planning.",
+    "Context 2048 was not run in this two-shape source-optimization acceptance; the three-context baseline manifest remains partial.",
+    "Native C++ calibration reports and Gate/Up cases are separate evidence and are not used as Paged Attention proof."
+  ]
+}

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .attribution import UNVERIFIED_ATTRIBUTION_WARNING, annotate_planning_eligibility
+
 
 SENSITIVE_PATTERNS = (
     "password",
@@ -16,15 +18,6 @@ SENSITIVE_PATTERNS = (
     "private key",
 )
 REDACTED_SECRET = "<redacted:secret>"
-UNVERIFIED_ATTRIBUTION_WARNING = (
-    "mcProfiler target attribution is unverified; counters may include other device activity. "
-    "Excluded from optimization planning."
-)
-
-
-def has_verified_target_attribution(status: Any, confidence: Any, scope: Any, kernel_name: Any) -> bool:
-    return (status == "verified" and confidence in ("medium", "high") and scope == "kernel"
-            and isinstance(kernel_name, str) and bool(kernel_name.strip()))
 
 
 def _is_sensitive_string(value: str) -> bool:
@@ -87,13 +80,15 @@ class MetricObservation:
     attribution_confidence: str = "unknown"
     scope: str = "unknown"
     kernel_name: str | None = None
+    device_id: str | None = None
+    tool_version: str | None = None
+    metric_definition: dict[str, Any] = field(default_factory=dict)
+    collection_scope: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.parse_confidence is None:
             self.parse_confidence = self.confidence
-        if self.source == "mcprofiler" and not has_verified_target_attribution(
-            self.attribution_status, self.attribution_confidence, self.scope, self.kernel_name,
-        ):
+        if self.source == "mcprofiler":
             self.confidence = "low"
             self.attribution_status = "unverified"
             self.attribution_confidence = "low"
@@ -101,7 +96,7 @@ class MetricObservation:
                 self.parse_warnings.append(UNVERIFIED_ATTRIBUTION_WARNING)
 
     def to_dict(self) -> dict[str, Any]:
-        return redact_sensitive(
+        payload = redact_sensitive(
             {
                 "metric_name": self.metric_name,
                 "source_field_name": self.source_field_name,
@@ -117,8 +112,13 @@ class MetricObservation:
                 "attribution_confidence": self.attribution_confidence,
                 "scope": self.scope,
                 "kernel_name": self.kernel_name,
+                "device_id": self.device_id,
+                "tool_version": self.tool_version,
+                "metric_definition": self.metric_definition,
+                "collection_scope": self.collection_scope,
             }
         )
+        return annotate_planning_eligibility({**payload, "artifact_id": payload["artifact"]})
 
 
 @dataclass

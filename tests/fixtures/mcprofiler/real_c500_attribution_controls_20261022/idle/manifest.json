@@ -1,0 +1,9 @@
+{
+  "fixture_kind": "real_native_report_subset",
+  "case_name": "attribution-final-idle-20261022",
+  "collection_id": "mcprof-6ffd4f8a16e95fe535d222ea",
+  "mcprofiler_version": "3.9.0.29",
+  "operator": "native_attribution_control_idle",
+  "kernel_name": null,
+  "attribution_status": "unverified"
+}

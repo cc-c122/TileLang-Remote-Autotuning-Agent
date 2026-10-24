@@ -165,6 +165,10 @@ class JobWorker:
                     source_result.reason or source_result.status,
                     {"status": source_result.status, "accepted_trial_id": source_result.accepted_trial_id},
                 )
+                if source_result.status in {"failed", "cancelled"}:
+                    error = (source_result.reason or "source baseline failed") if source_result.status == "failed" else None
+                    self.manager.set_status(task_id, source_result.status, error)
+                    return
             if self.manager.is_cancel_requested(task_id):
                 self.manager.set_status(task_id, "cancelled")
             else:
@@ -191,15 +195,11 @@ class JobWorker:
         except Exception as exc:
             public_error = redact_source_text(config, str(exc)) if "config" in locals() else "task failed before effective configuration was available"
             if request.optimization.enabled:
-                current_status = "cancelled" if self.manager.is_cancel_requested(task_id) else "failed"
                 source_result = SourceOptimizationResult.model_validate(read_source_result(results_dir))
-                source_result.status = current_status  # type: ignore[assignment]
+                source_result.status = "failed"
                 source_result.reason = public_error
                 write_source_result(results_dir, source_result)
-            if self.manager.is_cancel_requested(task_id):
-                self.manager.set_status(task_id, "cancelled", public_error)
-            else:
-                self.manager.set_status(task_id, "failed", public_error)
+            self.manager.set_status(task_id, "failed", public_error)
         finally:
             agent_main.WORKSPACE_ROOT = original["WORKSPACE_ROOT"]
             agent_main.RESULTS_DIR = original["RESULTS_DIR"]
