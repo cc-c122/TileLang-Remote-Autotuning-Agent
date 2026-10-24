@@ -363,7 +363,7 @@ async (page) => {
     state.taskEvents = taskValue.events;
     renderTaskDetail();
     activateView("taskView");
-  }, {taskValue: task("tampered-source-best", "source_optimization"), resultsValue: tamperedResults});
+  }, {taskValue: {...task("tampered-source-best", "source_optimization"), status: "completed"}, resultsValue: tamperedResults});
   const tamperedTaskText = await page.locator("#taskDetailPanel").innerText();
   check(tamperedTaskText.includes("当前 best 验证失败") && tamperedTaskText.includes("current best latency\n验证失败") && tamperedTaskText.includes("published file hash mismatch"), "Task detail rejects and explains a tampered current best");
 
@@ -393,6 +393,24 @@ async (page) => {
   }, {...task("pending-source-verification", "source_optimization"), status: "running", source_best_verified: false, improvement_percent: 20});
   const pendingVerificationRowText = await page.locator("#taskListPanel tbody tr").innerText();
   check(pendingVerificationRowText.includes("等待结果核验") && !pendingVerificationRowText.includes("当前 best 验证失败") && !pendingVerificationRowText.includes("20%"), "Pending source verification is not presented as a terminal failure");
+
+  for (const status of ["pending", "running"]) {
+    await page.evaluate((status) => {
+      state.task = {task_id: "live-pending-regression", status, execution_mode: "source_optimization", source_best_verified: false,
+        source_best_verification_error: "source optimization did not complete"};
+      state.taskEvents = [];
+      state.taskResults = {source_best_verified: false, source_best_verification_error: "source optimization did not complete",
+        source_optimization: {schema_version: "v2.source_optimization.v1", status: "running", trials: []}};
+      renderTaskDetail();
+      renderApiResults();
+    }, status);
+    const pendingDetail = await page.locator("#taskDetailPanel").innerText();
+    const pendingResult = await page.locator("#apiResultsPanel").innerText();
+    check(pendingDetail.includes("等待结果核验") && !pendingDetail.includes("验证失败"), `${status}: task detail distinguishes incomplete verification from failure`);
+    check(pendingResult.includes("等待结果核验") && !pendingResult.includes("验证失败") && !pendingResult.includes("当前 best 已失效"), `${status}: partial results do not claim a terminal artifact failure`);
+    check(await page.locator("#taskDetailPanel .alert.bad, #apiResultsPanel .alert.bad").count() === 0, `${status}: pending verification has no failure alert`);
+    check(await page.locator("#downloadBestKernelBtn").isDisabled(), `${status}: pending presentation never unlocks an unverified download`);
+  }
 
   await page.evaluate((taskValue) => {
     state.taskList = [taskValue];

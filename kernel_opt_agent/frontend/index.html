@@ -3868,6 +3868,11 @@
       return task?.source_best_verified === false || results?.source_best_verified === false;
     }
 
+    function sourceBestVerificationPending(results, task) {
+      return sourceBestVerificationFailed(results, task)
+        && ["pending", "running", "queued"].includes(String(task?.status || "").trim().toLowerCase());
+    }
+
     function sourceBestVerificationNotice(results, task) {
       if (!sourceBestVerificationFailed(results, task)) return "";
       const taskReason = typeof task?.source_best_verification_error === "string" ? task.source_best_verification_error.trim() : "";
@@ -3877,6 +3882,7 @@
         : resultsReason
           ? display(resultsReason)
         : "后端未返回具体验证错误。";
+      if (sourceBestVerificationPending(results, task)) return `<div class="alert warn">任务尚未结束，当前 best 等待结果核验；最终选择和可下载产物以后端完成验证为准。后端说明：${escapeHtml(reason)}</div>`;
       return `<div class="alert bad">当前 best 产物验证失败：${escapeHtml(reason)} 历史 trial 和 diff 仅供审计，不代表当前可下载产物已验证。</div>`;
     }
 
@@ -3948,11 +3954,12 @@
       const sourceOptimization = sourceOptimizationPayload(state.taskResults);
       const acceptedVerified = acceptedSourceTrialVerified(sourceOptimization, state.taskResults, task);
       const sourceBestInvalid = sourceMode && sourceBestVerificationFailed(state.taskResults, task);
+      const sourceBestPending = sourceMode && sourceBestVerificationPending(state.taskResults, task);
       const acceptedTrial = acceptedSourceTrial(sourceOptimization);
       const acceptedBestLatency = acceptedVerified ? sourceMeasurementMedian(acceptedTrial?.candidate_latency_ms) : null;
       const retainedBaseline = sourceMode && sourceOptimizationStatus(sourceOptimization) === "completed" && !acceptedVerified;
       const sourceCurrentBest = sourceBestInvalid
-        ? "验证失败"
+        ? sourceBestPending ? "等待结果核验" : "验证失败"
         : acceptedVerified
           ? display(acceptedBestLatency)
           : retainedBaseline
@@ -3969,7 +3976,7 @@
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>执行模式</div><div>${executionModeBadge(executionMode)}</div><div>状态</div><div>${taskStatusBadge(task.status, task, state.taskResults)}</div></div></article>
           <article class="result-card"><div class="metric-label">${sourceMode ? "已尝试次数" : "已尝试 trial"}</div><div class="metric-main">${escapeHtml(display(attemptedCount))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>${baselineOnly ? "源码优化" : "current best latency"}</div><div>${baselineOnly ? "未执行" : sourceMode ? escapeHtml(sourceCurrentBest) : escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
-          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : sourceMode ? "源码修改决定" : "性能提升"}</div><div class="metric-main ${acceptedVerified ? "good" : ""}">${baselineOnly ? completionVerification === "failed" ? "基线验证未通过" : completionVerification === "unknown" && taskCompleted ? "基线结果待核验" : "仅基线测量" : sourceMode ? sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? "已接受源码修改" : sourceOptimization && !["running", "unknown"].includes(sourceOptimizationStatus(sourceOptimization)) ? "保留 baseline" : "等待后端决定" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : sourceMode ? "源码修改决定" : "性能提升"}</div><div class="metric-main ${acceptedVerified ? "good" : ""}">${baselineOnly ? completionVerification === "failed" ? "基线验证未通过" : completionVerification === "unknown" && taskCompleted ? "基线结果待核验" : "仅基线测量" : sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? "已接受源码修改" : sourceOptimization && !["running", "unknown"].includes(sourceOptimizationStatus(sourceOptimization)) ? "保留 baseline" : "等待后端决定" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
         </div>
         ${executionModeNotice(executionMode)}
         ${executionModeReasonNotice(task)}
@@ -4853,9 +4860,10 @@
       const acceptedTrial = acceptedSourceTrial(sourceOptimization);
       const acceptedVerified = acceptedSourceTrialVerified(sourceOptimization, results, state.task);
       const sourceBestInvalid = sourceMode && sourceBestVerificationFailed(results, state.task);
+      const sourceBestPending = sourceMode && sourceBestVerificationPending(results, state.task);
       const acceptedTrialId = typeof sourceOptimization?.accepted_trial_id === "string" ? sourceOptimization.accepted_trial_id.trim() : "";
       const sourceBaselineVerified = sourceMode && !sourceBestInvalid && sourceBaselineArtifactVerified(sourceOptimization, baseline);
-      const bestTrialId = sourceMode ? sourceBestInvalid ? "当前 best 已失效" : acceptedVerified ? acceptedTrialId : sourceBaselineVerified ? "无，保留 baseline" : "无，baseline 待核验" : pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
+      const bestTrialId = sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "当前 best 已失效" : acceptedVerified ? acceptedTrialId : sourceBaselineVerified ? "无，保留 baseline" : "无，baseline 待核验" : pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
       const baselineVerification = baselineOnly ? taskCompletionVerification(state.task, results) : "unknown";
       const baselineSucceeded = baselineOnly && baselineVerification === "verified";
       const fallbackBaselineLatency = pick(state.task?.baseline_latency, baseline.latency, baseline.objective_value);
@@ -4877,8 +4885,8 @@
         ${sourceMode && !acceptedVerified && !sourceBaselineVerified ? `<div class="alert warn">未能同时确认 baseline correctness、benchmark、终态和同源 hash；当前 baseline 产物不开放下载。</div>` : ""}
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(baselineLatency))}</div></article>
-          <article class="result-card ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best-card"}"><div class="metric-label">${baselineOnly ? "源码优化结果" : sourceBestInvalid ? "当前 best 不可用" : sourceMode && !acceptedVerified ? "best latency（保留 baseline）" : "best latency"}</div><div class="metric-main ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best"}">${baselineOnly ? "未执行" : sourceBestInvalid ? "未验证" : escapeHtml(display(sourceMode ? sourceBestLatency : pick(best.latency, best.objective_value, state.task?.best_latency)))}</div>${baselineOnly ? "" : `<div class="kv"><div>${sourceMode ? "accepted trial id" : "best trial id"}</div><div>${escapeHtml(display(bestTrialId))}</div></div>`}</article>
-          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${baselineSucceeded || sourceMode && acceptedVerified && numeric(sourceImprovement) !== null && numeric(sourceImprovement) >= 0 || !sourceMode && !baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${baselineOnly ? baselineSucceeded ? "基线验证完成" : "基线验证未通过" : sourceMode ? sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? sourceImprovement === null || sourceImprovement === undefined ? "未采集" : `${formatNumber(sourceImprovement)}%` : "未接受源码修改" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
+          <article class="result-card ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best-card"}"><div class="metric-label">${baselineOnly ? "源码优化结果" : sourceBestPending ? "当前 best 待核验" : sourceBestInvalid ? "当前 best 不可用" : sourceMode && !acceptedVerified ? "best latency（保留 baseline）" : "best latency"}</div><div class="metric-main ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best"}">${baselineOnly ? "未执行" : sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "未验证" : escapeHtml(display(sourceMode ? sourceBestLatency : pick(best.latency, best.objective_value, state.task?.best_latency)))}</div>${baselineOnly ? "" : `<div class="kv"><div>${sourceMode ? "accepted trial id" : "best trial id"}</div><div>${escapeHtml(display(bestTrialId))}</div></div>`}</article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${baselineSucceeded || sourceMode && acceptedVerified && numeric(sourceImprovement) !== null && numeric(sourceImprovement) >= 0 || !sourceMode && !baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${baselineOnly ? baselineSucceeded ? "基线验证完成" : "基线验证未通过" : sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? sourceImprovement === null || sourceImprovement === undefined ? "未采集" : `${formatNumber(sourceImprovement)}%` : "未接受源码修改" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
         </div>
         ${renderSourceOptimization(results, executionMode, state.task)}
         ${renderProfilerCollections(results)}
