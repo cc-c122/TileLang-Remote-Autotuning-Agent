@@ -1743,6 +1743,7 @@
     state.profilerSettingsMessage = "";
     state.remoteProfilerCapabilities = null;
     state.hardwareResolveVersion = 0;
+    state.taskViewVersion = 0;
     const el = {
       alerts: document.getElementById("alerts"),
       apiHealthStatus: document.getElementById("apiHealthStatus"),
@@ -3650,6 +3651,7 @@
         return;
       }
       state.taskSubmitting = true;
+      let submitViewVersion = null;
       el.startOptimizationBtn.textContent = isUploadSourceMode() ? "准备上传" : "提交中";
       updateStartButtonState();
       try {
@@ -3663,9 +3665,13 @@
         const uploadId = isUploadSourceMode() ? await uploadSelectedSample() : null;
         const request = buildApiTaskRequest(uploadId);
         el.startOptimizationBtn.textContent = "提交任务";
+        selectActiveTask(null);
+        const viewVersion = state.taskViewVersion;
+        submitViewVersion = viewVersion;
         renderTaskWaiting("正在创建真实运行任务，等待后端返回 task_id。");
         activateView("taskView");
         const payload = await apiFetch("/api/tasks", { method: "POST", body: request, privateRequest: runnerType === "ssh" });
+        if (viewVersion !== state.taskViewVersion) { loadTaskList(); return; }
         state.task = unwrapTaskPayload(payload);
         state.activeTaskId = pick(payload.task_id, state.task?.task_id);
         if (!state.activeTaskId) throw new Error("后端没有返回 task_id，任务状态未知。");
@@ -3677,6 +3683,7 @@
         loadTaskList();
         startTaskPolling();
       } catch (error) {
+        if (submitViewVersion !== null && submitViewVersion !== state.taskViewVersion) return;
         handleSessionError(error);
         if (["selected_device_changed", "selected_device_not_found", "stable_device_identity_unavailable", "execution_device_mismatch"].includes(error.code)) {
           state.selectedDeviceId = "";
@@ -3710,10 +3717,28 @@
       state.eventPollTimer = null;
     }
 
+    function selectActiveTask(taskId) {
+      stopTaskPolling();
+      state.taskViewVersion += 1;
+      state.activeTaskId = taskId;
+      state.task = null;
+      state.taskEvents = [];
+      state.taskResults = null;
+      state.cancellationPending = false;
+      el.cancelTaskBtn.disabled = true;
+      renderApiResults();
+    }
+
+    function taskViewIsCurrent(taskId, version) {
+      return state.activeTaskId === taskId && state.taskViewVersion === version;
+    }
+
     async function pollTask() {
       if (!state.activeTaskId) return;
+      const taskId = state.activeTaskId, version = state.taskViewVersion;
       try {
-        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}`);
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}`);
+        if (!taskViewIsCurrent(taskId, version)) return;
         state.task = unwrapTaskPayload(payload);
         if (state.task?.cancel_requested === true && !["completed", "failed", "cancelled"].includes(state.task.status)) {
           state.cancellationPending = true;
@@ -3730,6 +3755,7 @@
           await loadTaskList();
         }
       } catch (error) {
+        if (!taskViewIsCurrent(taskId, version)) return;
         el.taskStatus.textContent = "failed";
         el.taskDetailPanel.innerHTML = `<div class="empty">读取任务状态失败：${escapeHtml(error.message)}</div>`;
       }
@@ -3737,11 +3763,14 @@
 
     async function pollTaskEvents() {
       if (!state.activeTaskId) return;
+      const taskId = state.activeTaskId, version = state.taskViewVersion;
       try {
-        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/events`);
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/events`);
+        if (!taskViewIsCurrent(taskId, version)) return;
         state.taskEvents = payload.events || [];
         renderTaskDetail();
       } catch (error) {
+        if (!taskViewIsCurrent(taskId, version)) return;
         addOneShotWarning(`读取任务事件失败：${error.message}`);
         renderAlerts();
       }
@@ -3749,11 +3778,13 @@
 
     async function cancelActiveTask() {
       if (!state.activeTaskId) return;
+      const taskId = state.activeTaskId, version = state.taskViewVersion;
       state.cancellationPending = true;
       el.cancelTaskBtn.disabled = true;
       el.cancelTaskBtn.textContent = "正在请求取消";
       try {
-        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/cancel`, { method: "POST" });
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" });
+        if (!taskViewIsCurrent(taskId, version)) return;
         state.task = unwrapTaskPayload(payload);
         const terminal = ["completed", "failed", "cancelled"].includes(state.task?.status);
         state.cancellationPending = !terminal;
@@ -3761,6 +3792,7 @@
         renderTaskDetail();
         if (!terminal) startTaskPolling();
       } catch (error) {
+        if (!taskViewIsCurrent(taskId, version)) return;
         state.cancellationPending = false;
         addOneShotWarning(`取消任务失败：${error.message}`);
         el.cancelTaskBtn.disabled = false;
@@ -3776,14 +3808,17 @@
         return;
       }
       el.apiResultsStatus.textContent = "读取中";
+      const taskId = state.activeTaskId, version = state.taskViewVersion;
       try {
-        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/results`);
+        const payload = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/results`);
+        if (!taskViewIsCurrent(taskId, version)) return;
         state.task = payload.task || state.task;
         state.taskResults = payload.results || payload || null;
         renderTaskDetail();
         renderApiResults();
         activateView("resultsView");
       } catch (error) {
+        if (!taskViewIsCurrent(taskId, version)) return;
         el.apiResultsStatus.textContent = "failed";
         el.apiResultsPanel.innerHTML = `<div class="empty">读取任务结果失败：${escapeHtml(error.message)}</div>`;
       }
@@ -3838,19 +3873,22 @@
 
     async function openTask(taskId) {
       if (!taskId) return;
-      state.activeTaskId = taskId;
+      selectActiveTask(taskId);
+      const version = state.taskViewVersion;
       renderTaskWaiting("正在读取任务详情。");
       try {
         const [taskPayload, eventPayload] = await Promise.all([
           apiFetch(`/api/tasks/${encodeURIComponent(taskId)}`),
           apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/events`),
         ]);
+        if (!taskViewIsCurrent(taskId, version)) return;
         state.task = unwrapTaskPayload(taskPayload);
         state.taskEvents = eventPayload.events || [];
         state.cancellationPending = state.task?.cancel_requested === true && !["completed", "failed", "cancelled"].includes(state.task?.status);
         el.cancelTaskBtn.textContent = state.cancellationPending ? "等待后端确认取消" : "取消任务";
         renderTaskDetail();
         await refreshTaskResults();
+        if (!taskViewIsCurrent(taskId, version)) return;
         if (state.task && !["completed", "failed", "cancelled"].includes(state.task.status)) {
           el.cancelTaskBtn.disabled = state.cancellationPending;
           startTaskPolling();
@@ -3858,6 +3896,7 @@
           el.cancelTaskBtn.disabled = true;
         }
       } catch (error) {
+        if (!taskViewIsCurrent(taskId, version)) return;
         el.taskStatus.textContent = "failed";
         el.taskDetailPanel.innerHTML = `<div class="empty">读取任务失败：${escapeHtml(error.message)}</div>`;
       }
@@ -5018,6 +5057,8 @@
     function renderApiResults() {
       const results = state.taskResults;
       if (!results) {
+        el.downloadBestKernelBtn.disabled = true;
+        el.downloadReportBtn.disabled = true;
         el.apiResultsStatus.textContent = "暂无结果";
         el.apiResultsPanel.innerHTML = `<div class="empty">暂无结果，任务完成后展示 best kernel 和 report。</div>`;
         return;

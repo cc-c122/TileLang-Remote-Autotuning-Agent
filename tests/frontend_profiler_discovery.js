@@ -24,6 +24,8 @@ async (page) => {
   let heldResolve = false;
   let releaseResolve;
   let requestCount = 0;
+  let holdTaskA = false, releaseTaskA;
+  let holdEventsA = false, releaseEventsA;
   const posted = [];
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -50,6 +52,20 @@ async (page) => {
       });
     }
     if (path === "/api/tasks" && request.method() === "GET") return json(route, {ok: true, tasks: []});
+    const taskRoute = /^\/api\/tasks\/(race-a|race-b)(\/results|\/events)?$/.exec(path);
+    if (taskRoute) {
+      const id = taskRoute[1];
+      const task = {task_id: id, status: "completed", project_name: id, execution_mode: "baseline_only"};
+      if (taskRoute[2] === "/events") {
+        if (id === "race-a" && holdEventsA) await new Promise((resolve) => {releaseEventsA = resolve;});
+        return json(route, {events: [{type: "task_completed", message: id}]});
+      }
+      if (taskRoute[2] === "/results") {
+        if (id === "race-a" && holdTaskA) await new Promise((resolve) => {releaseTaskA = resolve;});
+        return json(route, {task, results: {report_markdown: id, profiler_capabilities: {mcprofiler: {...found, version: id}}}});
+      }
+      return json(route, {task});
+    }
     return json(route, {detail: "Unhandled contract route"}, 404);
   });
   await page.reload();
@@ -177,5 +193,27 @@ async (page) => {
   check((await outcome("build_failed")).includes("编译失败"), "Build rejection remains distinct from correctness");
   check((await page.evaluate(() => sourceOutcomeLabel({status: "unavailable"}, {}, {status: "completed"}))).includes("没有适用变换"), "No applicable change is not an optimization success");
   check((await page.evaluate(() => sourceOutcomeLabel({status: "completed", trials: [{status: "correctness_failed"}]}, {}, {status: "running"}))).includes("等待结果核验"), "Running task does not prematurely announce terminal rejection");
+
+  await page.evaluate(() => openTask("race-b"));
+  holdTaskA = true;
+  await page.evaluate(() => { void openTask("race-a"); });
+  while (!releaseTaskA) await new Promise((resolve) => setTimeout(resolve, 10));
+  check(await page.evaluate(() => state.taskResults === null && state.task.task_id === "race-a"), "Task switching clears prior results before the new result arrives");
+  check(await page.locator("#downloadReportBtn").isDisabled() && await page.locator("#downloadBestKernelBtn").isDisabled(), "Switching task disables downloads bound to old results");
+  await page.evaluate(() => openTask("race-b"));
+  releaseTaskA();
+  holdTaskA = false;
+  await page.waitForTimeout(100);
+  check(await page.evaluate(() => state.task.task_id === "race-b" && state.taskResults.report_markdown === "race-b"), "A late result cannot replace the currently selected task");
+  check((await page.locator("#taskProfilerDiscovery").innerText()).includes("race-b") && !(await page.locator("#taskProfilerDiscovery").innerText()).includes("race-a"), "Late discovery never mixes tool identity across tasks");
+  await page.evaluate(() => openTask("race-a"));
+  holdEventsA = true;
+  await page.evaluate(() => { void pollTaskEvents(); });
+  while (!releaseEventsA) await new Promise((resolve) => setTimeout(resolve, 10));
+  await page.evaluate(() => openTask("race-b"));
+  releaseEventsA();
+  holdEventsA = false;
+  await page.waitForTimeout(100);
+  check(await page.evaluate(() => state.taskEvents.every((event) => event.message === "race-b")), "A late event poll cannot mix events across task identities");
   return {passed: checks.length, checks};
 }
