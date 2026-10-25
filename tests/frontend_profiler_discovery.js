@@ -155,6 +155,12 @@ async (page) => {
   check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Cancelled unpublished best remains non-downloadable");
   for (const label of ["采集状态", "指标归属", "是否可用于优化", "性能验证结果"]) check(text.includes(label), `Trust layer remains separate: ${label}`);
 
+  await page.evaluate(() => { state.task.status = "running"; state.taskResults.profiler_status = "not_requested"; renderApiResults(); });
+  text = await page.locator("#apiResultsPanel").innerText();
+  check(text.includes("等待采集结果") && !text.includes("未启用采集"), "Running task with no records does not prematurely declare collection disabled");
+  check(text.includes("当前尚未取得") && !text.includes("本次任务没有可用的 profiler 数据"), "In-flight absence is not a terminal profiler-unavailable claim");
+  check(text.includes("等待 correctness 和 benchmark 核验"), "Unpublished in-flight kernel is pending, not correctness failure");
+
   const outcome = async (status, decision, median) => page.evaluate(({status, decision, median}) => {
     const trial = {status, artifacts: decision ? {performance_gate: {
       schema_version: "v2.performance_gate.v1", decision, reason: "contract reason", median_improvement_percent: median,

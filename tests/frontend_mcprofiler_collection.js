@@ -187,7 +187,7 @@ async (page) => {
     state.taskResults = withoutCollections;
     renderApiResults();
   }, results);
-  check((await page.locator("#apiResultsPanel").innerText()).includes("等待后端采集记录"), "Missing collection array does not infer tool availability or a task failure");
+  check((await page.locator("#apiResultsPanel").innerText()).includes("后端未返回采集记录"), "Missing collection array does not infer tool availability or a task failure");
 
   return {passed: passed.length, checks: passed, contractOnly: true, profilerEvidence: false};
 }

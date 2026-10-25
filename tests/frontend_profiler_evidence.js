@@ -275,7 +275,7 @@ async (page) => {
   check(main.includes("token=[REDACTED]") && !main.includes("contract-secret") && await page.locator("#apiResultsPanel img").count() === 0, "Failure reasons remain redacted and HTML escaped");
   await render({});
   main = await page.locator("#profilerCollectionPanel").innerText();
-  check(main.includes("等待后端采集记录") && main.includes("后端未返回采集状态"), "Legacy or pending results stay unknown rather than inferring success");
+  check(main.includes("后端未返回采集记录") && main.includes("后端未返回采集状态"), "Legacy results stay unknown rather than inferring success");
   check(await page.locator("#profilerCollectionPanel table").count() === 0 && await page.locator("#apiResultsAdvanced table").count() === 0, "Empty results do not create empty metric tables");
 
   await render(results);

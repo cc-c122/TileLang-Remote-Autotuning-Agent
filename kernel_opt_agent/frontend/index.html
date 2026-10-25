@@ -4398,22 +4398,23 @@
 
     function renderProfilerCollections(results) {
       const rows = profilerCollectionRows(results);
+      const inProgress = ["pending", "queued", "running"].includes(state.task?.status);
       const usable = (row) => row.schema_version === MCPROFILER_COLLECTION_SCHEMA
         && ["collected", "imported"].includes(row.status) && profilerCollectionSource(row) !== "synthetic"
         && results.profiler_available === true;
       const summaryKind = rows.length && rows.every(usable) && results.profiler_available === true ? "ok" : "warn";
       const comparison = profilerEvidenceComparison(results);
       return `<section class="section" id="profilerCollectionPanel">
-        <div class="section-head"><h2>性能采集与证据</h2><span class="badge ${summaryKind}">${escapeHtml(profilerStatusLabel(results))}</span></div>
+        <div class="section-head"><h2>性能采集与证据</h2><span class="badge ${summaryKind}">${inProgress && !rows.length ? "等待采集结果" : escapeHtml(profilerStatusLabel(results))}</span></div>
         <p id="taskProfilerDiscovery">${escapeHtml(profilerDiscoveryText(profilerDiscoveryPresentation(results.profiler_capabilities)))}</p>
         <p class="section-kicker">工具可执行不等于指标有效；采集记录不替代正确性与性能门禁，也不证明计数器已准确归因到目标 kernel。</p>
         ${renderEvidenceTrust(results)}
-        ${results.profiler_available === false ? `<div class="alert warn">本次任务没有可用的 profiler 数据，诊断基于 benchmark 和日志，置信度较低。</div>` : ""}
+        ${results.profiler_available === false ? `<div class="alert warn">${inProgress ? "当前尚未取得可用的 profiler 数据，等待后端采集与核验结果；不据此判断工具缺失。" : "本次任务没有可用的 profiler 数据，诊断基于 benchmark 和日志，置信度较低。"}</div>` : ""}
         ${rows.length ? `<p class="muted">${rows.length} 条采集记录</p><div class="table-wrap"><table><thead><tr><th>工具 / trial / shape</th><th>工具可用性</th><th>采集状态</th><th>有数值 / 已声明指标</th><th>数据来源</th><th>缺失原因或说明</th></tr></thead><tbody>${rows.map((row) => {
           const metrics = profilerCollectionMetrics(row);
           const source = profilerCollectionSource(row);
           return `<tr><td>${escapeHtml(display(profilerCollectionTool(row)))}<br>${escapeHtml(display(row.source_trial_id || "trial 未记录"))}<br>${escapeHtml(display(row.shape_id || "shape 未记录"))}</td><td>${escapeHtml(profilerToolAvailability(row))}</td><td>${profilerCollectionStatusBadge(row)}</td><td>${metrics.length ? `${metrics.filter((metric) => metric.hasValue).length} / ${metrics.length}` : "未采集"}</td><td>${sourceBadge(source)}${source === "synthetic" ? `<div class="muted">仅解析测试，不是性能证据</div>` : ""}</td><td class="reason-cell">${escapeHtml(profilerCollectionReason(row))}</td></tr>`;
-        }).join("")}</tbody></table></div>` : `<div class="empty">等待后端采集记录；工具可用性和缺失原因尚未返回，不据此判定工具已安装或采集成功。</div>`}
+        }).join("")}</tbody></table></div>` : `<div class="empty">${inProgress ? "等待后端采集记录；工具发现不代表采集已完成。" : "后端未返回采集记录，不推断采集成功。"}</div>`}
         <h3>优化前后证据对比</h3>
         ${comparison.pairs.length ? `<div class="kv"><div>并列查看对象</div><div>baseline → ${escapeHtml(display(comparison.trialId))}</div><div>已对齐的目标报告</div><div>${comparison.pairs.length} 组 shape；${comparison.pairs.reduce((count, pair) => count + pair.metrics.length, 0)} 个指标有同源、同单位的前后数值。已核对后端返回的设备标识、目标、shape、工具版本和指标口径；仅并列原始值，不计算指标改善。具体数值见高级详情。</div></div>` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
       </section>`;
@@ -5067,7 +5068,7 @@
         ${renderSourceOptimization(results, executionMode, state.task)}
         ${renderProfilerCollections(results)}
         <h3>${baselineOnly ? baselineSucceeded ? "已验证基线 kernel" : "基线 kernel 未通过验证" : sourceMode && !acceptedVerified ? sourceBaselineVerified ? "最终 kernel（baseline）" : "baseline kernel 待核验" : verifiedArtifact ? "best kernel" : "尚无 best kernel"}</h3>
-        <pre>${escapeHtml(verifiedArtifact ? results.best_kernel || "等待结果文件：best_kernel.py" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
+        <pre>${escapeHtml(verifiedArtifact ? results.best_kernel || "等待结果文件：best_kernel.py" : sourceBestPending ? "等待 correctness 和 benchmark 核验，当前尚未发布 best kernel。" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
         <h3>${baselineOnly ? baselineSucceeded ? "基线配置产物" : "基线配置未通过验证" : "best_config.yaml"}</h3>
         <pre>${escapeHtml(verifiedArtifact && results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "没有可作为 best 的已验证配置。")}</pre>
         <h3>report.md</h3>
