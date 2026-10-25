@@ -4280,8 +4280,11 @@
       const records = evidenceRecordsFromSummary(evidenceSummaryFromResults(results));
       if (!records.length) return `<h3>证据可信度与规划记录</h3><div class="empty">后端未返回逐指标可信度与规划资格；旧结果不默认可信。</div>`;
       const trials = sourceOptimizationTrials(sourceOptimizationPayload(results));
-      return `<h3>证据可信度与规划记录</h3><div class="table-wrap"><table id="evidenceTrustTable"><thead><tr><th>指标 / trial</th><th>原始值 / 单位</th><th>解析置信度</th><th>归因状态 / 置信度</th><th>优化分析资格</th><th>规划使用记录</th><th>原因</th></tr></thead><tbody>${records.map((record) => {
+      const reports = profilerCollectionRows(results).flatMap((collection) => (profilerReportGroups(collection)?.groups || []).filter((group) => group.valid).map((group) => ({...group.report, source_trial_id: collection.source_trial_id})));
+      return `<h3>证据可信度与规划记录</h3><div class="table-wrap"><table id="evidenceTrustTable"><thead><tr><th>指标 / trial / 报告</th><th>原始值 / 单位</th><th>解析置信度</th><th>归因状态 / 置信度</th><th>优化分析资格</th><th>规划使用记录</th><th>原因</th></tr></thead><tbody>${records.map((record) => {
         const id = evidenceId(record);
+        const matches = reports.filter((report) => report.artifact_id === record.artifact_id && report.source_trial_id === record.source_trial_id && report.kernel_name === record.kernel_name && sourceSha256(report.sha256) === sourceSha256(record.collection_scope?.report_sha256));
+        const reportName = matches.length === 1 ? matches[0].report : "报告身份未确认";
         const duplicate = id && records.filter((row) => evidenceId(row) === id).length !== 1;
         const references = id && !duplicate ? trials.filter((trial) => Array.isArray(trial.evidence_ids) && trial.evidence_ids.includes(id)).map((trial) => trial.trial_id) : [];
         const planning = evidencePlanningStatus(record);
@@ -4290,7 +4293,7 @@
           : references.length ? `后端记录规划引用：${references.join("、")}` : "未返回规划使用记录";
         const value = Object.prototype.hasOwnProperty.call(record, "value") ? display(record.value) : "未采集";
         const attribution = {verified: "归因已验证", unverified: "归因未验证"}[evidenceAttributionStatus(record)] || "归因未确认";
-        return `<tr><td>${escapeHtml(display(record.metric || record.metric_name))}<br>${escapeHtml(display(record.source_trial_id || "trial 未返回"))}</td><td>${escapeHtml(value)} ${escapeHtml(display(record.unit))}</td><td>${confidenceBadgeFor(record.parse_confidence || "unknown")}</td><td>${attribution} ${confidenceBadgeFor(record.attribution_confidence || "unknown")}</td><td>${escapeHtml(evidencePlanningLabel(record))}</td><td>${escapeHtml(usage)}${record.attribution_status === "unverified" ? `<div class="muted">仅供检查，未用于优化决策</div>` : ""}</td><td class="reason-cell">${escapeHtml(evidenceEligibilityReasons(record))}</td></tr>`;
+        return `<tr><td>${escapeHtml(display(record.metric || record.metric_name))}<br>${escapeHtml(display(record.source_trial_id || "trial 未返回"))}<div class="muted">${escapeHtml(display(reportName))}<br>${escapeHtml(display(record.artifact_id || "artifact_id 未返回"))}<br>${escapeHtml(display(id || "evidence_id 未返回"))}</div></td><td>${escapeHtml(value)} ${escapeHtml(display(record.unit))}</td><td>${confidenceBadgeFor(record.parse_confidence || "unknown")}</td><td>${attribution} ${confidenceBadgeFor(record.attribution_confidence || "unknown")}</td><td>${escapeHtml(evidencePlanningLabel(record))}</td><td>${escapeHtml(usage)}${record.attribution_status === "unverified" ? `<div class="muted">仅供检查，未用于优化决策</div>` : ""}</td><td class="reason-cell">${escapeHtml(evidenceEligibilityReasons(record))}</td></tr>`;
       }).join("")}</tbody></table></div>`;
     }
 
@@ -4334,6 +4337,43 @@
           observation,
         };
       });
+    }
+
+    function profilerReportGroups(record) {
+      const raw = record?.target_reports;
+      const multiScope = (record?.execution_manifest || record?.command_audit)?.report_scope === "named_kernel_reports";
+      if ((!raw || Array.isArray(raw) && !raw.length) && !multiScope) return null;
+      const observations = Array.isArray(record?.metric_observations) ? record.metric_observations.filter((item) => item && typeof item === "object") : [];
+      const reports = Array.isArray(raw) && raw.length <= 128 ? raw.map((row) => row && typeof row === "object" && !Array.isArray(row) ? row : {}) : [];
+      const assigned = new Set();
+      const groups = reports.map((report) => {
+        const path = typeof report.report === "string" ? report.report : "";
+        const id = typeof report.artifact_id === "string" ? report.artifact_id : "";
+        const hash = sourceSha256(report.sha256);
+        const valid = !!id && !!hash && !!path && !/[\\:\x00-\x1f]/.test(path)
+          && path.split("/").every((part) => part && part !== "." && part !== "..")
+          && typeof report.kernel_name === "string" && !!report.kernel_name.trim()
+          && reports.filter((row) => row.artifact_id === id || row.report === path).length === 1;
+        const matched = valid ? observations.filter((item) => item.artifact_id === id
+          && (!item.artifact || item.artifact === id) && item.kernel_name === report.kernel_name
+          && sourceSha256(item.collection_scope?.report_sha256) === hash) : [];
+        matched.forEach((item) => assigned.add(item));
+        return {report, valid, observations: matched};
+      });
+      return {groups, unassigned: observations.length - assigned.size, invalid: !groups.length || groups.some((group) => !group.valid)};
+    }
+
+    function renderProfilerReportMetrics(record) {
+      const grouped = profilerReportGroups(record);
+      if (!grouped) return profilerCollectionMetricTable(record);
+      return `<div class="alert warn">多份原始报告分别展示，不选取代表值，不求和或平均。报告编号不是 benchmark / warmup 轮次；调用轮次映射未知。</div>
+        ${grouped.invalid ? `<div class="alert warn">报告身份缺失、重复或格式无效，相关指标不做关联；原始记录仍保留供检查。</div>` : ""}
+        ${grouped.unassigned ? `<div class="alert warn">${grouped.unassigned} 条观测无法唯一关联报告，未混入其他报告；请查看原始记录。</div>` : ""}
+        ${grouped.groups.map((group) => `<details class="profiler-report" style="margin-top:12px">
+          <summary>${escapeHtml(display(group.report.report || "报告身份未返回"))}</summary>
+          <div class="kv" style="margin:12px 0"><div>原始报告编号</div><div>${escapeHtml(display(group.report.native_report_index ?? "未返回"))}</div><div>kernel</div><div>${escapeHtml(display(group.report.kernel_name))}</div><div>artifact_id</div><div>${escapeHtml(display(group.report.artifact_id))}</div><div>报告 SHA-256</div><div>${escapeHtml(display(group.report.sha256))}</div><div>调用轮次映射</div><div>${escapeHtml(group.report.invocation_mapping === "unknown" ? "未知" : display(group.report.invocation_mapping || "未返回"))}</div></div>
+          ${group.valid ? profilerCollectionMetricTable({metrics_requested: record.metrics_requested, available_metrics: group.report.available_metrics, metric_observations: group.observations}) : `<div class="empty">报告身份未确认，不展示关联指标值。</div>`}
+        </details>`).join("")}`;
     }
 
     function profilerMetricAvailability(metric) {
@@ -4386,6 +4426,8 @@
       const category = record.reason_category;
       const message = typeof record.message === "string" ? record.message.trim() : "";
       if (category && category !== "none") return sanitizeText([labels[category] || category, message].filter(Boolean).join("："));
+      const grouped = profilerReportGroups(record);
+      if (grouped) return grouped.invalid || grouped.unassigned ? "报告身份或观测关联不完整；按报告保守展示，原始记录见高级详情。" : `${grouped.groups.length} 份独立报告；重复指标不合并，调用轮次映射未知。`;
       const missingCount = profilerCollectionMetrics(record).filter((metric) => !metric.hasValue).length;
       return missingCount ? `${missingCount} 个指标未返回有效数值，详细原因见高级详情。` : sanitizeText(message) || "后端未返回原因。";
     }
@@ -4410,7 +4452,7 @@
       const schemaValid = record?.schema_version === MCPROFILER_COLLECTION_SCHEMA;
       const status = typeof record?.status === "string" ? record.status.trim().toLowerCase() : "";
       const statusKnown = MCPROFILER_COLLECTION_STATUSES.has(status);
-      const missingCount = profilerCollectionMetrics(record).filter((metric) => !metric.hasValue).length;
+      const missingCount = profilerReportGroups(record) ? 0 : profilerCollectionMetrics(record).filter((metric) => !metric.hasValue).length;
       const collectionName = pick(record?.case_name, record?.collection_id, `采集记录 ${index + 1}`);
       const sourceHash = sourceSha256(record?.source_sha256)?.slice(0, 12) || "未返回";
       return `<details class="source-trial">
@@ -4429,7 +4471,7 @@
             <div>降级分析</div><div>${escapeHtml(profilerCollectionFallback(record?.fallback))}</div>
           </div>
           <h3>指标可用性</h3>
-          ${profilerCollectionMetricTable(record)}
+          ${renderProfilerReportMetrics(record)}
           <h3>原始报告、产物路径与审计信息</h3><pre>${escapeHtml(JSON.stringify(redactObject(record), null, 2))}</pre>
         </div>
       </details>`;
@@ -4452,7 +4494,7 @@
         ${rows.length ? `<p class="muted">${rows.length} 条采集记录</p><div class="table-wrap"><table><thead><tr><th>工具 / trial / shape</th><th>工具可用性</th><th>采集状态</th><th>有数值 / 已声明指标</th><th>数据来源</th><th>缺失原因或说明</th></tr></thead><tbody>${rows.map((row) => {
           const metrics = profilerCollectionMetrics(row);
           const source = profilerCollectionSource(row);
-          return `<tr><td>${escapeHtml(display(profilerCollectionTool(row)))}<br>${escapeHtml(display(row.source_trial_id || "trial 未记录"))}<br>${escapeHtml(display(row.shape_id || "shape 未记录"))}</td><td>${escapeHtml(profilerToolAvailability(row))}</td><td>${profilerCollectionStatusBadge(row)}</td><td>${metrics.length ? `${metrics.filter((metric) => metric.hasValue).length} / ${metrics.length}` : "未采集"}</td><td>${sourceBadge(source)}${source === "synthetic" ? `<div class="muted">仅解析测试，不是性能证据</div>` : ""}</td><td class="reason-cell">${escapeHtml(profilerCollectionReason(row))}</td></tr>`;
+          return `<tr><td>${escapeHtml(display(profilerCollectionTool(row)))}<br>${escapeHtml(display(row.source_trial_id || "trial 未记录"))}<br>${escapeHtml(display(row.shape_id || "shape 未记录"))}</td><td>${escapeHtml(profilerToolAvailability(row))}</td><td>${profilerCollectionStatusBadge(row)}</td><td>${profilerReportGroups(row) ? `${profilerReportGroups(row).groups.length || "未确认"} 份报告，逐份查看` : metrics.length ? `${metrics.filter((metric) => metric.hasValue).length} / ${metrics.length}` : "未采集"}</td><td>${sourceBadge(source)}${source === "synthetic" ? `<div class="muted">仅解析测试，不是性能证据</div>` : ""}</td><td class="reason-cell">${escapeHtml(profilerCollectionReason(row))}</td></tr>`;
         }).join("")}</tbody></table></div>` : `<div class="empty">${inProgress ? "等待后端采集记录；工具发现不代表采集已完成。" : "后端未返回采集记录，不推断采集成功。"}</div>`}
         <h3>优化前后证据对比</h3>
         ${comparison.pairs.length ? `<div class="kv"><div>并列查看对象</div><div>baseline → ${escapeHtml(display(comparison.trialId))}</div><div>已对齐的目标报告</div><div>${comparison.pairs.length} 组 shape；${comparison.pairs.reduce((count, pair) => count + pair.metrics.length, 0)} 个指标有同源、同单位的前后数值。已核对后端返回的设备标识、目标、shape、工具版本和指标口径；仅并列原始值，不计算指标改善。具体数值见高级详情。</div></div>` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
@@ -4460,6 +4502,7 @@
     }
 
     function profilerTargetReport(record) {
+      if (Array.isArray(record.target_reports) && record.target_reports.length > 1) return null;
       const manifest = record.execution_manifest || record.command_audit;
       const attribution = manifest?.target_attribution;
       if (manifest?.report_scope !== "named_kernel" || attribution?.status !== "verified"
