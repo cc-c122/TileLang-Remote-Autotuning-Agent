@@ -158,7 +158,10 @@ def _probe_tools(payload: dict) -> dict:
         if not server:
             result["reason_category"] = "server_unavailable"
             continue
-        environment = {name: os.environ[name] for name in ("PATH", "LD_LIBRARY_PATH", "MACA_PATH", "CUDA_VISIBLE_DEVICES", "MACA_VISIBLE_DEVICES") if name in os.environ}
+        # Inherit the selected device verbatim, never declare a task override.
+        visibility_names = {prefix + "_VISIBLE_DEVICES" for prefix in ("CUDA", "MACA", "HIP", "MUSA")}
+        environment = {name: value for name, value in os.environ.items()
+                       if name in {"PATH", "LD_LIBRARY_PATH", "MACA_PATH"} or name in visibility_names}
         environment.update(HOME=str(home), TMPDIR=str(home), XDG_CACHE_HOME=str(home))
         try:
             # The enclosing SSH managed process group owns timeout/cancellation,

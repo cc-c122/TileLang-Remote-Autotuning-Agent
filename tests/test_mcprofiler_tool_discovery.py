@@ -135,10 +135,32 @@ class ToolDiscoveryTests(unittest.TestCase):
         version.assert_not_called()
 
     def test_version_environment_contains_no_credentials(self):
-        with patch.dict("os.environ", {"SSH_PASSWORD": "probe-password-sentinel", "OPENAI_API_KEY": "probe-key-sentinel"}):
+        with patch.dict("os.environ", {"SSH_PASSWORD": "probe-password-sentinel", "OPENAI_API_KEY": "probe-key-sentinel",
+                                       "MACA_VISIBLE_DEVICES": "selected-device-fixture"}):
             _, version = ProbeFilesystem(["/path/mcProfiler", "/path/profiler_server"], path_client="/path/mcProfiler").run()
         self.assertNotIn("probe-password-sentinel", str(version.call_args.kwargs["env"]))
         self.assertNotIn("probe-key-sentinel", str(version.call_args.kwargs["env"]))
+        self.assertEqual(version.call_args.kwargs["env"]["MACA_VISIBLE_DEVICES"], "selected-device-fixture")
+
+    def test_device_bound_ssh_guard_allows_read_only_discovery(self):
+        from kernel_opt_agent.runner.ssh_runner import SSHConnectionInfo, SSHRunner
+
+        runner = SSHRunner(SSHConnectionInfo("fixture.invalid", 22, "fixture", "key", "unused", None, "/managed/task"), 20)
+        runner.execution_env = {"MACA_VISIBLE_DEVICES": "selected-device-fixture"}
+        runner.client = Mock()
+        channel = Mock()
+        channel.exit_status_ready.return_value = True
+        channel.recv_ready.side_effect = [True, False]
+        channel.recv_stderr_ready.return_value = False
+        channel.recv_exit_status.return_value = 0
+        result = McProfilerCapability(available=True, status="available", version="3.9.0.29", reason_category="none",
+                                     executable="/tools/mcProfiler", server_executable="/tools/profiler_server", discovery_source="allowlist")
+        channel.recv.return_value = ("MCPROFILER_DISCOVERY_RESULT " + result.model_dump_json()).encode()
+        stream = SimpleNamespace(channel=channel)
+        runner.client.exec_command.return_value = (None, stream, stream)
+        capability = discover_mcprofiler(runner)
+        self.assertTrue(capability.available)
+        runner.client.exec_command.assert_called_once()
 
     def test_dangerous_paths_are_rejected_before_any_runner_command(self):
         for value in ("/etc/mcProfiler", "/home/a/.ssh/mcProfiler", "../mcProfiler", "/opt/../bin/mcProfiler",
