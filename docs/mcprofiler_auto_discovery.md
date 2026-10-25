@@ -49,6 +49,33 @@ group owns timeout/cancellation, including bundled-executable children. Discover
 is bounded to at most 20 seconds (or a smaller task/collector timeout). No password
 or API-key environment value is passed to the vendor executable.
 
+## Default Target Selection
+
+Normal Web clients may omit `profiler.kernel_names`. The collector uses build
+log JSON records with `generated_source_path` and `generated_source_sha256`,
+cross-checked against `GENERATED_SOURCE_SHA256`. It downloads only that relative
+workspace compiler artifact (one file, at most 2 MiB), checks its bytes/hash
+against both the log and the execution runner, and inspects compiled kernel
+definitions. There is no special-case kernel name or frontend change.
+
+A single compiled kernel is selected directly. For multi-kernel output, a
+unique kernel with a recognized matrix intrinsic call may be preferred. This is
+a conservative structural preference, not proof of its performance relevance,
+counter attribution or hardware limits. Multiple eligible kernels, an invalid
+artifact or unsupported code syntax fail closed. Without build metadata the
+existing unique-per-kernel-report fallback remains; it never selects the first,
+slowest or aggregate report from a multi-report Case. Explicit names still win.
+
+Results expose the additive
+`profiler_collections[].execution_manifest.target_selection` object, including
+mode/status/reason, compiled and selected names, generated-source hash and local
+artifact. Existing `kernel_names`/`primary_report` describe the actual selection.
+All unverified observations remain ineligible for planning; selection does not
+promote attribution confidence. Missing/ambiguous targets preserve benchmark/log
+fallback and original native artifacts. New regression tests cover mixed Torch
+and compiled reports, renamed symbols, ambiguity, unsafe/hash-mismatched source,
+cancellation, secret removal, and normal/source-worker propagation.
+
 ## Failure and Trust
 
 Missing tools, unrecognized versions and ordinary collection failures preserve

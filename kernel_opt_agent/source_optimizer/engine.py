@@ -337,6 +337,7 @@ def _collect_source_profiler(
         "service_port": config.profiler.service_port,
         "timeout_seconds": config.profiler.timeout_seconds,
         "discovery_hint": config.profiler._tool_discovery,
+        "build_log": getattr(outcome, "logs", {}).get("build", ""),
     }
     if metrics:
         request_kwargs["metrics"] = metrics

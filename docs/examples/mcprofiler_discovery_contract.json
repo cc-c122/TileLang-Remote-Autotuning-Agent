@@ -46,6 +46,18 @@
       }
     }
   },
+  "target_selection_example": {
+    "field": "profiler_collections[].execution_manifest.target_selection",
+    "mode": "automatic",
+    "status": "selected",
+    "reason": "unique_matrix_intrinsic_kernel",
+    "compiled_kernel_names": ["compiled_attention_phase", "compiled_reduce_phase"],
+    "matrix_kernel_names": ["compiled_attention_phase"],
+    "selected_kernel_names": ["compiled_attention_phase"],
+    "generated_source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "generated_source_path": "results/generated_kernel_source.cc",
+    "warnings": ["automatic target selection is a generated-code structural preference, not proof of counter attribution; attribution remains unverified"]
+  },
   "precedence": ["explicit task override", "saved settings override", "remote PATH", "bounded installation allowlist"],
   "semantics": [
     "These are schema examples, not a claim about any active machine.",
