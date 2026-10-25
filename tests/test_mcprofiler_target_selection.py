@@ -12,6 +12,8 @@ from types import SimpleNamespace
 from kernel_opt_agent.profiler.mcprofiler import McProfilerCollectionRequest, collect_remote_mcprofiler_case
 from kernel_opt_agent.profiler.mcprofiler.target_selection import generated_kernel_symbols, resolve_kernel_target
 from kernel_opt_agent.source_optimizer.engine import _collect_source_profiler
+from kernel_opt_agent.profiler.adapter import ProfileContext
+from kernel_opt_agent.profiler.registry import get_profiler_adapter
 from tests import test_mcprofiler_attribution as attribution_tests
 from tests.test_mcprofiler_collection import FakeRemoteCollectionRunner
 from tests.test_source_optimizer import _config, _source
@@ -187,6 +189,70 @@ const char* s = "__global__ void fake2() { __builtin_mxc_mma_x(); }";
             self.assertEqual(result.status, "cancelled")
             self.assertFalse(any(name == "mcprofiler_collection" for name, _ in runner.commands))
             self.assertEqual(runner.downloads[0][1], {"max_files": 1, "max_bytes": 2 * 1024 * 1024})
+
+    def test_repeated_same_symbol_reports_keep_distinct_evidence_and_no_scalar_aggregate(self):
+        class RepeatedRunner(MixedKernelRunner):
+            def run_cancellable(self, name, *args, **kwargs):
+                result = super().run_cancellable(name, *args, **kwargs)
+                if name != "mcprofiler_discovery":
+                    original = next(self.remote_root.rglob("9_decode_x17_dumped_result.json"))
+                    shutil.copy2(original, original.with_name("17_decode_x17_dumped_result.json"))
+                return result
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = RepeatedRunner(root / "remote")
+            adapter = get_profiler_adapter("mcprofiler")
+            artifact = adapter.collect(ProfileContext(runner, root / "results", self.request(), append_imported_records=True))
+            self.assertEqual(artifact.status, "collected")
+            self.assertIsNone(artifact.primary_report)
+            self.assertIsNone(artifact.case_path())
+            self.assertEqual([row["native_report_index"] for row in artifact.target_reports], [9, 17])
+            self.assertEqual(len({row["artifact_id"] for row in artifact.target_reports}), 2)
+            self.assertEqual(len({row["sha256"] for row in artifact.target_reports}), 1)
+            observations = adapter.parse(artifact)
+            normalized = adapter.normalize(observations)
+            self.assertEqual(len(observations), 24)
+            self.assertIsNone(normalized.l2c_hit_rate)
+            self.assertTrue(normalized.available_metrics["l2c_hit_rate"])
+            rows = [json.loads(line) for line in (root / "results/metric_observations.jsonl").read_text().splitlines()]
+            self.assertEqual(len({row["evidence_id"] for row in rows}), 24)
+            self.assertTrue(all(not row["planning_eligible"] for row in rows))
+            self.assertTrue(all(row["invocation_mapping"] == "unknown" for row in artifact.target_reports))
+            self.assertEqual(len((root / "results/profiler_results.jsonl").read_text().splitlines()), 2)
+            self.assertEqual({row.collection_scope["report_sha256"] for row in observations}, {artifact.target_reports[0]["sha256"]})
+            (root / "normal").mkdir()
+            record, _, _ = attribution_tests.McProfilerAttributionTests()._normal_trial(root / "normal", RepeatedRunner)
+            self.assertEqual(record["profiler"]["collection"]["status"], "collected")
+            self.assertIsNone(record["profiler"]["result"]["l2c_hit_rate"])
+            self.assertEqual(len(record["metric_observations"]), 24)
+
+    def test_one_invalid_repeat_prevents_a_partial_success(self):
+        class InvalidRepeat(MixedKernelRunner):
+            def run_cancellable(self, name, *args, **kwargs):
+                result = super().run_cancellable(name, *args, **kwargs)
+                if name != "mcprofiler_discovery":
+                    original = next(self.remote_root.rglob("9_decode_x17_dumped_result.json"))
+                    original.with_name("17_decode_x17_dumped_result.json").write_text("{}")
+                return result
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = collect_remote_mcprofiler_case(InvalidRepeat(root / "remote"), root / "results", self.request(), append_imported_records=True)
+            self.assertEqual((result.status, result.reason_category), ("failed", "report_invalid"))
+            self.assertFalse((root / "results/metric_observations.jsonl").exists())
+
+    def test_one_changed_repeat_hash_is_not_accepted(self):
+        class ChangedRepeat(MixedKernelRunner):
+            def file_sha256(self, relative_path):
+                if relative_path.endswith("9_decode_x17_dumped_result.json"):
+                    return "0" * 64
+                return super().file_sha256(relative_path)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = collect_remote_mcprofiler_case(ChangedRepeat(root / "remote"), root / "results", self.request())
+            self.assertEqual((result.status, result.reason_category), ("failed", "artifact_hash_mismatch"))
 
     def test_no_codegen_record_does_not_guess_among_multiple_reports(self):
         with tempfile.TemporaryDirectory() as temporary:

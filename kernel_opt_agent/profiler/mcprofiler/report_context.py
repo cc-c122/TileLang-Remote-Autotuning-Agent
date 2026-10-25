@@ -16,7 +16,7 @@ def _object(path: Path) -> dict[str, Any]:
         return {}
 
 
-def read_report_context(root: Path, metadata: dict[str, Any], kernel_name: str | None) -> dict[str, Any]:
+def read_report_context(root: Path, metadata: dict[str, Any], kernel_name: str | None, report_name: str | None = None) -> dict[str, Any]:
     config = _object(root / "mcProfiler.json")
     conditions = config.get("conditions")
     conditions = conditions if isinstance(conditions, dict) else {}
@@ -27,6 +27,8 @@ def read_report_context(root: Path, metadata: dict[str, Any], kernel_name: str |
     device = agent.get("device_id")
     if not isinstance(device, str) or not re.fullmatch(r"device_sha256:[0-9a-f]{64}", device):
         device = None
+    hashes = agent.get("report_sha256s")
+    report_hash = hashes.get(report_name, agent.get("report_sha256")) if isinstance(hashes, dict) else agent.get("report_sha256")
     scope = {
         "report_layout": "named_kernel" if kernel_name else "aggregate",
         "counter_scope": "unknown",
@@ -39,6 +41,6 @@ def read_report_context(root: Path, metadata: dict[str, Any], kernel_name: str |
         "device_binding": "runner_visible_devices_request" if device else "unknown",
         "collection_window": agent.get("collection_window"),
         "source_sha256": agent.get("source_sha256"),
-        "report_sha256": agent.get("report_sha256"),
+        "report_sha256": report_hash,
     }
     return {"device_id": device, "tool_version": version, "collection_scope": scope}

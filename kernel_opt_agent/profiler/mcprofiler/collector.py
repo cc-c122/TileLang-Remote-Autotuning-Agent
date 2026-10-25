@@ -126,6 +126,7 @@ class McProfilerCollectionResult:
     case_dir: str | None = None
     partial_artifact_dir: str | None = None
     primary_report: str | None = None
+    target_reports: list[dict[str, Any]] = field(default_factory=list)
     artifact_manifest: list[dict[str, Any]] = field(default_factory=list)
     available_metrics: dict[str, bool] = field(default_factory=dict)
     metric_observations: list[dict[str, Any]] = field(default_factory=list)
@@ -506,6 +507,7 @@ def collect_remote_mcprofiler_case(
     except (OSError, ValueError):
         return finish("failed", "artifact_hash_mismatch", "downloaded report could not be verified", logs=log_paths, execution_manifest=execution_manifest)
 
+    selected_reports = [downloaded_report]
     if request.per_kernel:
         candidates = [
             path for path in local_case.rglob("*_dumped_result.json")
@@ -516,28 +518,40 @@ def collect_remote_mcprofiler_case(
                 for name in request.kernel_names
             ))
         ]
-        if len(candidates) != 1:
+        identities = [(re.fullmatch(r"(\d+)_(.+)_dumped_result\.json", path.name), path) for path in candidates]
+        names = {match.group(2) for match, _ in identities}
+        indices = {int(match.group(1)) for match, _ in identities}
+        if (not candidates or len(candidates) > 128 or len(names) != 1
+                or len({path.parent for path in candidates}) != 1 or len(indices) != len(candidates)):
             return finish(
-                "failed", "target_report_not_found", "expected exactly one unambiguous per-kernel report; aggregate reports are not a target fallback",
+                "failed", "target_report_not_found", "expected reports for one unambiguous kernel symbol with distinct native indices; aggregate reports are not a target fallback",
                 case_dir=f"mcprofiler_cases/{collection_id}", artifact_manifest=_artifact_manifest(local_case),
                 logs=log_paths, execution_manifest=execution_manifest,
             )
-        downloaded_report = candidates[0]
+        selected_reports = [path for match, path in sorted(identities, key=lambda item: int(item[0].group(1)))]
+        downloaded_report = selected_reports[0]
         selected_name = re.fullmatch(r"\d+_(.+)_dumped_result\.json", downloaded_report.name).group(1)
         if target_selection and target_selection["status"] == "unresolved":
-            target_selection.update(status="selected", reason="unique_per_kernel_report", selected_kernel_names=[selected_name])
-        selected_remote = posixpath.join(case_root, downloaded_report.relative_to(local_case).as_posix())
-        try:
-            selected_hash = runner.file_sha256(selected_remote)
-            if selected_hash != _sha256(downloaded_report):
-                raise ValueError("per-kernel report hash changed")
-        except Exception:
-            return finish("failed", "artifact_hash_mismatch", "per-kernel report could not be verified",
-                          logs=log_paths, execution_manifest=execution_manifest)
-        execution_manifest["report_scope"] = "named_kernel"
+            target_selection.update(status="selected", reason="unique_per_kernel_report" if len(selected_reports) == 1 else "unique_report_symbol", selected_kernel_names=[selected_name])
+        execution_manifest["report_scope"] = "named_kernel" if len(selected_reports) == 1 else "named_kernel_reports"
     else:
-        selected_hash = report_hashes[report_path]
         execution_manifest["report_scope"] = "aggregate"
+
+    selected_hashes = {}
+    try:
+        for path in selected_reports:
+            if should_cancel and should_cancel():
+                return finish("cancelled", "cancelled", "collection cancelled during report verification",
+                              case_dir=f"mcprofiler_cases/{collection_id}", logs=log_paths, execution_manifest=execution_manifest)
+            relative = path.relative_to(local_case).as_posix()
+            remote_hash = runner.file_sha256(posixpath.join(case_root, relative))
+            if remote_hash != _sha256(path):
+                raise ValueError("selected report hash changed")
+            selected_hashes[relative] = remote_hash
+    except Exception:
+        return finish("failed", "artifact_hash_mismatch", "selected report could not be verified",
+                      logs=log_paths, execution_manifest=execution_manifest)
+    selected_hash = next(iter(selected_hashes.values())) if len(selected_hashes) == 1 else None
 
     try:
         from kernel_opt_agent.profiler.mcprofiler.report_import import import_report
@@ -550,18 +564,19 @@ def collect_remote_mcprofiler_case(
             "tool_version": tool_version, "device_id": device_id,
             "requested_kernel": selected_name if request.per_kernel else request.kernel_names[0] if len(request.kernel_names) == 1 else None,
             "source_sha256": request.source_sha256, "report_sha256": selected_hash,
+            "report_sha256s": selected_hashes,
             "collection_window": {"started_at": started_at, "finished_at": _utc_now(),
                                   "kind": "collector_wall_clock", "target_only_window_verified": False},
         }
         # An agent sidecar never rewrites native evidence or promotes attribution.
         (local_case / "agent_collection_context.json").write_text(json.dumps(context, sort_keys=True), encoding="utf-8")
         execution_manifest["collection_context"] = context
-        profiler_result = MxmacaProfiler().collect({"mcprofiler_case_path": str(downloaded_report)})
-        if not any(
+        profiler_results = [MxmacaProfiler().collect({"mcprofiler_case_path": str(path)}) for path in selected_reports]
+        if any(not any(
             item.available and isinstance(item.value, (int, float))
             and not isinstance(item.value, bool) and math.isfinite(item.value)
-            for item in profiler_result.observations
-        ):
+            for item in result.observations
+        ) for result in profiler_results):
             return finish(
                 "failed", "report_invalid", "mcProfiler report contains no usable numeric counters",
                 case_dir=f"mcprofiler_cases/{collection_id}", artifact_manifest=_artifact_manifest(local_case),
@@ -572,29 +587,46 @@ def collect_remote_mcprofiler_case(
             if append_imported_records
             else results_dir
         )
-        imported = import_report(downloaded_report, import_dir, source_trial_id=request.source_trial_id)
-        if append_imported_records:
-            _append_import_records(import_dir, results_dir)
+        target_reports = []
+        for index, (path, result) in enumerate(zip(selected_reports, profiler_results)):
+            if should_cancel and should_cancel():
+                return finish("cancelled", "cancelled", "collection cancelled during report import",
+                              case_dir=f"mcprofiler_cases/{collection_id}", logs=log_paths, execution_manifest=execution_manifest)
+            destination = import_dir / f"report-{index + 1}" if len(selected_reports) > 1 else import_dir
+            imported = import_report(path, destination, source_trial_id=request.source_trial_id)
+            relative = path.relative_to(local_case).as_posix()
+            target_reports.append({"report": relative, "sha256": selected_hashes[relative],
+                                   "artifact_id": imported.get("artifact_id"),
+                                   "kernel_name": selected_name if request.per_kernel else None,
+                                   "native_report_index": int(path.name.split("_", 1)[0]) if request.per_kernel else None,
+                                   "invocation_mapping": "unknown", "available_metrics": dict(result.available_metrics)})
+            if append_imported_records or (len(selected_reports) > 1 and import_output_dir is None):
+                _append_import_records(destination, results_dir)
     except Exception as exc:
         return finish("failed", "parse_failed", f"collected mcProfiler Case could not be parsed: {type(exc).__name__}: {exc}", logs=log_paths, execution_manifest=execution_manifest)
-    available = dict(profiler_result.available_metrics)
+    available = {name: any(result.available_metrics.get(name, False) for result in profiler_results)
+                 for name in {key for result in profiler_results for key in result.available_metrics}}
     warnings = [UNVERIFIED_ATTRIBUTION_WARNING]
     if target_selection:
         warnings.extend(target_selection["warnings"])
+    if len(selected_reports) > 1:
+        warnings.append("multiple native reports of the same selected symbol are retained separately; invocation/warmup mapping is unknown and counters are not averaged or summed")
     if not any(available.values()):
         warnings.append("mcProfiler Case was collected, but no normalized metrics were available")
     execution_manifest["target_attribution"] = {"status": "unverified", "confidence": "low"}
     execution_manifest["report_sha256"] = selected_hash
-    execution_manifest["import_artifact_id"] = imported.get("artifact_id")
+    execution_manifest["import_artifact_id"] = target_reports[0]["artifact_id"] if len(target_reports) == 1 else None
+    execution_manifest["import_artifact_ids"] = [row["artifact_id"] for row in target_reports]
     return finish(
         "collected",
         "none",
         "official mcProfiler completed and the resulting Case was imported",
         case_dir=f"mcprofiler_cases/{collection_id}",
-        primary_report=downloaded_report.relative_to(local_case).as_posix(),
+        primary_report=downloaded_report.relative_to(local_case).as_posix() if len(selected_reports) == 1 else None,
+        target_reports=target_reports,
         artifact_manifest=_artifact_manifest(local_case),
         available_metrics=available,
-        metric_observations=[item.to_dict() for item in profiler_result.observations],
+        metric_observations=[item.to_dict() for result in profiler_results for item in result.observations],
         logs=log_paths,
         warnings=warnings,
         execution_manifest=execution_manifest,

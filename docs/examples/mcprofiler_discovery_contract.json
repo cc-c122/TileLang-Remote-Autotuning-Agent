@@ -58,6 +58,14 @@
     "generated_source_path": "results/generated_kernel_source.cc",
     "warnings": ["automatic target selection is a generated-code structural preference, not proof of counter attribution; attribution remains unverified"]
   },
+  "repeated_target_reports_example": {
+    "primary_report": null,
+    "target_reports": [
+      {"report": "1_compiled_attention_phase_dumped_result.json", "native_report_index": 1, "kernel_name": "compiled_attention_phase", "invocation_mapping": "unknown", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "artifact_id": "example:report-1"},
+      {"report": "3_compiled_attention_phase_dumped_result.json", "native_report_index": 3, "kernel_name": "compiled_attention_phase", "invocation_mapping": "unknown", "sha256": "1111111111111111111111111111111111111111111111111111111111111111", "artifact_id": "example:report-3"}
+    ],
+    "note": "Schema example only. Each native report is imported independently; repeated scalar fields are null and observations retain artifact identity. No averaging/summing or attribution verification is implied."
+  },
   "precedence": ["explicit task override", "saved settings override", "remote PATH", "bounded installation allowlist"],
   "semantics": [
     "These are schema examples, not a claim about any active machine.",

@@ -76,6 +76,17 @@ fallback and original native artifacts. New regression tests cover mixed Torch
 and compiled reports, renamed symbols, ambiguity, unsafe/hash-mismatched source,
 cancellation, secret removal, and normal/source-worker propagation.
 
+Repeated native reports of that same selected symbol are not different target
+choices. Up to 128 distinct native report indices in one report directory are
+retained in `target_reports`, each with its own raw SHA-256 and artifact ID.
+`primary_report` is null for a multi-report Case; there is no aggregate fallback
+or arbitrary representative. Each report is independently parsed and imported.
+Repeated scalar fields are null; original per-report observations remain
+available and ratios/counters are not averaged or summed. Native report indices
+are not claimed to identify benchmark/warmup iterations: invocation mapping is
+unknown. Different symbols, duplicate indices/directories or any invalid report
+still fail closed. Single-report clients keep the existing primary-report form.
+
 ## Failure and Trust
 
 Missing tools, unrecognized versions and ordinary collection failures preserve

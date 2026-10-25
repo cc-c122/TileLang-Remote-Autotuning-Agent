@@ -112,7 +112,11 @@ class RealC500McProfilerTests(unittest.TestCase):
                             if args[0] == "mcprofiler_discovery":
                                 return result
                             report = next(runner.remote_root.rglob(PRIMARY))
-                            (report.parent / ("2_" + PRIMARY[2:])).write_bytes(report.read_bytes())
+                            # Distinct indices of one symbol are valid repeats;
+                            # duplicated index/location remains ambiguous.
+                            duplicate = report.parent / "duplicate" / report.name
+                            duplicate.parent.mkdir()
+                            duplicate.write_bytes(report.read_bytes())
                             return result
 
                         runner.run_cancellable = ambiguous

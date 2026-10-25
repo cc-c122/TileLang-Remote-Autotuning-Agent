@@ -42,9 +42,19 @@ class McProfilerAdapter:
             public["reason_category"], public["case_dir"], public["artifact_manifest"],
             public["warnings"], context.results_dir, result,
             primary_report=public["primary_report"], partial_artifact_dir=public["partial_artifact_dir"],
+            target_reports=public["target_reports"],
         )
 
     def parse(self, artifact: RawProfileArtifact) -> list[MetricObservation]:
+        if len(artifact.target_reports) > 1:
+            root = (artifact.results_dir / artifact.case_dir).resolve()
+            root.relative_to(artifact.results_dir.resolve())
+            observations = []
+            for report in artifact.target_reports:
+                path = (root / report["report"]).resolve()
+                path.relative_to(root)
+                observations.extend(parse_mcprofiler_case(path).observations)
+            return observations
         path = artifact.case_path()
         return parse_mcprofiler_case(path).observations if path is not None else []
 
