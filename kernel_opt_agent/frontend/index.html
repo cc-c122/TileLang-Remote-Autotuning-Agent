@@ -1487,6 +1487,7 @@
                 <button id="disconnectSshBtn" class="secondary" type="button" disabled>断开连接</button>
               </div>
               <div id="sshConnectionMessage" class="connection-feedback" role="status" aria-live="polite">尚未连接。刷新页面后需要重新连接。</div>
+              <div id="remoteProfilerStatus" class="connection-feedback" role="status" aria-live="polite">mcProfiler 尚未探测，请先连接并识别硬件。</div>
               <details id="advancedSshSettings" style="margin-top:12px">
                 <summary>高级 SSH 设置</summary>
                 <div class="settings-grid" style="margin-top:12px">
@@ -1496,6 +1497,14 @@
                 </div>
                 <div class="inline-actions"><span class="chip" id="passwordEnvStatus">SSH password env：未检查</span><button id="testConnectionBtn" class="secondary" type="button">测试已保存的后端认证设置</button></div>
                 <p id="savedConnectionTestStatus" class="muted">该测试不创建本页任务会话。</p>
+              </details>
+              <details id="advancedProfilerSettings" style="margin-top:12px" hidden>
+                <summary>高级性能采集设置</summary>
+                <div class="settings-grid" style="margin-top:12px">
+                  <div class="field"><label for="settingMcProfilerPath">mcProfiler 工具路径</label><input id="settingMcProfilerPath" placeholder="留空自动发现" autocomplete="off" spellcheck="false"></div>
+                  <div class="field"><label for="settingProfilerServerPath">profiler_server 工具路径</label><input id="settingProfilerServerPath" placeholder="留空自动发现" autocomplete="off" spellcheck="false"></div>
+                </div>
+                <p id="profilerSettingsStatus" class="muted" role="status" aria-live="polite"></p>
               </details>
             </div>
             <div class="settings-group">
@@ -1728,6 +1737,12 @@
     state.hardwareResolving = false;
     state.hardwareWarnings = [];
     state.settingsEdited = false;
+    state.profilerSettingsSupported = false;
+    state.profilerSavedPaths = null;
+    state.profilerSettingsSaving = false;
+    state.profilerSettingsMessage = "";
+    state.remoteProfilerCapabilities = null;
+    state.hardwareResolveVersion = 0;
     const el = {
       alerts: document.getElementById("alerts"),
       apiHealthStatus: document.getElementById("apiHealthStatus"),
@@ -1781,6 +1796,11 @@
       v2ProfilerEnabled: document.getElementById("v2ProfilerEnabled"),
       v2ProfilerType: document.getElementById("v2ProfilerType"),
       profilerToolSelectionHint: document.getElementById("profilerToolSelectionHint"),
+      remoteProfilerStatus: document.getElementById("remoteProfilerStatus"),
+      advancedProfilerSettings: document.getElementById("advancedProfilerSettings"),
+      settingMcProfilerPath: document.getElementById("settingMcProfilerPath"),
+      settingProfilerServerPath: document.getElementById("settingProfilerServerPath"),
+      profilerSettingsStatus: document.getElementById("profilerSettingsStatus"),
       v2PatchingEnabled: document.getElementById("v2PatchingEnabled"),
       v2SampleFile: document.getElementById("v2SampleFile"),
       v2SampleDirectory: document.getElementById("v2SampleDirectory"),
@@ -1863,6 +1883,7 @@
     el.sampleFileList.addEventListener("click", removeSelectedSampleFile);
     [el.v2GpuModel, el.v2Backend].forEach((input) => input.addEventListener("input", () => { renderHardwareEditor(); renderRemoteHardware(); }));
     el.v2RunnerType.addEventListener("change", () => {
+      invalidateProfilerDiscovery();
       state.hardwareOverrides = {};
       state.resolvedHardware = null;
       state.hardwareResolveError = "";
@@ -1872,6 +1893,7 @@
       if (el.v2RunnerType.value === "ssh" && sessionIsActive()) resolveHardwareProfile();
     });
     el.gpuDeviceSelect.addEventListener("change", () => {
+      invalidateProfilerDiscovery();
       state.selectedDeviceId = el.gpuDeviceSelect.value;
       state.hardwareOverrides = {};
       state.resolvedHardware = null;
@@ -1908,6 +1930,15 @@
     el.disconnectSshBtn.addEventListener("click", disconnectSshSession);
     el.downloadSettingsBtn.addEventListener("click", downloadSettings);
     el.clearSettingsBtn.addEventListener("click", clearSettings);
+    [el.settingMcProfilerPath, el.settingProfilerServerPath].forEach((input) => input.addEventListener("input", () => {
+      state.settingsEdited = true;
+      state.profilerSettingsMessage = "";
+      invalidateProfilerDiscovery();
+      renderProfilerSettings();
+      renderSshConnection();
+      renderRemoteHardware();
+      updateStartButtonState();
+    }));
     ["settingSshHost", "settingSshPort", "settingSshUsername", "settingAuthType", "settingPasswordEnv", "settingKeyPath", "settingRemoteWorkspace", "settingLlmBaseUrl", "settingLlmModel", "settingApiKeyEnv"].forEach((id) => {
       document.getElementById(id).addEventListener("input", () => {
         state.settingsEdited = true;
@@ -2272,18 +2303,37 @@
     }
 
     async function saveSettings() {
+      if (state.profilerSettingsSaving) return false;
       state.settings = readSettings();
       localStorage.setItem(V2_SETTINGS_KEY, JSON.stringify(state.settings));
+      const request = settingsApiPayload();
+      state.profilerSettingsSaving = true;
+      state.profilerSettingsMessage = "";
+      if (request.profiler) invalidateProfilerDiscovery();
+      renderProfilerSettings();
+      updateStartButtonState();
+      let saved = false;
       try {
-        const payload = await apiFetch("/api/settings", { method: "POST", body: settingsApiPayload() });
-        applySettingsPayload(payload.settings || settingsApiPayload());
-        addOneShotWarning("设置已保存到后端。仅保存环境变量名或 key path，不保存明文密钥。");
+        const payload = await apiFetch("/api/settings", { method: "POST", body: request });
+        if (request.profiler && (payload.ok !== true || !supportsProfilerSettings(payload.settings) || profilerPathsKey(payload.settings.profiler) !== profilerPathsKey(request.profiler))) {
+          throw new Error("后端未确认本次工具路径，不能视为保存成功。请重新读取后端设置核对。");
+        }
+        applySettingsPayload(payload.settings || request);
+        state.profilerSettingsMessage = request.profiler ? "工具路径已保存到后端；重新识别硬件后查看发现结果。留空时自动发现。" : "";
+        saved = true;
+        addOneShotWarning("非密钥设置已保存到后端，不保存明文 password 或 API key。");
       } catch (error) {
+        state.profilerSettingsMessage = `保存失败：${error.message}`;
         addOneShotWarning(`保存后端设置失败：${error.message}`);
+      } finally {
+        state.profilerSettingsSaving = false;
+        renderProfilerSettings();
       }
       updateSettingStatus();
       renderSettingsOutput();
       renderAlerts();
+      updateStartButtonState();
+      return saved;
     }
 
     async function testRemoteConnection() {
@@ -2294,7 +2344,7 @@
       el.testConnectionBtn.disabled = true;
       el.testConnectionBtn.textContent = "测试中";
       try {
-        await saveSettings();
+        if (!await saveSettings()) return;
         const payload = await apiFetch("/api/settings/test-connection", { method: "POST" });
         if (payload.settings) applySettingsPayload(payload.settings);
         const success = payload.success === true;
@@ -2328,6 +2378,7 @@
     }
 
     function clearSessionState(status, message) {
+      invalidateProfilerDiscovery();
       state.sshVersion += 1;
       window.clearTimeout(state.sessionExpiryTimer);
       state.sessionExpiryTimer = null;
@@ -2398,7 +2449,8 @@
       if (["connecting", "disconnecting"].includes(state.sshStatus) || state.hardwareResolving) return;
       const settings = readSettings();
       let validation = "";
-      if (!settings.ssh_host || !settings.ssh_username || !settings.remote_workspace) validation = "请填写 SSH 地址、用户名和 workspace。";
+      if (profilerSettingsPending()) validation = "工具路径尚未保存，请先保存设置，再连接并识别硬件。";
+      else if (!settings.ssh_host || !settings.ssh_username || !settings.remote_workspace) validation = "请填写 SSH 地址、用户名和 workspace。";
       else if (!Number.isInteger(settings.ssh_port) || settings.ssh_port < 1 || settings.ssh_port > 65535) validation = "SSH 端口必须是 1 到 65535 的整数。";
       else if (!settings.remote_workspace.startsWith("/")) validation = "远程 workspace 必须是绝对路径。";
       else if (settings.auth_type === "password" && !el.settingSshPassword.value) validation = "请输入本次连接使用的 SSH 密码。";
@@ -2516,7 +2568,44 @@
           model: settings.llm_model || "gpt-4o-mini",
           api_key_env: settings.api_key_env || "OPENAI_API_KEY",
         },
+        ...(state.profilerSettingsSupported ? {profiler: readProfilerPaths()} : {}),
       };
+    }
+
+    function supportsProfilerSettings(settings) {
+      const value = settings?.profiler;
+      return !!value && typeof value === "object" && !Array.isArray(value)
+        && ["mcprofiler_executable", "mcprofiler_server_executable"].every((key) => Object.prototype.hasOwnProperty.call(value, key) && (value[key] === null || typeof value[key] === "string"));
+    }
+
+    function readProfilerPaths() {
+      return {mcprofiler_executable: inputValue("settingMcProfilerPath") || null, mcprofiler_server_executable: inputValue("settingProfilerServerPath") || null};
+    }
+
+    function profilerPathsKey(paths) {
+      return JSON.stringify([paths?.mcprofiler_executable ?? null, paths?.mcprofiler_server_executable ?? null]);
+    }
+
+    function profilerSettingsPending() {
+      return state.profilerSettingsSupported && (state.profilerSettingsSaving || profilerPathsKey(readProfilerPaths()) !== profilerPathsKey(state.profilerSavedPaths));
+    }
+
+    function invalidateProfilerDiscovery() {
+      state.hardwareResolveVersion += 1;
+      state.remoteProfilerCapabilities = null;
+      state.hardwareResolving = false;
+    }
+
+    function renderProfilerSettings() {
+      el.advancedProfilerSettings.hidden = !state.profilerSettingsSupported;
+      el.settingMcProfilerPath.disabled = state.profilerSettingsSaving;
+      el.settingProfilerServerPath.disabled = state.profilerSettingsSaving;
+      el.saveSettingsBtn.disabled = state.profilerSettingsSaving;
+      el.loadSettingsBtn.disabled = state.profilerSettingsSaving;
+      el.profilerSettingsStatus.textContent = state.profilerSettingsSaving ? "正在保存到后端…"
+        : state.profilerSettingsMessage || (profilerSettingsPending() ? "工具路径尚未保存。请点击保存设置，再重新识别硬件。"
+          : "已读取后端工具路径；留空自动发现，不需要填写 profiler 命令。");
+      syncMcProfilerAutoCollectionUi();
     }
 
     function applySettingsPayload(payload) {
@@ -2524,6 +2613,15 @@
       const previousSettingsKey = sshSettingsKey();
       const ssh = payload.ssh || payload.remote || {};
       const llm = payload.llm || {};
+      const profilerSupported = supportsProfilerSettings(payload);
+      const paths = profilerSupported ? payload.profiler : null;
+      if (profilerSupported !== state.profilerSettingsSupported || profilerPathsKey(paths) !== profilerPathsKey(state.profilerSavedPaths) || profilerSettingsPending()) invalidateProfilerDiscovery();
+      state.profilerSettingsSupported = profilerSupported;
+      state.profilerSavedPaths = paths ? {mcprofiler_executable: paths.mcprofiler_executable, mcprofiler_server_executable: paths.mcprofiler_server_executable} : null;
+      el.settingMcProfilerPath.value = cleanRedacted(paths?.mcprofiler_executable);
+      el.settingProfilerServerPath.value = cleanRedacted(paths?.mcprofiler_server_executable);
+      state.profilerSettingsMessage = "";
+      renderProfilerSettings();
       state.settingsEnv = {
         passwordEnvExists: typeof ssh.password_env_exists === "boolean" ? ssh.password_env_exists : null,
         apiKeyEnvExists: typeof llm.api_key_env_exists === "boolean" ? llm.api_key_env_exists : null,
@@ -3028,15 +3126,53 @@
     }
 
     function syncMcProfilerAutoCollectionUi() {
+      const discovery = profilerDiscoveryPresentation(state.remoteProfilerCapabilities);
+      const connectionText = profilerSettingsPending() ? "工具路径尚未保存，请保存设置后重新识别硬件。"
+        : !sessionIsActive() ? "mcProfiler 尚未探测，请先连接并识别硬件。"
+          : state.hardwareResolving ? "正在探测远程 mcProfiler…"
+            : profilerDiscoveryText(discovery);
+      el.remoteProfilerStatus.textContent = connectionText;
+      el.remoteProfilerStatus.className = `connection-feedback ${discovery.kind}`;
       el.profilerToolSelectionHint.textContent = !state.apiHealthy
         ? "性能采集工具自动选择，等待后端返回支持能力。"
         : el.v2RunnerType.value !== "ssh"
           ? "local demo 使用 benchmark + 日志分析，不代表真实 GPU profiler 数据。"
+          : profilerSettingsPending() ? connectionText
           : !sessionIsActive() || !currentRemoteDevice() || state.hardwareResolving
             ? "连接并识别 GPU 后自动选择性能采集工具，无需填写 profiler 命令。"
             : mcProfilerAutoCollectionRequested()
-              ? "已自动选择 mcProfiler 采集；实际工具可用性与采集结果以后端返回为准。未安装或采集不可用时保留 benchmark + 日志分析，无需填写 profiler 命令。"
+              ? `${connectionText} 自动选择采集工具，无需填写 profiler 命令。未安装或采集不可用时使用 benchmark + 日志分析。`
               : "当前设备或后端未声明支持的自动采集工具，使用 benchmark + 日志分析；不生成缺失的硬件指标。";
+    }
+
+    function profilerDiscoveryPresentation(capabilities) {
+      const record = capabilities?.mcprofiler;
+      const reasons = {
+        none: "工具可用；是否采集成功、指标归因及优化收益仍需分别核验。",
+        not_checked: "尚未执行工具探测。", ssh_session_required: "需要有效的 SSH 会话。",
+        client_unavailable: "未找到可执行的 mcProfiler。", server_unavailable: "未找到可用的 profiler_server。",
+        runner_unsupported: "当前 runner 不支持远程工具探测。", unsafe_tool_path: "工具路径未通过安全校验。",
+        guard_denied: "安全规则拒绝探测。", runner_exception: "远程探测执行异常。",
+        cleanup_unverified: "探测进程清理尚未确认。", cancelled: "探测已取消。", timeout: "工具探测超时。",
+        query_failed: "工具查询失败。", invalid_discovery_result: "工具探测结果格式无效。",
+        invalid_capability_record: "工具能力记录格式无效。", version_unrecognized: "无法识别工具版本。", version_failed: "工具版本查询失败。",
+      };
+      const status = typeof record?.status === "string" ? record.status : "";
+      const found = status === "available" && record.available === true;
+      const missing = status === "unavailable" && record.available === false;
+      const failed = status === "failed";
+      const label = found ? "已发现 mcProfiler" : missing ? "未找到可用 mcProfiler" : failed ? "mcProfiler 探测失败"
+        : status === "cancelled" ? "mcProfiler 探测已取消" : status === "not_checked" ? "mcProfiler 尚未探测" : "mcProfiler 状态未确认";
+      const reason = !record ? "后端未返回工具发现状态，不默认可用。"
+        : status === "available" && !found || status === "unavailable" && !missing ? "工具状态与可用性字段不一致，请核查后端结果。"
+          : record.reason_category === "none" && !found ? "后端未返回具体原因。" : reasons[record.reason_category] || `后端原因：${display(record.reason_category || "未返回")}`;
+      return {label, kind: found ? "ok" : failed ? "bad" : "warn", reason,
+        version: typeof record?.version === "string" && record.version.trim() ? display(record.version) : "未返回",
+        fallback: missing || failed};
+    }
+
+    function profilerDiscoveryText(presentation) {
+      return `${presentation.label}；版本：${presentation.version}。${presentation.reason}${presentation.fallback ? " 将使用 benchmark 与日志分析，不生成缺失指标。" : ""}`;
     }
 
     function readBudgetInputs() {
@@ -3325,6 +3461,11 @@
     async function resolveHardwareProfile() {
       if (state.hardwareResolving) return;
       const remote = el.v2RunnerType.value === "ssh";
+      if (remote && profilerSettingsPending()) {
+        state.hardwareResolveError = "工具路径尚未保存，请先保存设置，再重新识别硬件。";
+        renderRemoteHardware();
+        return;
+      }
       if (remote && !sessionIsActive()) {
         if (state.sshSession) clearSessionState("expired", SSH_ERROR_MESSAGES.ssh_session_expired);
         state.hardwareResolveError = "请先在设置页连接 SSH，再识别硬件。";
@@ -3333,6 +3474,8 @@
         return;
       }
       const version = state.sshVersion;
+      const resolveVersion = ++state.hardwareResolveVersion;
+      state.remoteProfilerCapabilities = null;
       state.hardwareResolving = true;
       state.hardwareResolveError = "";
       renderSshConnection();
@@ -3347,7 +3490,8 @@
           body,
           privateRequest: remote,
         });
-        if (version !== state.sshVersion || remote !== (el.v2RunnerType.value === "ssh")) return;
+        if (version !== state.sshVersion || resolveVersion !== state.hardwareResolveVersion || remote !== (el.v2RunnerType.value === "ssh")) return;
+        state.remoteProfilerCapabilities = remote ? payload.profiler_capabilities || null : null;
         state.resolvedHardware = payload.hardware_profile || payload.hardware || null;
         if (remote) {
           state.remoteDevices = Array.isArray(payload.devices) ? payload.devices.filter((item) => item && typeof item.device_id === "string") : [];
@@ -3360,7 +3504,7 @@
         }
         renderHardwareEditor();
       } catch (error) {
-        if (version !== state.sshVersion) return;
+        if (version !== state.sshVersion || resolveVersion !== state.hardwareResolveVersion) return;
         if (remote && handleSessionError(error)) return;
         state.resolvedHardware = null;
         if (remote) {
@@ -3371,7 +3515,7 @@
         state.hardwareResolveError = error.message;
         renderHardwareEditor();
       } finally {
-        if (version === state.sshVersion) state.hardwareResolving = false;
+        if (version === state.sshVersion && resolveVersion === state.hardwareResolveVersion) state.hardwareResolving = false;
         renderSshConnection();
         renderRemoteHardware();
         updateStartButtonState();
@@ -3647,6 +3791,7 @@
 
     function remoteRunnerBlocker(runnerType) {
       if (runnerType !== "ssh") return "";
+      if (profilerSettingsPending()) return "工具路径尚未保存，请先保存设置，再提交远程任务。";
       if (!sessionIsActive()) return state.sshStatus === "expired" || state.sshSession ? "SSH 会话已过期或失效，请到设置页重新连接并识别硬件。" : "远程任务需要先在设置页连接 SSH 并识别硬件。";
       if (state.hardwareResolving) return "正在识别硬件，请等待后端返回设备结果。";
       if (state.hardwareResolveError) return "硬件识别尚未完成，请重新识别设备后再提交远程任务。";
@@ -3765,7 +3910,7 @@
 
     function taskListSourceResult(task) {
       const terminal = ["completed", "success", "done", "failed", "cancelled"].includes(String(task?.status || "").trim().toLowerCase());
-      if (task?.source_best_verified === false) return terminal ? "当前 best 验证失败" : "等待结果核验";
+      if (task?.source_best_verified === false) return terminal ? sourceBestFailureLabel(null, task) : "等待结果核验";
       const acceptedId = typeof task?.source_accepted_trial_id === "string" ? task.source_accepted_trial_id.trim() : "";
       if (task?.source_best_verified === true && acceptedId) {
         return task.improvement_percent === null || task.improvement_percent === undefined
@@ -3869,8 +4014,16 @@
     }
 
     function sourceBestVerificationPending(results, task) {
+      return ["pending", "running", "queued"].includes(String(task?.status || "").trim().toLowerCase());
+    }
+
+    function sourceBestNotPublished(results, task) {
       return sourceBestVerificationFailed(results, task)
-        && ["pending", "running", "queued"].includes(String(task?.status || "").trim().toLowerCase());
+        && (task?.status === "cancelled" || sourceOptimizationStatus(sourceOptimizationPayload(results)) === "cancelled");
+    }
+
+    function sourceBestFailureLabel(results, task) {
+      return sourceBestNotPublished(results, task) ? "已取消，best 未发布" : "当前 best 验证失败";
     }
 
     function sourceBestVerificationNotice(results, task) {
@@ -3883,6 +4036,7 @@
           ? display(resultsReason)
         : "后端未返回具体验证错误。";
       if (sourceBestVerificationPending(results, task)) return `<div class="alert warn">任务尚未结束，当前 best 等待结果核验；最终选择和可下载产物以后端完成验证为准。后端说明：${escapeHtml(reason)}</div>`;
+      if (sourceBestNotPublished(results, task)) return `<div class="alert warn">任务已取消，best 未发布或尚未完成核验，不开放 kernel 下载。部分结果与回滚记录可供检查；取消不等于产物损坏。后端说明：${escapeHtml(reason)}</div>`;
       return `<div class="alert bad">当前 best 产物验证失败：${escapeHtml(reason)} 历史 trial 和 diff 仅供审计，不代表当前可下载产物已验证。</div>`;
     }
 
@@ -3958,8 +4112,8 @@
       const acceptedTrial = acceptedSourceTrial(sourceOptimization);
       const acceptedBestLatency = acceptedVerified ? sourceMeasurementMedian(acceptedTrial?.candidate_latency_ms) : null;
       const retainedBaseline = sourceMode && sourceOptimizationStatus(sourceOptimization) === "completed" && !acceptedVerified;
-      const sourceCurrentBest = sourceBestInvalid
-        ? sourceBestPending ? "等待结果核验" : "验证失败"
+      const sourceCurrentBest = sourceBestPending ? "等待结果核验" : sourceBestInvalid
+        ? sourceBestNotPublished(state.taskResults, task) ? "未发布" : "验证失败"
         : acceptedVerified
           ? display(acceptedBestLatency)
           : retainedBaseline
@@ -3976,7 +4130,7 @@
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>执行模式</div><div>${executionModeBadge(executionMode)}</div><div>状态</div><div>${taskStatusBadge(task.status, task, state.taskResults)}</div></div></article>
           <article class="result-card"><div class="metric-label">${sourceMode ? "已尝试次数" : "已尝试 trial"}</div><div class="metric-main">${escapeHtml(display(attemptedCount))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>${baselineOnly ? "源码优化" : "current best latency"}</div><div>${baselineOnly ? "未执行" : sourceMode ? escapeHtml(sourceCurrentBest) : escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
-          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : sourceMode ? "源码修改决定" : "性能提升"}</div><div class="metric-main ${acceptedVerified ? "good" : ""}">${baselineOnly ? completionVerification === "failed" ? "基线验证未通过" : completionVerification === "unknown" && taskCompleted ? "基线结果待核验" : "仅基线测量" : sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? "已接受源码修改" : sourceOptimization && !["running", "unknown"].includes(sourceOptimizationStatus(sourceOptimization)) ? "保留 baseline" : "等待后端决定" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : sourceMode ? "源码修改决定" : "性能提升"}</div><div class="metric-main ${acceptedVerified ? "good" : ""}">${baselineOnly ? completionVerification === "failed" ? "基线验证未通过" : completionVerification === "unknown" && taskCompleted ? "基线结果待核验" : "仅基线测量" : sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? sourceBestFailureLabel(state.taskResults, task) : acceptedVerified ? "已接受源码修改" : sourceOptimization && !["running", "unknown"].includes(sourceOptimizationStatus(sourceOptimization)) ? "保留 baseline" : "等待后端决定" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
         </div>
         ${executionModeNotice(executionMode)}
         ${executionModeReasonNotice(task)}
@@ -4076,10 +4230,10 @@
       const uncertain = records.length - eligible - excluded;
       const speedup = sourceSpeedupVerified(results, state.task);
       return `<div class="kv" id="evidenceTrustSummary">
-        <div>采集成功</div><div>${collected ? `${collected} 条采集成功记录；不代表归因或分析资格已通过。` : "尚无后端确认的采集成功记录。"}</div>
-        <div>目标归因</div><div>${records.length ? `${unverified} 条归因未验证；${verified} 条归因已验证；${records.length - unverified - verified} 条归因未确认。` : "归因状态未返回，不默认可信。"}</div>
-        <div>优化分析资格</div><div>${records.length ? `${eligible} 条可用于优化分析；${excluded} 条被后端排除；${uncertain} 条未确认。` : "分析资格未返回，不依据指标数值推断。"}</div>
-        <div>已验证提速</div><div><span class="badge ${speedup ? "ok" : "warn"}">${speedup ? "已验证提速" : "未确认已验证提速"}</span> ${speedup ? "依据最终采纳结果、正确性、性能门禁和产物核验，不依据 profiler 数值。" : "采集成功或任务结束不代表提速；最终选择见源码优化结果。"}</div>
+        <div>采集状态</div><div>${collected ? `${collected} 条采集成功记录；不代表归因或分析资格已通过。` : "尚无后端确认的采集成功记录。"}</div>
+        <div>指标归属</div><div>${records.length ? `${unverified} 条归因未验证；${verified} 条归因已验证；${records.length - unverified - verified} 条归因未确认。` : "归因状态未返回，不默认可信。"}</div>
+        <div>是否可用于优化</div><div>${records.length ? `${eligible} 条可用于优化分析；${excluded} 条被后端排除；${uncertain} 条未确认。` : "分析资格未返回，不依据指标数值推断。"}</div>
+        <div>性能验证结果</div><div><span class="badge ${speedup ? "ok" : "warn"}">${["pending", "queued", "running"].includes(state.task?.status) ? "等待结果核验" : speedup ? "已验证提速" : "未确认已验证提速"}</span> ${speedup ? "依据最终采纳结果、正确性、性能门禁和产物核验，不依据 profiler 数值。" : "采集成功或任务结束不代表提速；最终选择见源码优化结果。"}</div>
       </div>${unverified ? `<div class="alert warn">归因未验证：仅供检查，未用于优化决策。</div>` : ""}`;
     }
 
@@ -4251,6 +4405,7 @@
       const comparison = profilerEvidenceComparison(results);
       return `<section class="section" id="profilerCollectionPanel">
         <div class="section-head"><h2>性能采集与证据</h2><span class="badge ${summaryKind}">${escapeHtml(profilerStatusLabel(results))}</span></div>
+        <p id="taskProfilerDiscovery">${escapeHtml(profilerDiscoveryText(profilerDiscoveryPresentation(results.profiler_capabilities)))}</p>
         <p class="section-kicker">工具可执行不等于指标有效；采集记录不替代正确性与性能门禁，也不证明计数器已准确归因到目标 kernel。</p>
         ${renderEvidenceTrust(results)}
         ${results.profiler_available === false ? `<div class="alert warn">本次任务没有可用的 profiler 数据，诊断基于 benchmark 和日志，置信度较低。</div>` : ""}
@@ -4374,6 +4529,7 @@
       const comparison = profilerEvidenceComparison(results);
       const valueLabel = (metric) => metric?.hasValue ? `${display(metric.value)} ${display(metric.unit || "单位未返回")}` : "未采集";
       return `${renderEvidenceTrustDetails(results)}<h3>性能证据对比明细</h3>${comparison.pairs.length ? `<p class="muted">仅并列已对齐的后端原始值，不推算指标改善或性能收益；无法核对的记录保留在各自采集详情中。</p>${comparison.pairs.map((pair) => `<h4>${escapeHtml(display(pair.shapeId))}：baseline → ${escapeHtml(display(comparison.trialId))}</h4><div class="table-wrap"><table><thead><tr><th>指标</th><th>优化前</th><th>优化后</th><th>来源</th><th>可比性</th></tr></thead><tbody>${pair.metrics.map((metric) => `<tr><td>${escapeHtml(display(metric.name))}</td><td>${escapeHtml(valueLabel(metric.before))}</td><td>${escapeHtml(valueLabel(metric.after))}</td><td>${escapeHtml(display(metric.before?.source || "unknown"))} → ${escapeHtml(display(metric.after?.source || "unknown"))}</td><td>同源 / 同单位；不推算收益</td></tr>`).join("")}</tbody></table></div>`).join("")}` : `<div class="empty">${escapeHtml(comparison.reason)}</div>`}
+        <h3>工具发现原始记录</h3>${results.profiler_capabilities ? `<pre>${escapeHtml(JSON.stringify(redactObject(results.profiler_capabilities), null, 2))}</pre>` : `<div class="empty">后端未返回工具发现记录。</div>`}
         <h3>采集指标与原始报告</h3>${rows.length ? `<div class="source-trials">${rows.map(renderProfilerCollection).join("")}</div>` : `<div class="empty">暂无采集指标或原始报告。</div>`}`;
     }
 
@@ -4603,19 +4759,35 @@
 
     function sourceOutcomeLabel(sourceOptimization, results, task) {
       const status = sourceOptimizationStatus(sourceOptimization);
+      if (["pending", "queued", "running"].includes(task?.status) || status === "running") return "等待结果核验，尚无最终选择";
       if (sourceSpeedupVerified(results, task)) return "已验证提速，采用已核验的源码修改";
       if (acceptedSourceTrialVerified(sourceOptimization, results, task)) return "已接受源码修改；提速结论待完整核验";
       if (status === "unavailable") return "没有适用变换，未执行源码修改";
       if (status === "not_requested") return "未请求源码优化";
-      if (status === "running") return "源码验证中，尚无最终选择";
       if (status === "cancelled") return "任务已取消；保留后端返回的验证和回滚记录";
       if (status === "failed") return "源码验证失败，未采纳修改";
       if (status !== "completed") return "源码结果未确认";
       if (sourceOptimization.accepted_trial_id) return "接受记录待核验，不能确认最终源码";
       const trials = sourceOptimizationTrials(sourceOptimization);
-      const noImprovement = trials.some((trial) => sourceTrialStatus(trial) === "no_improvement");
+      const reasons = [...new Set(trials.map(sourceRejectionReason).filter(Boolean))];
       const rolledBack = trials.some((trial) => trial.rollback_verified === true);
-      return `${noImprovement ? "无明显改善" : "没有候选被采纳"}${rolledBack ? "；已回滚（校验通过）" : ""}；保留 baseline`;
+      return `${reasons.join("；") || "没有候选被采纳，后端未返回具体原因"}${rolledBack ? "；已回滚（校验通过）" : ""}；保留 baseline`;
+    }
+
+    function sourceRejectionReason(trial) {
+      const status = sourceTrialStatus(trial);
+      const failures = {validation_failed: "候选校验失败", build_failed: "编译失败", correctness_failed: "正确性失败", benchmark_failed: "性能测量失败", cancelled: "候选已取消"};
+      if (failures[status]) return failures[status];
+      if (status !== "no_improvement") return "";
+      const gate = sourceTrialPerformanceGate(trial);
+      if (gate.present && !gate.valid) return "性能门禁记录无效，收益未确认";
+      if (gate.decision === "inconclusive") return "收益不确定，测量证据不足";
+      if (gate.decision === "codegen_unchanged") return "生成代码未变化，未采纳计时差异";
+      if (gate.decision === "no_improvement") {
+        const improvement = numeric(gate.gate?.median_improvement_percent);
+        return improvement !== null && improvement < 0 ? "候选变慢（本次测量）" : "无明显改善，未达到收益门槛";
+      }
+      return "无明显改善";
     }
 
     function sourceOptimizationStatusBadge(sourceOptimization, results, task) {
@@ -4825,6 +4997,10 @@
         decision = `<div class="alert warn">后端返回了接受决定，但测量数组或源码 hash 缺失；前端不会把该产物标记为已验证优化。</div>`;
       } else if (acceptedId) {
         decision = `<div class="alert bad">后端返回了 accepted_trial_id，但对应 trial 缺失、状态不是 accepted 或 correctness 未明确通过；前端不会标记为已验证优化。</div>`;
+      } else if (sourceBestVerificationPending(results, task) || status === "running") {
+        decision = `<div class="alert warn">等待结果核验，最终选择与可下载产物以后端完成验证为准。</div>`;
+      } else if (task?.status === "cancelled" || status === "cancelled") {
+        decision = `<div class="alert warn">任务已取消；仅展示后端已返回的部分结果和回滚记录，不推断最终收益。</div>`;
       } else {
         decision = `<div class="alert warn">没有 accepted_trial_id，最终结果保留 baseline。${sourceOptimization.reason ? `原因：${escapeHtml(display(sourceOptimization.reason))}` : "后端未返回原因。"}</div>`;
       }
@@ -4863,7 +5039,7 @@
       const sourceBestPending = sourceMode && sourceBestVerificationPending(results, state.task);
       const acceptedTrialId = typeof sourceOptimization?.accepted_trial_id === "string" ? sourceOptimization.accepted_trial_id.trim() : "";
       const sourceBaselineVerified = sourceMode && !sourceBestInvalid && sourceBaselineArtifactVerified(sourceOptimization, baseline);
-      const bestTrialId = sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "当前 best 已失效" : acceptedVerified ? acceptedTrialId : sourceBaselineVerified ? "无，保留 baseline" : "无，baseline 待核验" : pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
+      const bestTrialId = sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? sourceBestNotPublished(results, state.task) ? "已取消，best 未发布" : "当前 best 已失效" : acceptedVerified ? acceptedTrialId : sourceBaselineVerified ? "无，保留 baseline" : "无，baseline 待核验" : pick(best.trial_id, best.candidate_id, best.config_hash, "暂无 best trial");
       const baselineVerification = baselineOnly ? taskCompletionVerification(state.task, results) : "unknown";
       const baselineSucceeded = baselineOnly && baselineVerification === "verified";
       const fallbackBaselineLatency = pick(state.task?.baseline_latency, baseline.latency, baseline.objective_value);
@@ -4886,7 +5062,7 @@
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(baselineLatency))}</div></article>
           <article class="result-card ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best-card"}"><div class="metric-label">${baselineOnly ? "源码优化结果" : sourceBestPending ? "当前 best 待核验" : sourceBestInvalid ? "当前 best 不可用" : sourceMode && !acceptedVerified ? "best latency（保留 baseline）" : "best latency"}</div><div class="metric-main ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best"}">${baselineOnly ? "未执行" : sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "未验证" : escapeHtml(display(sourceMode ? sourceBestLatency : pick(best.latency, best.objective_value, state.task?.best_latency)))}</div>${baselineOnly ? "" : `<div class="kv"><div>${sourceMode ? "accepted trial id" : "best trial id"}</div><div>${escapeHtml(display(bestTrialId))}</div></div>`}</article>
-          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${baselineSucceeded || sourceMode && acceptedVerified && numeric(sourceImprovement) !== null && numeric(sourceImprovement) >= 0 || !sourceMode && !baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${baselineOnly ? baselineSucceeded ? "基线验证完成" : "基线验证未通过" : sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? sourceImprovement === null || sourceImprovement === undefined ? "未采集" : `${formatNumber(sourceImprovement)}%` : "未接受源码修改" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${baselineSucceeded || sourceMode && acceptedVerified && numeric(sourceImprovement) !== null && numeric(sourceImprovement) >= 0 || !sourceMode && !baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${baselineOnly ? baselineSucceeded ? "基线验证完成" : "基线验证未通过" : sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? sourceBestFailureLabel(results, state.task) : acceptedVerified ? sourceImprovement === null || sourceImprovement === undefined ? "未采集" : `${formatNumber(sourceImprovement)}%` : "未接受源码修改" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
         </div>
         ${renderSourceOptimization(results, executionMode, state.task)}
         ${renderProfilerCollections(results)}
