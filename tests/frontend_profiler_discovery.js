@@ -168,7 +168,11 @@ async (page) => {
   check(text.includes("未找到") && !text.includes("other-session-version"), "Task results use task discovery, never a newer connection's tool state");
   text = await page.locator("#apiResultsPanel").innerText();
   check(text.includes("已取消，best 未发布") && !text.includes("当前 best 验证失败"), "Cancellation explains withheld best publication without claiming corruption");
+  check(text.includes("后端未发布已核验的 best kernel") && !text.includes("没有通过 correctness 和 benchmark 的 kernel"), "Withheld publication does not claim baseline correctness failed");
   check(await page.locator("#downloadBestKernelBtn").isDisabled(), "Cancelled unpublished best remains non-downloadable");
+  const discoveryBox = await page.locator("#taskProfilerDiscovery").boundingBox();
+  const trustCopyBox = await page.locator("#profilerCollectionPanel .section-kicker").boundingBox();
+  check(discoveryBox.y >= trustCopyBox.y + trustCopyBox.height, "Discovery text does not overlap the existing trust explanation");
   for (const label of ["采集状态", "指标归属", "是否可用于优化", "性能验证结果"]) check(text.includes(label), `Trust layer remains separate: ${label}`);
 
   await page.evaluate(() => { state.task.status = "running"; state.taskResults.profiler_status = "not_requested"; renderApiResults(); });

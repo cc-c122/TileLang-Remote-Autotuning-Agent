@@ -4445,8 +4445,8 @@
       const comparison = profilerEvidenceComparison(results);
       return `<section class="section" id="profilerCollectionPanel">
         <div class="section-head"><h2>性能采集与证据</h2><span class="badge ${summaryKind}">${inProgress && !rows.length ? "等待采集结果" : escapeHtml(profilerStatusLabel(results))}</span></div>
-        <p id="taskProfilerDiscovery">${escapeHtml(profilerDiscoveryText(profilerDiscoveryPresentation(results.profiler_capabilities)))}</p>
         <p class="section-kicker">工具可执行不等于指标有效；采集记录不替代正确性与性能门禁，也不证明计数器已准确归因到目标 kernel。</p>
+        <p id="taskProfilerDiscovery" style="margin-bottom:12px">${escapeHtml(profilerDiscoveryText(profilerDiscoveryPresentation(results.profiler_capabilities)))}</p>
         ${renderEvidenceTrust(results)}
         ${results.profiler_available === false ? `<div class="alert warn">${inProgress ? "当前尚未取得可用的 profiler 数据，等待后端采集与核验结果；不据此判断工具缺失。" : "本次任务没有可用的 profiler 数据，诊断基于 benchmark 和日志，置信度较低。"}</div>` : ""}
         ${rows.length ? `<p class="muted">${rows.length} 条采集记录</p><div class="table-wrap"><table><thead><tr><th>工具 / trial / shape</th><th>工具可用性</th><th>采集状态</th><th>有数值 / 已声明指标</th><th>数据来源</th><th>缺失原因或说明</th></tr></thead><tbody>${rows.map((row) => {
@@ -5109,9 +5109,9 @@
         ${renderSourceOptimization(results, executionMode, state.task)}
         ${renderProfilerCollections(results)}
         <h3>${baselineOnly ? baselineSucceeded ? "已验证基线 kernel" : "基线 kernel 未通过验证" : sourceMode && !acceptedVerified ? sourceBaselineVerified ? "最终 kernel（baseline）" : "baseline kernel 待核验" : verifiedArtifact ? "best kernel" : "尚无 best kernel"}</h3>
-        <pre>${escapeHtml(verifiedArtifact ? results.best_kernel || "等待结果文件：best_kernel.py" : sourceBestPending ? "等待 correctness 和 benchmark 核验，当前尚未发布 best kernel。" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
+        <pre>${escapeHtml(verifiedArtifact ? results.best_kernel || "等待结果文件：best_kernel.py" : sourceBestPending ? "等待 correctness 和 benchmark 核验，当前尚未发布 best kernel。" : sourceBestNotPublished(results, state.task) ? "任务已取消，后端未发布已核验的 best kernel。" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
         <h3>${baselineOnly ? baselineSucceeded ? "基线配置产物" : "基线配置未通过验证" : "best_config.yaml"}</h3>
-        <pre>${escapeHtml(verifiedArtifact && results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "没有可作为 best 的已验证配置。")}</pre>
+        <pre>${escapeHtml(verifiedArtifact && results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : sourceBestNotPublished(results, state.task) ? "任务已取消，后端未发布已核验的 best config。" : "没有可作为 best 的已验证配置。")}</pre>
         <h3>report.md</h3>
         <pre>${escapeHtml(reportMarkdown || "等待结果文件：report.md")}</pre>
         <details id="apiResultsAdvanced" style="margin-top:12px">
