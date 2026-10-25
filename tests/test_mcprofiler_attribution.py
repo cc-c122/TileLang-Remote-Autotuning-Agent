@@ -86,6 +86,8 @@ class McProfilerAttributionTests(unittest.TestCase):
             class IncompleteCaseRunner(FakeRemoteCollectionRunner):
                 def run_cancellable(self, *args, **kwargs):
                     result = super().run_cancellable(*args, **kwargs)
+                    if args[0] == "mcprofiler_discovery":
+                        return result
                     primary = next(self.remote_root.rglob(PRIMARY))
                     if mode == "missing":
                         primary.unlink()

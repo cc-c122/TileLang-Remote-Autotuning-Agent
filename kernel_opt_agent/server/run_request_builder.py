@@ -155,7 +155,12 @@ def build_effective_config(
         config.patching.enabled = False
         config.patching.run_controlled_trial = False
     if request.runner.type == "ssh":
-        _apply_server_settings(config, _load_server_settings(settings_path))
+        settings = _load_server_settings(settings_path)
+        _apply_server_settings(config, settings)
+        for field in ("mcprofiler_executable", "mcprofiler_server_executable"):
+            override = getattr(settings.profiler, field)
+            if field not in request.profiler.model_fields_set and override is not None:
+                setattr(config.profiler, field, override)
         if execution_context is not None:
             execution_context.apply_settings(config)
         config.hardware_detection.remote_detection = True

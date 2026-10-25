@@ -1,0 +1,56 @@
+{
+  "contract": "Additive examples; existing hardware/results and settings fields remain unchanged.",
+  "settings_request_extension": {
+    "profiler": {
+      "mcprofiler_executable": null,
+      "mcprofiler_server_executable": null
+    }
+  },
+  "explicit_settings_example": {
+    "profiler": {
+      "mcprofiler_executable": "/opt/metax/mcProfiler/mcProfiler",
+      "mcprofiler_server_executable": "/opt/metax/mcProfiler/profiler_server"
+    }
+  },
+  "hardware_resolve_response_extension": {
+    "profiler_capabilities": {
+      "mcprofiler": {
+        "available": true,
+        "status": "available",
+        "version": "3.9.0.29",
+        "server_version": null,
+        "discovery_source": "allowlist",
+        "executable": "/opt/metax/mcProfiler/mcProfiler",
+        "server_executable": "/opt/metax/mcProfiler/profiler_server",
+        "server_mode": "embedded",
+        "reason_category": "none",
+        "warnings": ["server component is executable; an independent server version is not reported"],
+        "logs": {}
+      }
+    }
+  },
+  "task_results_response_extension": {
+    "profiler_capabilities": {
+      "mcprofiler": {
+        "available": false,
+        "status": "unavailable",
+        "version": null,
+        "server_version": null,
+        "discovery_source": "none",
+        "executable": null,
+        "server_executable": null,
+        "server_mode": "embedded",
+        "reason_category": "client_unavailable",
+        "warnings": ["continuing with benchmark/log evidence"],
+        "logs": {}
+      }
+    }
+  },
+  "precedence": ["explicit task override", "saved settings override", "remote PATH", "bounded installation allowlist"],
+  "semantics": [
+    "These are schema examples, not a claim about any active machine.",
+    "Tool availability is separate from profiler_available and from metric attribution.",
+    "Collected reports remain subject to existing planning eligibility rules.",
+    "Missing fields must not be interpreted as available or attribution verified."
+  ]
+}

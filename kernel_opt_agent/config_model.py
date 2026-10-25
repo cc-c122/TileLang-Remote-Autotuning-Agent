@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from kernel_opt_agent.sample_security import UnsafeSampleError, ensure_no_link_components, normalize_sample_path
 
@@ -99,6 +99,7 @@ class HardwareDetectionConfig(BaseModel):
 
 
 class ProfilerConfig(BaseModel):
+    _tool_discovery: dict[str, Any] | None = PrivateAttr(default=None)
     enabled: bool = True
     type: Literal["dummy", "tilelang_log", "mxmaca"] = "dummy"
     command: str | None = None
@@ -110,6 +111,13 @@ class ProfilerConfig(BaseModel):
     metrics: list[str] = Field(default_factory=list)
     kernel_names: list[str] = Field(default_factory=list)
     service_port: int | None = Field(default=None, ge=1024, le=65535)
+
+    @field_validator("mcprofiler_executable", "mcprofiler_server_executable")
+    @classmethod
+    def validate_profiler_path(cls, value, info):
+        from kernel_opt_agent.profiler.mcprofiler.tool_discovery import validate_tool_path
+
+        return validate_tool_path(value, "mcProfiler" if info.field_name == "mcprofiler_executable" else "profiler_server")
 
 
 class PatchingConfig(BaseModel):

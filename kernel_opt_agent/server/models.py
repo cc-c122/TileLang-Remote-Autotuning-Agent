@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from kernel_opt_agent.run_request import ProfilerRequest
 
@@ -60,11 +60,28 @@ class LLMSettings(BaseModel):
     api_key_env: str = "OPENAI_API_KEY"
 
 
+class ProfilerSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mcprofiler_executable: str | None = None
+    mcprofiler_server_executable: str | None = None
+
+    @field_validator("mcprofiler_executable", "mcprofiler_server_executable")
+    @classmethod
+    def validate_tool_override(cls, value, info):
+        from kernel_opt_agent.profiler.mcprofiler.tool_discovery import validate_tool_path
+
+        if value is None:
+            return None
+        return validate_tool_path(value, "mcProfiler" if info.field_name == "mcprofiler_executable" else "profiler_server")
+
+
 class SettingsPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ssh: SSHSettings = Field(default_factory=SSHSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    profiler: ProfilerSettings = Field(default_factory=ProfilerSettings)
 
 
 class SamplePayload(BaseModel):

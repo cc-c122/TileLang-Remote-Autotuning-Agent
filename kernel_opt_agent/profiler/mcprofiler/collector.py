@@ -9,13 +9,15 @@ import secrets
 import shlex
 import shutil
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 from kernel_opt_agent.profiler.base import UNVERIFIED_ATTRIBUTION_WARNING, redact_sensitive
 from kernel_opt_agent.runner.command_guard import validate
+
+from .tool_discovery import discover_mcprofiler, persist_capability, validate_tool_path
 
 
 COLLECTION_SCHEMA_VERSION = "v2.mcprofiler_collection.v1"
@@ -37,7 +39,6 @@ DEFAULT_METRICS = (
 )
 DEFAULT_MAX_ARTIFACT_FILES = 2048
 DEFAULT_MAX_ARTIFACT_BYTES = 256 * 1024 * 1024
-_SAFE_EXECUTABLE = re.compile(r"^[A-Za-z0-9_./-]+$")
 _SAFE_CASE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,96}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -73,6 +74,7 @@ class McProfilerCollectionRequest:
     per_kernel: bool = False
     profile_from_start: bool = True
     server_mode: Literal["embedded", "managed_external"] = "embedded"
+    discovery_hint: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.target_command.strip():
@@ -86,8 +88,7 @@ class McProfilerCollectionRequest:
         if self.shape_id is not None and (not self.shape_id.strip() or any(char in self.shape_id for char in "\r\n\0")):
             raise ValueError("mcProfiler shape_id must be null or non-empty single-line text")
         for label, executable in (("executable", self.executable), ("server_executable", self.server_executable)):
-            if not _SAFE_EXECUTABLE.fullmatch(executable):
-                raise ValueError(f"mcProfiler {label} contains unsupported characters")
+            validate_tool_path(executable, "mcProfiler" if label == "executable" else "profiler_server")
         if self.service_port is not None and not 1024 <= self.service_port <= 65535:
             raise ValueError("mcProfiler service_port must be between 1024 and 65535")
         if self.startup_wait_seconds <= 0 or self.startup_wait_seconds > 30:
@@ -187,11 +188,6 @@ def _result(
         execution_manifest=execution_manifest,
         **kwargs,
     )
-
-
-def _tool_check_command(executable: str) -> str:
-    quoted = shlex.quote(executable)
-    return f"test -x {quoted}" if "/" in executable else f"command -v {quoted}"
 
 
 def _build_collection_command(
@@ -352,9 +348,12 @@ def collect_remote_mcprofiler_case(
 ) -> McProfilerCollectionResult:
     started_at = _utc_now()
     collection_id = "mcprof-" + secrets.token_hex(12)
+    discovery_payload = None
 
     def finish(status: CollectionStatus, reason: str, message: str, **kwargs: Any) -> McProfilerCollectionResult:
         safe_message = (redactor or redact_sensitive)(message)
+        if discovery_payload is not None:
+            kwargs.setdefault("execution_manifest", {})["tool_discovery"] = discovery_payload
         return _persist_result(
             results_dir,
             _result(request, started_at, collection_id, status, reason, str(safe_message), **kwargs),
@@ -374,27 +373,27 @@ def collect_remote_mcprofiler_case(
     if any(value and value in request.target_command for value in secret_values):
         return finish("failed", "secret_in_command", "target command contains a configured secret value")
 
-    tools = [("client", request.executable)]
-    if request.server_mode == "managed_external":
-        tools.append(("server", request.server_executable))
-    for label, executable in tools:
-        try:
-            check = runner.run(f"mcprofiler_{label}_check", _tool_check_command(executable))
-        except Exception as exc:
-            return finish("failed", "runner_exception", f"official mcProfiler {label} tool check failed: {type(exc).__name__}: {exc}")
-        if check.guard_denied:
-            return finish("failed", "guard_denied", check.error_message or check.stderr or f"{label} tool check denied")
-        if check.returncode != 0:
-            return finish("unsupported", "tool_unavailable", f"official mcProfiler {label} executable is unavailable in the remote environment")
-
-    tool_version = None
-    try:
-        version = runner.run("mcprofiler_version", shlex.quote(request.executable) + " version")
-        match = re.search(r"\bversion\s*:\s*(\d+(?:\.\d+){1,4})", version.stdout, re.IGNORECASE)
-        if version.returncode == 0 and match:
-            tool_version = match.group(1)
-    except Exception:
-        pass
+    capability = discover_mcprofiler(
+        runner, request.executable, request.server_executable, results_dir=results_dir,
+        timeout_seconds=min(20, request.timeout_seconds), should_cancel=should_cancel, redactor=redactor,
+    )
+    hint = request.discovery_hint or {}
+    if (capability.available and hint.get("available") is True
+            and hint.get("executable") == capability.executable
+            and hint.get("server_executable") == capability.server_executable
+            and hint.get("version") == capability.version
+            and hint.get("discovery_source") in {"explicit", "path", "allowlist"}):
+        capability.discovery_source = hint["discovery_source"]
+    discovery_payload = capability.model_dump(mode="json")
+    persist_capability(results_dir, capability, redactor)
+    if not capability.available:
+        status = "cancelled" if capability.status == "cancelled" else "unsupported" if capability.status == "unavailable" else "failed"
+        reason = "tool_unavailable" if capability.status == "unavailable" else capability.reason_category
+        return finish(status, reason, "mcProfiler discovery: " + capability.reason_category,
+                      logs=capability.logs, warnings=capability.warnings)
+    request = replace(request, executable=capability.executable, server_executable=capability.server_executable,
+                      server_mode="managed_external" if request.server_mode == "managed_external" else capability.server_mode)
+    tool_version = capability.version
 
     collection_root = f".kernel_opt_agent/mcprofiler/collections/{collection_id}"
     prepare_command = f"test ! -e {shlex.quote(collection_root)} && mkdir -p {shlex.quote(collection_root)}"

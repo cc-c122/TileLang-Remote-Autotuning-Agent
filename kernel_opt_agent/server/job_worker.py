@@ -20,6 +20,7 @@ from kernel_opt_agent.source_optimizer import (
 )
 from kernel_opt_agent.source_optimizer.analyzer import sha256_file
 from kernel_opt_agent.runner.ssh_runtime import bind_ssh_context
+from kernel_opt_agent.profiler.mcprofiler.tool_discovery import discover_mcprofiler, persist_capability
 
 from .models import TaskCreateRequest
 from .profiler_status import profiler_status, read_jsonl
@@ -123,6 +124,25 @@ class JobWorker:
                     )
             else:
                 self.manager.set_execution_mode(task_id, config.execution_mode)
+            if execution_context and config.profiler.enabled and config.profiler.type == "mxmaca" and config.profiler.auto_collect:
+                capability = discover_mcprofiler(
+                    execution_context.detection_runner(), config.profiler.mcprofiler_executable,
+                    config.profiler.mcprofiler_server_executable, results_dir=results_dir,
+                    timeout_seconds=min(20, config.search.timeout_seconds, config.profiler.timeout_seconds),
+                    should_cancel=lambda: self.manager.is_cancel_requested(task_id),
+                    redactor=lambda value: execution_context.redact(value),
+                )
+                persist_capability(results_dir, capability, execution_context.redact)
+                if capability.available:
+                    config.profiler.mcprofiler_executable = capability.executable
+                    config.profiler.mcprofiler_server_executable = capability.server_executable
+                    config.profiler._tool_discovery = capability.model_dump(mode="json")
+                if capability.status == "cancelled" or self.manager.is_cancel_requested(task_id) or capability.reason_category == "cleanup_unverified":
+                    status = "failed" if capability.reason_category == "cleanup_unverified" else "cancelled"
+                    if request.optimization.enabled:
+                        write_source_result(results_dir, SourceOptimizationResult(status=status, reason="profiler discovery: " + capability.reason_category))
+                    self.manager.set_status(task_id, status)
+                    return
             (workspace / "effective_config.yaml").write_text(
                 yaml.safe_dump(safe_config_dict(config), sort_keys=True),
                 encoding="utf-8",
@@ -136,6 +156,13 @@ class JobWorker:
                 should_cancel=lambda: self.manager.is_cancel_requested(task_id),
                 event_callback=lambda event_type, message: self.manager.add_event(task_id, event_type, message),
             )
+            if any(row.get("reason_category") == "cleanup_unverified" for row in read_jsonl(results_dir / "mcprofiler_collection.jsonl")):
+                raise RuntimeError("mcProfiler remote process termination could not be verified")
+            if self.manager.is_cancel_requested(task_id):
+                if request.optimization.enabled:
+                    write_source_result(results_dir, SourceOptimizationResult(status="cancelled", reason="cancelled before source optimization"))
+                self.manager.set_status(task_id, "cancelled")
+                return
             if execution_context:
                 execution_context.verify_bound_device()
             if request.optimization.enabled and source_entry is not None and source_analysis is not None:

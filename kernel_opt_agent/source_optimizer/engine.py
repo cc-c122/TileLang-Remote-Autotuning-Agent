@@ -336,6 +336,7 @@ def _collect_source_profiler(
         "server_executable": config.profiler.mcprofiler_server_executable,
         "service_port": config.profiler.service_port,
         "timeout_seconds": config.profiler.timeout_seconds,
+        "discovery_hint": config.profiler._tool_discovery,
     }
     if metrics:
         request_kwargs["metrics"] = metrics
@@ -606,6 +607,26 @@ def run_source_optimization(
         cancelled,
         event_callback,
     )
+    stop_unverified = baseline_collection is not None and baseline_collection.get("reason_category") == "cleanup_unverified"
+    if cancelled() or stop_unverified or (baseline_collection is not None and baseline_collection.get("status") == "cancelled"):
+        if stop_unverified:
+            restored, rollback_error = False, "remote process termination unverified; workspace rewrite withheld"
+        else:
+            restored, rollback_error, _ = _restore_execution_workspace(
+                config, baseline_outcome.runner, baseline_snapshot, baseline_manifest,
+            )
+        cleanup_error = _close_runner(baseline_outcome.runner)
+        _save_logs(trials_root / "baseline" / "logs", baseline_outcome.logs)
+        result.status = "cancelled" if restored and cleanup_error is None and not stop_unverified else "failed"
+        result.reason = "source baseline profiling " + result.status
+        if rollback_error:
+            result.reason += "; " + rollback_error
+        if cleanup_error:
+            result.reason += "; " + cleanup_error
+        result = _sanitized_result(config, result)
+        write_source_result(results_dir, result)
+        _append_report(results_dir, result)
+        return result
     if baseline_collection is not None:
         baseline_ok, baseline_error, baseline_hashes = _audit_runner(baseline_outcome.runner, baseline_manifest)
         baseline_outcome.stage_hashes["after_profiler"] = baseline_hashes
@@ -748,7 +769,10 @@ def run_source_optimization(
             if not candidate_ok:
                 outcome.status = "validation_failed"
                 outcome.error = candidate_error
-        restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, outcome.runner, snapshot_dir, baseline_candidate_manifest)
+        if candidate_collection is not None and candidate_collection.get("reason_category") == "cleanup_unverified":
+            restored, rollback_error, rollback_hashes = False, "remote process termination unverified; workspace rewrite withheld", {}
+        else:
+            restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, outcome.runner, snapshot_dir, baseline_candidate_manifest)
         _close_runner(outcome.runner)
         trial.execution_source_sha256 = outcome.execution_hash
         trial.artifacts["source_hashes"] = {"local_candidate_sha256": candidate_hash, "execution_candidate_sha256": outcome.execution_hash, "runner_type": config.runner.type, "stage_hashes": outcome.stage_hashes}
@@ -933,14 +957,14 @@ def run_source_optimization(
                 accepted = None
         _close_runner(publish_runner)
 
-    if cancelled():
-        result.status = "cancelled"
-        result.reason = "source optimization cancelled; verified baseline retained"
-    elif rollback_failed:
+    if rollback_failed:
         result.status = "failed"
         result.reason = "source optimization failed an execution workspace restore or publication audit; baseline retained"
         result.accepted_trial_id = None
         result.best_source_sha256 = baseline_hash
+    elif cancelled():
+        result.status = "cancelled"
+        result.reason = "source optimization cancelled; verified baseline retained"
     else:
         result.status = "completed"
         result.reason = "candidate accepted" if accepted is not None else "no candidate passed all gates and the improvement threshold; baseline retained"

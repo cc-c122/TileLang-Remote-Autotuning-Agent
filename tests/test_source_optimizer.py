@@ -28,6 +28,17 @@ from kernel_opt_agent.server.app import _accepted_source_trial, _source_best_ver
 
 PAGED_SOURCE = Path("kernel_opt_agent/samples/paged_attention_decode/_upstream_sparse_gqa_decode_paged.py")
 
+# Policy fixtures are deterministic, not CPU/GPU performance evidence. Real CPU
+# measurements live in scripts/smoke_source_copy_timing.py and need not improve.
+FIXTURE_BENCHMARK = '''from pathlib import Path
+from kernel import factory, N
+source = list(range(N)); output = [0] * N
+factory()(source, output)
+assert output == source
+latency = 5.0 if "TL.copy(" in Path("kernel.py").read_text(encoding="utf-8") else 10.0
+print(f"BENCHMARK_RESULT latency_ms={latency}")
+'''
+
 
 def _source() -> str:
     return '''from __future__ import annotations
@@ -438,6 +449,34 @@ class SourceEngineTests(unittest.TestCase):
             self.assertTrue(all(row["reason_category"] == "runner_unsupported" for row in rows))
             self.assertTrue(all(row["fallback"] == "benchmark_log" for row in rows))
 
+    def test_profiler_cancel_or_unverified_cleanup_stops_before_planning(self) -> None:
+        for category in ("cancelled", "cleanup_unverified"):
+            with self.subTest(category=category), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                sample = root / "sample"
+                sample.mkdir()
+                entry = sample / "kernel.py"
+                entry.write_text(_source(), encoding="utf-8")
+                config = _config(sample)
+                config.profiler.enabled = True
+                config.profiler.type = "mxmaca"
+                config.profiler.auto_collect = True
+                state = {"cancel": False}
+
+                def collect(*args, **kwargs):
+                    state["cancel"] = True
+                    payload = {"status": "cancelled" if category == "cancelled" else "failed", "reason_category": category}
+                    return SimpleNamespace(to_dict=lambda redactor: payload)
+
+                with patch("kernel_opt_agent.source_optimizer.engine.build_runner", side_effect=lambda config, trial_dir: FakeRunner(trial_dir)), patch(
+                    "kernel_opt_agent.source_optimizer.engine.collect_remote_mcprofiler_case", side_effect=collect,
+                ), patch("kernel_opt_agent.source_optimizer.engine.choose_plan") as planner:
+                    result = run_source_optimization(config, root / "workspace", root / "results", analyze_source(_source()), entry,
+                                                     should_cancel=lambda: state["cancel"])
+                self.assertEqual(result.status, "cancelled" if category == "cancelled" else "failed")
+                self.assertEqual(result.trials, [])
+                planner.assert_not_called()
+
     def test_build_and_correctness_failures_rollback_original_hash(self) -> None:
         for mode, status in (
             ("build_failed", "build_failed"),
@@ -747,7 +786,7 @@ class SourceEngineTests(unittest.TestCase):
         self.assertEqual(result.status, "cancelled")
         self.assertEqual(result.trials, [])
 
-    def test_accept_records_real_execution_hash_and_updates_best(self) -> None:
+    def test_accept_records_execution_hash_with_deterministic_benchmark(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -776,12 +815,7 @@ class SourceEngineTests(unittest.TestCase):
             encoding="utf-8",
         )
         (sample / "benchmark.py").write_text(
-            "import time\n"
-            "from kernel import factory, N\n"
-            "source = list(range(N)); output = [0] * N; kernel = factory()\n"
-            "for _ in range(3): kernel(source, output)\n"
-            "start = time.perf_counter(); kernel(source, output); elapsed = (time.perf_counter() - start) * 1000\n"
-            "print(f'BENCHMARK_RESULT latency_ms={elapsed:.9f}')\n",
+            FIXTURE_BENCHMARK,
             encoding="utf-8",
         )
         config = _config(sample, benchmark_repeats=3)
@@ -899,7 +933,7 @@ class SourceOptimizationApiTests(unittest.TestCase):
                 with self.subTest(field=field):
                     self.assertIsNone(_accepted_source_trial(results, invalid))
 
-    def test_web_task_runs_controlled_source_optimization_loop(self) -> None:
+    def test_web_task_source_loop_with_deterministic_benchmark(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             sample = root / "sample"
@@ -927,12 +961,7 @@ class SourceOptimizationApiTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (sample / "benchmark.py").write_text(
-                "import time\n"
-                "from kernel import factory, N\n"
-                "source = list(range(N)); output = [0] * N; kernel = factory()\n"
-                "for _ in range(3): kernel(source, output)\n"
-                "start = time.perf_counter(); kernel(source, output); elapsed = (time.perf_counter() - start) * 1000\n"
-                "print(f'BENCHMARK_RESULT latency_ms={elapsed:.9f}')\n",
+                FIXTURE_BENCHMARK,
                 encoding="utf-8",
             )
             client = TestClient(app)

@@ -49,6 +49,8 @@ async def safe_validation_error(request: Request, exc: RequestValidationError):
         location = error.get("loc", ())
         field = location[-1] if location else None
         message = f"{field} must be >= 1" if field in {"max_iterations", "candidates_per_iteration", "timeout_seconds"} else "invalid request field"
+        if field in {"mcprofiler_executable", "mcprofiler_server_executable"}:
+            message = "profiler tool path must be a safe absolute path or the default command name"
         for budget_field in ("max_iterations", "candidates_per_iteration", "timeout_seconds"):
             known_message = f"{budget_field} must be >= 1"
             if known_message in str(error.get("msg", "")):

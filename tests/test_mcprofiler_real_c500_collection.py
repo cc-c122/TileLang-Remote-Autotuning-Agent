@@ -109,6 +109,8 @@ class RealC500McProfilerTests(unittest.TestCase):
 
                         def ambiguous(*args, **kwargs):
                             result = original(*args, **kwargs)
+                            if args[0] == "mcprofiler_discovery":
+                                return result
                             report = next(runner.remote_root.rglob(PRIMARY))
                             (report.parent / ("2_" + PRIMARY[2:])).write_bytes(report.read_bytes())
                             return result

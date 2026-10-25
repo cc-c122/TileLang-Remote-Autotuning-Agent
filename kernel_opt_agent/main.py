@@ -391,6 +391,7 @@ def run_trial(
             "server_executable": config.profiler.mcprofiler_server_executable,
             "service_port": config.profiler.service_port,
             "timeout_seconds": config.profiler.timeout_seconds,
+            "discovery_hint": config.profiler._tool_discovery,
         }
         if metrics:
             request_kwargs["metrics"] = metrics
