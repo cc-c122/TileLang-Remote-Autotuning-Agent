@@ -101,7 +101,9 @@ async (page) => {
   check(posted.at(-1).profiler.mcprofiler_executable === "/opt/contract-tools/mcProfiler" && posted.at(-1).profiler.mcprofiler_server_executable === "/opt/contract-tools/profiler_server", "POST persists both exact backend path fields");
   check((await page.locator("#profilerSettingsStatus").innerText()).includes("已保存到后端"), "Saved status requires the backend echo");
   check(!JSON.stringify(posted).includes("contract-password-only"), "Settings requests never include the transient password");
+  const settingsRead = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/settings" && response.request().method() === "GET");
   await page.locator("#loadSettingsBtn").click();
+  await (await settingsRead).finished();
   check(await page.locator("#settingMcProfilerPath").inputValue() === "/opt/contract-tools/mcProfiler", "GET reads the saved path back into the form");
   await page.locator("#settingMcProfilerPath").fill("");
   await page.locator("#settingProfilerServerPath").fill("");
