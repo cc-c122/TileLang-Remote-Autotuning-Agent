@@ -48,6 +48,12 @@ async (page) => {
   async function reloadHealthy() {
     await page.reload();
     await page.waitForFunction(() => state.apiHealthy === true);
+    await page.evaluate(async () => {
+      el.v2RunnerType.value = "local";
+      renderRemoteHardware();
+      await selectSampleFiles(["kernel.py", "correctness.py", "benchmark.py"].map((name) => new File(["# contract input"], name)), "fallback");
+    });
+    await page.locator("#advancedTaskSettings > summary").click();
   }
 
   async function connectRemote() {

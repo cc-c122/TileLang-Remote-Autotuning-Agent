@@ -76,9 +76,12 @@ async (page) => {
   }
 
   async function fillRunnableSource() {
+    await page.locator("#v2SampleSourceType").selectOption("inline");
     await page.locator("#v2SampleText").fill("print('contract fixture')");
-    const details = page.locator("#startView details");
+    const details = page.locator("#advancedTaskSettings");
     if ((await details.getAttribute("open")) === null) await details.locator("summary").click();
+    await page.locator("#v2RunnerType").selectOption("local");
+    await page.locator("#v2BuildCommand").fill("python -m py_compile kernel.py");
     await page.locator("#v2CorrectnessCommand").fill("python -c \"print('CORRECTNESS_RESULT status=PASS max_error=0 reason=fixture')\"");
     await page.locator("#v2BenchmarkCommand").fill("python -c \"print('BENCHMARK_RESULT latency_ms=1')\"");
   }
@@ -102,6 +105,7 @@ async (page) => {
 
   async function renderResult(sourceOptimization, executionMode = "source_optimization", overrides = {}) {
     await page.evaluate(({results, executionMode}) => {
+      stopTaskPolling();
       state.task = {
         task_id: "render-contract-task",
         project_name: "source-contract-fixture",
@@ -122,9 +126,9 @@ async (page) => {
   await reloadHealthy();
   await fillRunnableSource();
   check(await page.locator('#v2ExecutionIntent option[value="source_optimization"]').isDisabled(), "Old backend keeps source optimization disabled");
-  check(await page.locator("#v2ExecutionIntent").inputValue() === "baseline_only", "Missing capability falls back to baseline validation");
-  check((await page.locator("#sourceOptimizationCapabilityHint").innerText()).includes("旧后端兼容模式"), "Missing capability is explained without claiming optimization");
-  check((await page.locator("#startOptimizationBtn").innerText()) === "验证并测量", "Old backend keeps the baseline action label");
+  check(await page.locator("#v2ExecutionIntent").inputValue() === "source_optimization", "Missing capability does not silently change task intent");
+  check((await page.locator("#sourceOptimizationCapabilityHint").innerText()).includes("未返回源码优化能力"), "Missing capability is explained without claiming optimization");
+  check(await page.locator("#startOptimizationBtn").isDisabled(), "Unknown source capability blocks the default optimization action");
   const requestsBeforeForcedMode = taskRequests.length;
   await page.evaluate(() => {
     el.v2ExecutionIntent.value = "source_optimization";
@@ -132,10 +136,10 @@ async (page) => {
   });
   check(taskRequests.length === requestsBeforeForcedMode, "Missing capability cannot be bypassed through JavaScript");
   check((await page.locator("#taskDetailPanel").innerText()).includes("未声明源码优化能力"), "Forced source mode shows a capability error");
-  await page.evaluate(() => syncSourceOptimizationUi());
+  await page.locator("#v2ExecutionIntent").selectOption("baseline_only");
   await page.locator("#startOptimizationBtn").click();
   await page.waitForFunction(() => state.activeTaskId && !state.taskSubmitting);
-  check(!Object.hasOwn(taskRequests.at(-1), "optimization"), "Baseline request remains backward compatible");
+  check(taskRequests.at(-1).optimization.enabled === false, "Explicit baseline choice cannot inherit file-driven optimization defaults");
 
   healthOk = false;
   sourceCapability = true;
@@ -147,14 +151,14 @@ async (page) => {
 
   sourceCapability = false;
   await reloadHealthy();
-  check((await page.locator("#sourceOptimizationCapabilityHint").innerText()).includes("未启用源码优化"), "Explicit false capability keeps baseline mode");
+  check((await page.locator("#sourceOptimizationCapabilityHint").innerText()).includes("未声明源码优化能力"), "Explicit false capability blocks unsupported optimization without changing intent");
 
   sourceCapability = true;
   await reloadHealthy();
   await fillRunnableSource();
   check(await page.locator('#v2ExecutionIntent option[value="source_optimization"]').isEnabled(), "Capability enables the source optimization mode");
   check(await page.locator("#v2ExecutionIntent").inputValue() === "source_optimization", "Capable backend selects the source optimization path");
-  check((await page.locator("#startOptimizationBtn").innerText()) === "开始源码优化", "Capable backend exposes the real source optimization action");
+  check((await page.locator("#startOptimizationBtn").innerText()) === "开始优化", "Capable backend exposes the real source optimization action");
 
   const requestsBeforeInvalid = taskRequests.length;
   await page.locator("#v2OptimizationMaxCandidates").fill("0");
@@ -172,7 +176,7 @@ async (page) => {
   await page.locator("#startOptimizationBtn").click();
   await page.waitForFunction(() => state.activeTaskId && !state.taskSubmitting);
   check(JSON.stringify(taskRequests.at(-1).optimization) === JSON.stringify({enabled: true, max_candidates: 3, benchmark_repeats: 5, min_improvement_percent: 1}), "Source request uses the agreed optimization contract");
-  check(taskRequests.at(-1).budget.max_iterations === 3 && taskRequests.at(-1).budget.candidates_per_iteration === 4, "Legacy budget remains separate and is not renamed as source optimization");
+  check(taskRequests.at(-1).budget.max_iterations === 1 && taskRequests.at(-1).budget.candidates_per_iteration === 1, "Minimal legacy budget remains separate from the actual source candidate budget");
 
   let text = await renderResult({
     schema_version: "v2.source_optimization.v1",

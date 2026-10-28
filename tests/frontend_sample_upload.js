@@ -107,21 +107,26 @@ async (page) => {
     uploadFailure = null;
     await page.reload();
     await page.waitForFunction(() => state.apiHealthy === true);
+    await page.evaluate(() => { el.v2RunnerType.value = "local"; el.v2ExecutionIntent.value = "baseline_only"; syncSourceOptimizationUi(); renderRemoteHardware(); });
   }
 
   async function setRunnableCommands() {
-    const details = page.locator("#startView details");
+    const details = page.locator("#advancedTaskSettings");
     if ((await details.getAttribute("open")) === null) await details.locator("summary").click();
+    await page.locator("#v2CustomCommands").check();
+    await page.locator("#v2BuildCommand").fill("python -m py_compile kernel.py");
     await page.locator("#v2CorrectnessCommand").fill("python -c \"print('CORRECTNESS_RESULT status=PASS max_error=0 reason=ok')\"");
     await page.locator("#v2BenchmarkCommand").fill("python -c \"print('BENCHMARK_RESULT latency_ms=1.25')\"");
   }
 
-  async function selectSingle(name = "kernel.py", body = "print('sample')") {
-    await page.locator("#v2SampleSourceType").selectOption("upload_single");
+  async function selectFilesFixture(name = "kernel.py", body = "print('sample')") {
+    await page.locator("#v2SampleSourceType").selectOption("upload_multiple");
     await page.evaluate(({name, body}) => {
       const transfer = new DataTransfer();
       transfer.items.add(new File([body], name, {type: "text/x-python"}));
-      const input = document.getElementById("v2SampleFile");
+      transfer.items.add(new File(["# correctness contract input"], "correctness.py"));
+      transfer.items.add(new File(["# benchmark contract input"], "benchmark.py"));
+      const input = document.getElementById("v2SampleFilesFallback");
       Object.defineProperty(input, "files", {value: transfer.files, configurable: true});
       input.dispatchEvent(new Event("change", {bubbles: true}));
     }, {name, body});
@@ -235,16 +240,16 @@ async (page) => {
   check(taskRequests.at(-1).sample.source_type === "inline" && !Object.hasOwn(taskRequests.at(-1).sample, "path"), "Inline task uses the nested API schema without client paths");
 
   await resetPage();
-  await selectSingle();
+  await selectFilesFixture();
   await setRunnableCommands();
-  check(await page.locator("#v2SampleText").inputValue() === "print('sample')", "Single-file upload reads content into the editor");
-  check(await page.locator("#v2EntryFile").inputValue() === "kernel.py", "Single-file upload updates entry_file");
+  check(await page.locator("#v2SampleText").inputValue() === "print('sample')", "Multiple-file upload reads the selected operator into the preview");
+  check(await page.locator("#v2EntryFile").inputValue() === "kernel.py", "File-role selection updates entry_file");
   const singleUploadsBefore = uploads.length;
   const singleTasksBefore = taskRequests.length;
   await page.locator("#startOptimizationBtn").click();
   await page.waitForFunction((count) => state.activeTaskId && state.sampleUploadStage === "uploaded", singleTasksBefore);
-  check(uploads.length === singleUploadsBefore + 1, "Single-file flow calls the real multipart upload endpoint once");
-  check(taskRequests.length === singleTasksBefore + 1, "Single-file flow creates a task after upload");
+  check(uploads.length === singleUploadsBefore + 1, "Multiple-file flow calls the multipart upload endpoint once");
+  check(taskRequests.length === singleTasksBefore + 1, "Multiple-file flow creates a task after upload");
   check(taskRequests.at(-1).sample.source_type === "upload" && /^fixture-upload-/.test(taskRequests.at(-1).sample.upload_id), "Task receives the server upload_id");
   check(!Object.hasOwn(taskRequests.at(-1).sample, "path") && !Object.hasOwn(taskRequests.at(-1).sample, "inline_text"), "Upload task sends neither fake path nor inline fallback");
 
@@ -268,17 +273,17 @@ async (page) => {
   await resetPage();
   await selectDirectory();
   const invalidUploadsBefore = uploads.length;
-  await page.locator("#v2EntryFile").fill("missing.py");
+  await page.evaluate(() => { el.v2EntryFile.value = "missing.py"; handleEntryFileInput(); });
   check(await page.locator("#startOptimizationBtn").isDisabled(), "Missing entry_file blocks task submission");
   check((await page.locator("#startValidationMessage").innerText()).includes("必须与上传文件列表"), "Missing entry_file shows a Chinese validation error");
   check(uploads.length === invalidUploadsBefore, "Invalid entry_file does not call upload API");
 
   await resetPage();
-  await page.locator("#v2SampleSourceType").selectOption("upload_single");
+  await page.locator("#v2SampleSourceType").selectOption("upload_multiple");
   await page.evaluate(() => {
     const transfer = new DataTransfer();
     transfer.items.add(new File([new Uint8Array(2 * 1024 * 1024 + 1)], "large.py", {type: "text/x-python"}));
-    const input = document.getElementById("v2SampleFile");
+    const input = document.getElementById("v2SampleFilesFallback");
     Object.defineProperty(input, "files", {value: transfer.files, configurable: true});
     input.dispatchEvent(new Event("change", {bubbles: true}));
   });
@@ -286,21 +291,20 @@ async (page) => {
   check((await page.locator("#sampleFileList").innerText()).includes("超过 2 MiB"), "Oversized files are rejected before network upload");
 
   await resetPage();
-  await selectSingle();
+  await selectFilesFixture();
   await setRunnableCommands();
   uploadFailure = {status: 413, message: "fixture total upload too large"};
   const failedTasksBefore = taskRequests.length;
   await page.locator("#startOptimizationBtn").click();
   await page.waitForFunction(() => state.sampleUploadStage === "error");
   check(taskRequests.length === failedTasksBefore, "Upload failure prevents task creation");
-  check((await page.locator("#sampleFileList").innerText()).includes("fixture total upload too large"), "Backend upload errors are shown to the user");
+  check((await page.locator("#sampleFileList").innerText()).includes("超过后端大小限制"), "Backend upload limit errors are explained in Chinese");
   check(await page.locator("#startOptimizationBtn").isEnabled(), "Upload errors remain retryable");
 
   uploadFailure = null;
   const firstUploadId = await page.evaluate(() => uploadSelectedSample());
   const staleUploadsBefore = uploads.length;
-  await page.locator("#v2EntryFile").fill("other.py");
-  await page.locator("#v2EntryFile").fill("kernel.py");
+  await page.evaluate(() => { el.v2EntryFile.value = "other.py"; handleEntryFileInput(); el.v2EntryFile.value = "kernel.py"; handleEntryFileInput(); });
   const secondUploadId = await page.evaluate(() => uploadSelectedSample());
   check(firstUploadId !== secondUploadId && uploads.length === staleUploadsBefore + 1, "Editing entry_file invalidates and replaces the old upload_id");
 
@@ -327,6 +331,7 @@ async (page) => {
   await page.waitForFunction(() => state.task?.status === "completed" && state.taskResults);
   check((await page.locator("#apiResultsPanel").innerText()).includes("源码优化结果\n未执行"), "Completed baseline result suppresses a fictional optimized best");
   const downloadCount = downloads.length;
+  await page.locator('.tab-button[data-view-target="resultsView"]').click();
   await page.locator("#downloadBestKernelBtn").click();
   await page.waitForTimeout(100);
   check(downloads.length === downloadCount + 1 && downloads.at(-1) === "best_kernel", "Best artifact button calls the download API");

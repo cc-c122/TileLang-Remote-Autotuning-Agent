@@ -301,6 +301,7 @@
       align-items: center;
       margin-top: 12px;
     }
+    .inline-actions input[type="checkbox"] { width: auto; }
 
     .status-grid {
       display: grid;
@@ -1185,7 +1186,7 @@
         <span class="version-pill">V2 / MVP</span>
       </div>
       <div class="user-menu">
-        <span class="chip warn" id="apiHealthStatus">API：checking</span>
+        <span class="chip warn" id="apiHealthStatus">API：检查中</span>
         <span class="icon-chip avatar">U</span>
         <span>user</span>
       </div>
@@ -1209,7 +1210,7 @@
           <section class="section">
             <div class="step-title">
               <span class="step-num">1.</span>
-              <h2>输入 sample</h2>
+              <h2>上传算子与测试文件</h2>
             </div>
             <div class="form-grid three">
               <div class="field">
@@ -1217,28 +1218,25 @@
                 <input id="v2ProjectName" value="tilelang-v2-run" autocomplete="off">
               </div>
               <div class="field">
-                <label for="v2EntryFile">entry_file</label>
-                <input id="v2EntryFile" value="kernel.py" autocomplete="off">
-              </div>
-              <div class="field">
-                <label for="v2SampleSourceType">sample 来源</label>
+                <label for="v2SampleSourceType">文件来源</label>
                 <select id="v2SampleSourceType">
-                  <option value="inline" selected>粘贴代码</option>
-                  <option value="upload_single">上传单文件</option>
-                  <option value="upload_directory">上传 sample 目录</option>
+                  <option value="upload_directory" selected>上传目录</option>
+                  <option value="upload_multiple">上传多个文件</option>
+                  <option value="inline">粘贴代码（高级命令模式）</option>
                 </select>
               </div>
             </div>
+            <div id="inlineEntryField" class="field" hidden><label for="v2EntryFile">算子文件名</label><input id="v2EntryFile" value="" autocomplete="off"></div>
             <div class="sample-tabs" style="margin-top:12px">
               <div class="sample-mode-hint" id="sampleModeHint">直接提交编辑器中的源码。</div>
               <div class="sample-actions">
               <label id="singleSamplePicker" class="upload-soft button-like" hidden>
                 <input id="v2SampleFile" type="file" accept=".py,.txt,.yaml,.json" hidden>
-                选择单文件
+                选择文件
               </label>
               <label id="directorySamplePicker" class="upload-soft button-like" hidden>
                 <input id="v2SampleDirectory" type="file" multiple webkitdirectory directory hidden>
-                选择 sample 目录
+                选择目录
               </label>
               <label id="fallbackSamplePicker" class="upload-soft button-like" hidden>
                 <input id="v2SampleFilesFallback" type="file" multiple hidden>
@@ -1252,22 +1250,34 @@
                 <span class="chip" id="sampleUploadStatus">尚未选择文件</span>
                 <span class="muted">最多 100 个文件；单文件 2 MiB；总计 10 MiB</span>
               </div>
-              <div class="field">
-                <label for="v2UploadEntrySelect">从上传文件中选择 entry_file</label>
-                <select id="v2UploadEntrySelect" disabled><option value="">尚未选择文件</option></select>
+              <div class="form-grid three" id="sampleRoles">
+                <div class="field">
+                  <label for="v2UploadEntrySelect">算子入口</label>
+                  <select id="v2UploadEntrySelect" disabled><option value="">请选择算子入口</option></select>
+                </div>
+                <div class="field">
+                  <label for="v2CorrectnessFileSelect">正确性脚本</label>
+                  <select id="v2CorrectnessFileSelect" disabled><option value="">请选择正确性脚本</option></select>
+                </div>
+                <div class="field">
+                  <label for="v2BenchmarkFileSelect">性能脚本</label>
+                  <select id="v2BenchmarkFileSelect" disabled><option value="">请选择性能脚本</option></select>
+                </div>
               </div>
+              <div id="sampleRoleMessage" class="connection-feedback" role="status" aria-live="polite"></div>
               <div id="directorySupportHint" class="directory-support-note"></div>
               <div id="sampleFileList" class="sample-file-list"><div class="empty">尚未选择 sample 文件。</div></div>
             </div>
-            <div class="code-shell">
-              <textarea id="v2SampleText" placeholder="# TileLang sample&#10;@T.kernel&#10;def kernel(...):&#10;    # paste TileLang kernel here"></textarea>
-            </div>
+            <details id="sampleCodePreview" style="margin-top:12px">
+              <summary id="sampleCodePreviewLabel">算子源码预览</summary>
+              <div class="code-shell"><textarea id="v2SampleText" aria-label="算子源码" placeholder="选择算子入口后显示文件内容"></textarea></div>
+            </details>
           </section>
 
           <section class="section">
             <div class="step-title">
               <span class="step-num">2.</span>
-              <h2>识别 GPU</h2>
+              <h2>远程环境</h2>
             </div>
             <div class="inline-actions">
               <span id="remoteHardwareStatus" class="chip">GPU：尚未识别</span>
@@ -1280,51 +1290,23 @@
               <select id="gpuDeviceSelect"></select>
             </div>
             <div id="hardwareDetectionMessage" class="connection-feedback" role="status" aria-live="polite"></div>
-            <div class="form-grid" style="margin-top:12px">
-              <div class="field">
-                <label for="v2GpuModel">人工声明 GPU 型号（可选）</label>
-                <input id="v2GpuModel" placeholder="无需预先填写 GPU 型号" autocomplete="off">
-              </div>
-              <div class="field">
-                <label for="v2Backend">人工声明 backend（可选）</label>
-                <input id="v2Backend" placeholder="unknown / cuda / mxmaca" autocomplete="off">
-              </div>
+            <div class="status-grid" style="margin-top:12px">
+              <span class="chip" id="startSshStatus">SSH：未连接</span>
+              <span class="chip" id="startLlmStatus">LLM：未配置</span>
+              <button class="secondary" type="button" data-view-target="settingsView">SSH / LLM 设置</button>
             </div>
-            <p class="settings-note">人工声明不会替代实际探测到的设备身份。未知参数保持未知，可在硬件参数表中修改。</p>
-          </section>
-
-          <section class="section hardware-card">
-            <div class="step-title">
-              <span class="step-num">3.</span>
-              <h2>硬件参数表</h2>
-            </div>
-            <div id="v2HardwareEditor" class="table-wrap"></div>
           </section>
 
           <section class="section">
             <div class="step-title">
-              <span class="step-num">4.</span>
-              <h2>运行与验证</h2>
+              <span class="step-num">3.</span>
+              <h2>优化预算</h2>
             </div>
-            <input id="v2MaxIterations" type="hidden" value="3">
-            <input id="v2CandidatesPerIteration" type="hidden" value="4">
+            <input id="v2MaxIterations" type="hidden" value="1">
+            <input id="v2CandidatesPerIteration" type="hidden" value="1">
             <input id="v2ProfilerEnabled" type="hidden" value="false">
             <input id="v2PatchingEnabled" type="hidden" value="false">
             <div class="form-grid three">
-              <div class="field">
-                <label for="v2RunnerType">runner</label>
-                <select id="v2RunnerType">
-                  <option value="local" selected>local demo</option>
-                  <option value="ssh">remote SSH</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="v2ExecutionIntent">运行模式</label>
-                <select id="v2ExecutionIntent">
-                  <option value="baseline_only" selected>仅验证与测量</option>
-                  <option value="source_optimization" disabled>源码优化（后端未提供）</option>
-                </select>
-              </div>
               <div class="field">
                 <label for="v2OptimizationMaxCandidates">源码候选次数</label>
                 <input id="v2OptimizationMaxCandidates" type="number" min="1" step="1" value="3" disabled>
@@ -1332,31 +1314,37 @@
             </div>
             <div id="sourceOptimizationCapabilityHint" class="settings-note" style="margin-top:12px">正在确认后端是否支持源码优化；未确认前仅可验证与测量。</div>
             <div id="profilerToolSelectionHint" class="settings-note" style="margin-top:12px" aria-live="polite">性能采集工具自动选择，等待后端返回支持能力。</div>
-            <div class="status-grid" style="margin-top:12px">
-              <span class="chip" id="startSshStatus">SSH：未配置</span>
-              <span class="chip" id="startLlmStatus">LLM：未配置</span>
-              <button class="secondary" type="button" data-view-target="settingsView">去设置</button>
-            </div>
-            <details style="margin-top:12px">
-              <summary>高级运行设置</summary>
+            <details id="advancedTaskSettings" style="margin-top:12px">
+              <summary>高级设置</summary>
+              <div class="form-grid" style="margin-top:12px">
+                <div class="field">
+                  <label for="v2RunnerType">执行环境</label>
+                  <select id="v2RunnerType"><option value="ssh" selected>远程 SSH</option><option value="local">本地 CPU 测试（不验证 GPU）</option></select>
+                </div>
+                <div class="field">
+                  <label for="v2ExecutionIntent">任务意图</label>
+                  <select id="v2ExecutionIntent"><option value="source_optimization" selected>源码优化</option><option value="baseline_only">仅验证与测量</option></select>
+                </div>
+              </div>
+              <label class="inline-actions" style="margin:16px 0"><input id="v2CustomCommands" type="checkbox">使用自定义启动命令</label>
               <div class="form-grid three" style="margin-top:12px">
                 <div class="field">
-                  <label for="v2BuildCommand">build command</label>
-                  <input id="v2BuildCommand" value="python -m py_compile kernel.py" autocomplete="off">
+                  <label for="v2BuildCommand">构建命令</label>
+                  <input id="v2BuildCommand" placeholder="由后端自动推导" autocomplete="off" disabled>
                 </div>
                 <div class="field">
-                  <label for="v2CorrectnessCommand">correctness command</label>
-                  <input id="v2CorrectnessCommand" value="python correctness.py" autocomplete="off">
+                  <label for="v2CorrectnessCommand">正确性命令</label>
+                  <input id="v2CorrectnessCommand" placeholder="由后端自动推导" autocomplete="off" disabled>
                 </div>
                 <div class="field">
-                  <label for="v2BenchmarkCommand">benchmark command</label>
-                  <input id="v2BenchmarkCommand" value="python benchmark.py" autocomplete="off">
+                  <label for="v2BenchmarkCommand">性能命令</label>
+                  <input id="v2BenchmarkCommand" placeholder="由后端自动推导" autocomplete="off" disabled>
                 </div>
                 <input id="v2ProfilerType" type="hidden" value="dummy">
               </div>
               <div class="form-grid three" style="margin-top:12px">
                 <div class="field">
-                  <label for="v2TimeoutSeconds">timeout 秒数</label>
+                  <label for="v2TimeoutSeconds">单次执行超时（秒）</label>
                   <input id="v2TimeoutSeconds" type="number" min="1" step="1" value="60">
                 </div>
                 <div class="field">
@@ -1368,12 +1356,19 @@
                   <input id="v2MinImprovementPercent" type="number" min="0" step="0.1" value="1.0" disabled>
                 </div>
               </div>
+              <div class="form-grid" style="margin-top:16px">
+                <div class="field"><label for="v2GpuModel">GPU 人工声明（可选）</label><input id="v2GpuModel" placeholder="保留实际探测结果" autocomplete="off"></div>
+                <div class="field"><label for="v2Backend">backend 人工声明（可选）</label><input id="v2Backend" placeholder="unknown / cuda / mxmaca" autocomplete="off"></div>
+              </div>
+              <h3>详细硬件信息</h3>
+              <div id="deviceIdentityDetails" class="muted"></div>
+              <div id="v2HardwareEditor" class="table-wrap"></div>
             </details>
           </section>
 
           <section class="section">
             <div class="action-bar">
-              <button id="startOptimizationBtn" class="primary-action" type="button">验证并测量</button>
+              <button id="startOptimizationBtn" class="primary-action" type="button">开始优化</button>
             </div>
             <div id="startValidationMessage" class="empty" style="margin-top:10px" aria-live="polite"></div>
           </section>
@@ -1689,6 +1684,11 @@
       missing: "旧结果未提供",
     };
     const EVIDENCE_EVENT_LABELS = {
+      preflight_started: "正在检查执行环境与依赖",
+      preflight_completed: "执行环境检查通过",
+      preflight_failed: "执行前检查失败",
+      execution_failed: "脚本执行失败",
+      source_optimization_unavailable: "没有适用优化，保留基线结果",
       collecting_performance_evidence: "正在采集性能证据",
       performance_evidence_collecting: "正在采集性能证据",
       profiler_collecting: "正在采集性能证据",
@@ -1703,6 +1703,18 @@
       source_trial_completed: "候选验证结束",
     };
     const FIXED_RESULT_DIR = "../workspace/results/";
+    const FILE_TASK_ERRORS = {
+      script_protocol_incompatible: ["测试脚本不兼容", "测试脚本必须实际执行本次算子，并输出后端约定的正确性或性能记录。请检查脚本与日志。"],
+      python_script_incompatible: ["测试脚本不兼容", "Python 文件无法解析，或仍包含未渲染的模板。请检查上传的源码。"],
+      dependency_missing: ["环境缺依赖", "执行环境缺少脚本依赖，或依赖无法导入。系统不会自动安装依赖，请检查远端环境。"],
+      python_environment_unavailable: ["Python 环境不可用", "执行环境需提供可运行的 Python 3.10 及以上版本，请检查环境日志。"],
+      correctness_failed: ["正确性失败", "本次算子未通过正确性检查，不会把该版本作为 best kernel。"],
+      sample_file_missing: ["文件选择有误", "算子入口或测试脚本不在本次上传清单中，请重新选择文件角色。"],
+      protected_file_changed: ["受保护文件发生变化", "正确性脚本、性能脚本或参考实现被修改，后端已拒绝继续验证。"],
+      gpu_preflight_failed: ["GPU 环境未就绪", "未能确认远程设备身份，请重新连接并识别硬件。"],
+      preflight_timeout: ["环境检查超时", "执行前检查未能在预算内完成，请检查连接、环境和日志。"],
+      build_failed: ["编译失败", "构建未通过，请检查源码兼容性、编译依赖和实际日志。"],
+    };
     const SAMPLE_UPLOAD_LIMITS = {
       maxFiles: 100,
       maxFileBytes: 2 * 1024 * 1024,
@@ -1728,6 +1740,8 @@
     state.hardwareResolving = false;
     state.hardwareWarnings = [];
     state.settingsEdited = false;
+    state.testFiles = {correctness: "", benchmark: ""};
+    state.sampleReadError = false;
     const el = {
       alerts: document.getElementById("alerts"),
       apiHealthStatus: document.getElementById("apiHealthStatus"),
@@ -1766,6 +1780,7 @@
       v2Backend: document.getElementById("v2Backend"),
       v2BuildCommand: document.getElementById("v2BuildCommand"),
       v2BenchmarkCommand: document.getElementById("v2BenchmarkCommand"),
+      v2CustomCommands: document.getElementById("v2CustomCommands"),
       v2CorrectnessCommand: document.getElementById("v2CorrectnessCommand"),
       v2EntryFile: document.getElementById("v2EntryFile"),
       v2SampleSourceType: document.getElementById("v2SampleSourceType"),
@@ -1787,6 +1802,9 @@
       v2SampleFilesFallback: document.getElementById("v2SampleFilesFallback"),
       v2SampleText: document.getElementById("v2SampleText"),
       v2UploadEntrySelect: document.getElementById("v2UploadEntrySelect"),
+      v2CorrectnessFileSelect: document.getElementById("v2CorrectnessFileSelect"),
+      v2BenchmarkFileSelect: document.getElementById("v2BenchmarkFileSelect"),
+      sampleRoleMessage: document.getElementById("sampleRoleMessage"),
       sampleModeHint: document.getElementById("sampleModeHint"),
       sampleUploadPanel: document.getElementById("sampleUploadPanel"),
       sampleUploadStatus: document.getElementById("sampleUploadStatus"),
@@ -1857,6 +1875,11 @@
     el.v2SampleDirectory.addEventListener("change", readSampleDirectory);
     el.v2SampleFilesFallback.addEventListener("change", readFallbackSampleFiles);
     el.v2UploadEntrySelect.addEventListener("change", chooseUploadEntryFile);
+    [el.v2CorrectnessFileSelect, el.v2BenchmarkFileSelect].forEach((select) => select.addEventListener("change", chooseTestFiles));
+    el.v2CustomCommands.addEventListener("change", () => {
+      [el.v2BuildCommand, el.v2CorrectnessCommand, el.v2BenchmarkCommand].forEach((input) => { input.disabled = !el.v2CustomCommands.checked; });
+      updateStartButtonState();
+    });
     el.v2EntryFile.addEventListener("input", handleEntryFileInput);
     el.v2SampleText.addEventListener("input", updateStartButtonState);
     el.clearSampleFilesBtn.addEventListener("click", clearSampleFiles);
@@ -1951,12 +1974,12 @@
     }
 
     function sampleSourceMode() {
-      const value = el.v2SampleSourceType.value || "inline";
+      const value = el.v2SampleSourceType.value || "upload_directory";
       return value === "upload" ? "upload_single" : value;
     }
 
     function isUploadSourceMode(value = sampleSourceMode()) {
-      return value === "upload_single" || value === "upload_directory";
+      return ["upload_single", "upload_multiple", "upload_directory"].includes(value);
     }
 
     function directoryPickerSupported() {
@@ -2039,24 +2062,45 @@
     }
 
     function preferredEntryFile(items, currentValue = "") {
-      const paths = items.map((item) => item.path);
+      return preferredRoleFile(items, "kernel.py", currentValue);
+    }
+
+    function preferredRoleFile(items, commonName, currentValue = "") {
+      const paths = items.map((item) => item.path).filter((path) => /\.py$/i.test(path));
       if (paths.includes(currentValue)) return currentValue;
-      if (paths.includes("kernel.py")) return "kernel.py";
-      return paths.find((path) => path.toLowerCase().endsWith(".py")) || paths[0] || "";
+      const matches = paths.filter((path) => path.split("/").pop().toLowerCase() === commonName);
+      return matches.length === 1 ? matches[0] : "";
+    }
+
+    function fileRoleValidationError() {
+      const roles = [["算子入口", el.v2EntryFile.value.trim()], ["正确性脚本", state.testFiles.correctness], ["性能脚本", state.testFiles.benchmark]];
+      for (const [label, path] of roles) {
+        if (!path) return `请确认${label}：未找到唯一的常用文件名，或存在多个候选，请从文件清单中选择。`;
+        if (!/\.py$/i.test(path) || !state.sampleFiles.some((item) => item.path === path)) return `${label}必须是当前文件清单中的 Python 文件。`;
+        try { uploadPath(path); } catch (error) { return error.message; }
+      }
+      const entry = el.v2EntryFile.value.trim().toLowerCase();
+      if ([state.testFiles.correctness, state.testFiles.benchmark].some((path) => path.toLowerCase() === entry)) {
+        return "当前后端要求算子入口与测试文件分开，以保护正确性检查不被源码优化修改。正确性与性能可以共用脚本。";
+      }
+      return "";
     }
 
     async function previewSelectedEntry(version = state.sampleUploadVersion) {
       const entryFile = el.v2EntryFile.value.trim();
       const item = state.sampleFiles.find((candidate) => candidate.path === entryFile);
-      if (!item) return;
+      if (!item) { el.v2SampleText.value = ""; return; }
       try {
         const text = sanitizeText(await item.file.text());
         if (version === state.sampleUploadVersion && entryFile === el.v2EntryFile.value.trim()) {
           el.v2SampleText.value = text;
+          if (state.sampleReadError) state.sampleUploadError = "";
+          state.sampleReadError = false;
         }
       } catch (error) {
         if (version !== state.sampleUploadVersion) return;
         state.sampleUploadStage = "error";
+        state.sampleReadError = true;
         state.sampleUploadError = `读取入口文件失败：${error.message || "无法读取文件内容"}`;
         renderSampleUploadPanel();
       }
@@ -2064,6 +2108,7 @@
 
     async function selectSampleFiles(fileList, mode) {
       invalidateSampleUpload();
+      state.sampleReadError = false;
       state.sampleFiles = [];
       state.sampleUploadError = "";
       state.sampleUploadStage = "reading";
@@ -2071,13 +2116,15 @@
       try {
         const selection = normalizeSelectedSampleFiles(fileList, mode);
         state.sampleFiles = selection.items;
-        const entryFile = preferredEntryFile(selection.items, el.v2EntryFile.value.trim());
+        const entryFile = preferredEntryFile(selection.items);
         el.v2EntryFile.value = entryFile;
+        state.testFiles = {correctness: preferredRoleFile(selection.items, "correctness.py"), benchmark: preferredRoleFile(selection.items, "benchmark.py")};
         state.sampleUploadStage = "reading";
         renderSampleUploadPanel();
         const version = state.sampleUploadVersion;
         await previewSelectedEntry(version);
         if (version !== state.sampleUploadVersion) return;
+        if (state.sampleUploadStage === "error") { updateStartButtonState(); return; }
         state.sampleUploadStage = "selected";
         if (!el.v2ProjectName.value || el.v2ProjectName.value === "tilelang-v2-run") {
           const sourceName = selection.rootName || entryFile.split("/").pop() || "tilelang-v2-run";
@@ -2098,7 +2145,7 @@
     async function readSampleFile() {
       const file = el.v2SampleFile.files?.[0];
       if (!file) return;
-      el.v2SampleSourceType.value = "upload_single";
+      el.v2SampleSourceType.value = "upload_multiple";
       await selectSampleFiles([file], "single");
     }
 
@@ -2110,7 +2157,7 @@
 
     async function readFallbackSampleFiles() {
       if (!el.v2SampleFilesFallback.files?.length) return;
-      el.v2SampleSourceType.value = "upload_directory";
+      el.v2SampleSourceType.value = "upload_multiple";
       await selectSampleFiles(el.v2SampleFilesFallback.files, "fallback");
     }
 
@@ -2120,6 +2167,13 @@
         invalidateSampleUpload();
         state.sampleUploadError = "";
         state.sampleSourceMode = nextMode;
+        if (nextMode === "inline") {
+          el.v2CustomCommands.checked = true;
+          el.v2CustomCommands.dispatchEvent(new Event("change"));
+          el.v2EntryFile.value = el.v2EntryFile.value || "kernel.py";
+        } else {
+          el.v2EntryFile.value = preferredEntryFile(state.sampleFiles);
+        }
       }
       updateSampleSourceUi();
     }
@@ -2130,16 +2184,19 @@
       const uploadMode = isUploadSourceMode(mode);
       const supportsDirectory = directoryPickerSupported();
       el.v2SampleText.readOnly = uploadMode;
+      document.getElementById("inlineEntryField").hidden = uploadMode;
+      document.getElementById("sampleCodePreviewLabel").textContent = uploadMode ? "算子源码预览" : "粘贴算子源码（高级）";
+      if (!uploadMode) document.getElementById("sampleCodePreview").open = true;
       el.sampleUploadPanel.hidden = !uploadMode;
       el.singleSamplePicker.hidden = mode !== "upload_single";
       el.directorySamplePicker.hidden = mode !== "upload_directory" || !supportsDirectory;
-      el.fallbackSamplePicker.hidden = mode !== "upload_directory" || supportsDirectory;
+      el.fallbackSamplePicker.hidden = mode !== "upload_multiple" && (mode !== "upload_directory" || supportsDirectory);
       el.clearSampleFilesBtn.hidden = !uploadMode || !state.sampleFiles.length;
       el.sampleModeHint.textContent = mode === "inline"
-        ? "直接提交编辑器中的源码。"
+        ? "粘贴模式需要在高级设置中填写实际启动命令。"
         : mode === "upload_single"
           ? "单文件会先安全上传，再创建隔离任务。"
-          : supportsDirectory
+          : mode === "upload_multiple" ? "多个文件按文件名上传；同名文件会提示冲突。" : supportsDirectory
             ? "选择目录后保留内部结构，并剥离共同的最外层目录名。"
             : "当前浏览器不能保留目录结构；可回退选择多个文件。";
       renderSampleUploadPanel();
@@ -2161,20 +2218,27 @@
       el.sampleUploadStatus.className = stage.className;
       el.sampleUploadStatus.textContent = stage.text;
       const entryFile = el.v2EntryFile.value.trim();
-      el.v2UploadEntrySelect.disabled = !state.sampleFiles.length;
-      el.v2UploadEntrySelect.innerHTML = state.sampleFiles.length
-        ? state.sampleFiles.map((item) => `<option value="${escapeHtml(item.path)}" ${item.path === entryFile ? "selected" : ""}>${escapeHtml(item.path)}</option>`).join("")
-        : `<option value="">尚未选择文件</option>`;
+      const pythonFiles = state.sampleFiles.filter((item) => /\.py$/i.test(item.path));
+      for (const [select, selected, label] of [[el.v2UploadEntrySelect, entryFile, "算子入口"], [el.v2CorrectnessFileSelect, state.testFiles.correctness, "正确性脚本"], [el.v2BenchmarkFileSelect, state.testFiles.benchmark, "性能脚本"]]) {
+        select.disabled = !pythonFiles.length;
+        select.innerHTML = `<option value="">请选择${label}</option>${pythonFiles.map((item) => `<option value="${escapeHtml(item.path)}"${item.path === selected ? " selected" : ""}>${escapeHtml(item.path)}</option>`).join("")}`;
+      }
+      const roleError = state.sampleFiles.length ? fileRoleValidationError() : "";
+      el.sampleRoleMessage.textContent = roleError || (state.sampleFiles.length ? "文件角色已就绪。正确性与性能脚本将作为受保护测试文件。" : "");
+      el.sampleRoleMessage.className = `connection-feedback${roleError ? " warn" : ""}`;
       const totalBytes = state.sampleFiles.reduce((sum, item) => sum + item.sizeBytes, 0);
       el.sampleFileList.innerHTML = state.sampleFiles.length
-        ? `${state.sampleFiles.map((item, index) => `<div class="sample-file-row"><span class="sample-file-path">${escapeHtml(item.path)}</span><span class="sample-file-size">${formatBytes(item.sizeBytes)}</span><button class="sample-file-remove" type="button" data-remove-sample-index="${index}" title="移除文件" aria-label="移除 ${escapeHtml(item.path)}">×</button></div>`).join("")}<div class="muted">共 ${state.sampleFiles.length} 个文件，${formatBytes(totalBytes)}</div>`
+        ? `${state.sampleFiles.map((item, index) => {
+          const roles = [["算子入口", entryFile], ["正确性", state.testFiles.correctness], ["性能", state.testFiles.benchmark]].filter(([, path]) => path === item.path).map(([label]) => label);
+          return `<div class="sample-file-row"><span class="sample-file-path">${escapeHtml(item.path)}${roles.length ? `<span class="muted"> · ${roles.join(" / ")}</span>` : ""}</span><span class="sample-file-size">${formatBytes(item.sizeBytes)}</span><button class="sample-file-remove" type="button" data-remove-sample-index="${index}" title="移除文件" aria-label="移除 ${escapeHtml(item.path)}">×</button></div>`;
+        }).join("")}<div class="muted">共 ${state.sampleFiles.length} 个文件，${formatBytes(totalBytes)}</div>`
         : `<div class="empty">尚未选择 sample 文件。</div>`;
       const supportsDirectory = directoryPickerSupported();
       el.directorySupportHint.textContent = sampleSourceMode() === "upload_directory"
         ? supportsDirectory
           ? "服务端还会再次检查路径、文件类型和敏感内容边界。"
           : "多文件回退无法获得本机目录路径；文件会按文件名上传，同名文件会被拒绝。"
-        : "";
+        : sampleSourceMode() === "upload_multiple" ? "多文件选择不保留本机父目录；需要子目录结构时请选择上传目录。" : "";
       if (state.sampleUploadError) {
         el.sampleFileList.insertAdjacentHTML("afterbegin", `<div class="alert bad">${escapeHtml(state.sampleUploadError)}</div>`);
       }
@@ -2194,11 +2258,22 @@
     }
 
     async function chooseUploadEntryFile() {
-      if (!el.v2UploadEntrySelect.value) return;
+      const chosen = el.v2UploadEntrySelect.value;
       invalidateSampleUpload();
       state.sampleUploadError = "";
-      el.v2EntryFile.value = el.v2UploadEntrySelect.value;
+      state.sampleReadError = false;
+      el.v2EntryFile.value = chosen;
       renderSampleUploadPanel();
+      await previewSelectedEntry(state.sampleUploadVersion);
+      updateStartButtonState();
+    }
+
+    async function chooseTestFiles() {
+      const tests = {correctness: el.v2CorrectnessFileSelect.value, benchmark: el.v2BenchmarkFileSelect.value};
+      invalidateSampleUpload();
+      state.testFiles = tests;
+      renderSampleUploadPanel();
+      updateStartButtonState();
       await previewSelectedEntry(state.sampleUploadVersion);
       updateStartButtonState();
     }
@@ -2210,8 +2285,10 @@
       if (!Number.isInteger(index) || !state.sampleFiles[index]) return;
       invalidateSampleUpload();
       state.sampleFiles.splice(index, 1);
+      state.sampleReadError = false;
       state.sampleUploadError = "";
-      el.v2EntryFile.value = preferredEntryFile(state.sampleFiles, el.v2EntryFile.value.trim());
+      if (!state.sampleFiles.some((item) => item.path === el.v2EntryFile.value.trim())) el.v2EntryFile.value = "";
+      for (const role of ["correctness", "benchmark"]) if (!state.sampleFiles.some((item) => item.path === state.testFiles[role])) state.testFiles[role] = "";
       if (!state.sampleFiles.length) {
         state.sampleUploadStage = "empty";
         el.v2SampleText.value = "";
@@ -2225,7 +2302,10 @@
 
     function clearSampleFiles() {
       invalidateSampleUpload();
+      state.sampleReadError = false;
       state.sampleFiles = [];
+      state.testFiles = {correctness: "", benchmark: ""};
+      el.v2EntryFile.value = "";
       state.sampleUploadStage = "empty";
       state.sampleUploadError = "";
       el.v2SampleFile.value = "";
@@ -2470,9 +2550,13 @@
       el.gpuDeviceSelect.disabled = state.hardwareResolving || !sessionIsActive();
       el.gpuDeviceSelect.innerHTML = `<option value="">请选择设备</option>${state.remoteDevices.map((item) => `<option value="${escapeHtml(item.device_id)}">${escapeHtml(`GPU ${item.runtime_index ?? "?"} · ${item.fields?.target_name || "未知型号"} · ${item.device_id}`)}</option>`).join("")}`;
       el.gpuDeviceSelect.value = state.selectedDeviceId;
-      el.deviceIdentity.textContent = identified
+      const identityDetails = identified
         ? `实际设备：${device.fields?.target_name || "未知型号"} / ${device.backend || device.fields?.backend || "未知 backend"}；device_id：${device.device_id}；UUID：${device.fields?.device_uuid || "未知"}；PCI：${device.fields?.pci_bus_id || "未知"}${inputValue("v2GpuModel") ? `；人工声明：${inputValue("v2GpuModel")}` : ""}`
         : remote ? "设备身份由远程实际探测结果确定，请先连接并识别硬件。" : "local demo 不代表已连接 SSH 或识别到真实 GPU。";
+      document.getElementById("deviceIdentityDetails").textContent = identityDetails;
+      el.deviceIdentity.textContent = identified
+        ? `实际设备：${device.fields?.target_name || "未知型号"} · ${device.backend || device.fields?.backend || "未知 backend"}`
+        : remote ? "连接后自动识别 GPU，无需预先填写型号或硬件参数。" : "本地 CPU 测试：不连接 SSH，不验证 GPU，不作为真实 GPU 提速证据。";
       const message = state.hardwareResolveError || (state.hardwareResolving ? "正在读取实际设备和硬件参数。" : remote && state.hardwareDetectionStatus === "failed" ? "SSH 已连接，但没有探测到可见 GPU；请检查远端驱动和运行时后重新识别。" : remote && state.remoteDevices.length > 1 && !device ? "检测到多块 GPU，请明确选择一块设备。" : identified && device.identity_verified !== true ? "无法核实设备的稳定身份，远程任务暂不能提交。" : identified && state.hardwareDetectionStatus === "partial" ? "GPU 身份已识别，部分参数或环境信息未采集；未知值保留为空。" : "");
       el.hardwareDetectionMessage.textContent = [message, ...state.hardwareWarnings.map((item) => sanitizeText(String(item)))].filter(Boolean).join("\n");
       el.resolveHardwareBtn.disabled = state.hardwareResolving || remote && !sessionIsActive();
@@ -2988,7 +3072,7 @@
     }
 
     function startActionLabel() {
-      return sourceOptimizationRequested() && sourceOptimizationAvailable() ? "开始源码优化" : "验证并测量";
+      return sourceOptimizationRequested() ? "开始优化" : "验证并测量";
     }
 
     function syncSourceOptimizationUi({ preferSource = false } = {}) {
@@ -2996,7 +3080,6 @@
       const sourceOption = el.v2ExecutionIntent.querySelector('option[value="source_optimization"]');
       sourceOption.disabled = !available;
       sourceOption.textContent = available ? "源码优化" : "源码优化（后端未提供）";
-      if (!available && sourceOptimizationRequested()) el.v2ExecutionIntent.value = "baseline_only";
       if (available && preferSource && !state.sourceOptimizationChoiceTouched) el.v2ExecutionIntent.value = "source_optimization";
       const sourceMode = available && sourceOptimizationRequested();
       el.v2OptimizationMaxCandidates.disabled = !sourceMode;
@@ -3005,9 +3088,9 @@
       if (sourceMode) {
         el.sourceOptimizationCapabilityHint.textContent = "后端已声明源码优化能力。候选会逐个执行正确性与性能验证，只有被后端接受的 trial 才会成为 best。";
       } else if (state.apiHealthy && state.apiCapabilities.declared) {
-        el.sourceOptimizationCapabilityHint.textContent = "当前后端未启用源码优化；本次只运行真实 baseline 验证与测量。";
+        el.sourceOptimizationCapabilityHint.textContent = sourceOptimizationRequested() ? "当前后端未声明源码优化能力；请检查服务版本，或在高级设置选择仅验证与测量。" : "本次只运行真实 baseline 验证与测量，不执行源码优化。";
       } else if (state.apiHealthy) {
-        el.sourceOptimizationCapabilityHint.textContent = "当前后端未返回源码优化能力字段，按旧后端兼容模式仅验证与测量。";
+        el.sourceOptimizationCapabilityHint.textContent = sourceOptimizationRequested() ? "后端未返回源码优化能力，暂不能开始优化；可在高级设置选择仅验证与测量。" : "旧后端兼容模式：本次仅验证与测量，不宣称源码优化。";
       } else {
         el.sourceOptimizationCapabilityHint.textContent = "正在确认后端是否支持源码优化；未确认前仅可验证与测量。";
       }
@@ -3062,15 +3145,16 @@
 
     function uploadSelectionValidationError() {
       if (!state.sampleFiles.length) return "请先选择要上传的 sample 文件。";
+      if (state.sampleReadError) return state.sampleUploadError || "读取算子文件失败，请重新选择文件。";
       const entryFile = el.v2EntryFile.value.trim();
-      if (!entryFile) return "entry_file 不能为空。";
+      if (!entryFile) return "请选择算子入口；存在多个候选或没有常用文件名时，需要手动确认。";
       if (!state.sampleFiles.some((item) => item.path === entryFile)) {
         return `entry_file 必须与上传文件列表中的路径完全一致：${entryFile}`;
       }
       if (state.sampleUploadStage === "reading" || state.sampleUploadStage === "uploading") {
         return "sample 文件仍在读取或上传，请稍候。";
       }
-      return "";
+      return fileRoleValidationError();
     }
 
     function sampleValidationError() {
@@ -3098,6 +3182,7 @@
     }
 
     function commandValidationError() {
+      if (!el.v2CustomCommands.checked) return isUploadSourceMode() ? "" : "粘贴模式需要启用高级设置中的自定义启动命令。";
       const entryFile = el.v2EntryFile.value.trim() || "kernel.py";
       const paths = isUploadSourceMode()
         ? new Set(state.sampleFiles.map((item) => item.path))
@@ -3139,9 +3224,9 @@
       el.v2OptimizationMaxCandidates.setCustomValidity(optimizationError && (!Number.isInteger(optimization.max_candidates) || optimization.max_candidates < 1) ? optimizationError : "");
       el.v2BenchmarkRepeats.setCustomValidity(optimizationError && (!Number.isInteger(optimization.benchmark_repeats) || optimization.benchmark_repeats < 1) ? optimizationError : "");
       el.v2MinImprovementPercent.setCustomValidity(optimizationError && (!Number.isFinite(optimization.min_improvement_percent) || optimization.min_improvement_percent < 0) ? optimizationError : "");
-      el.v2BuildCommand.setCustomValidity(commandLabelValidationError(el.v2BuildCommand.value, "build"));
-      el.v2CorrectnessCommand.setCustomValidity(commandLabelValidationError(el.v2CorrectnessCommand.value, "correctness"));
-      el.v2BenchmarkCommand.setCustomValidity(commandLabelValidationError(el.v2BenchmarkCommand.value, "benchmark"));
+      el.v2BuildCommand.setCustomValidity(el.v2CustomCommands.checked ? commandLabelValidationError(el.v2BuildCommand.value, "build") : "");
+      el.v2CorrectnessCommand.setCustomValidity(el.v2CustomCommands.checked ? commandLabelValidationError(el.v2CorrectnessCommand.value, "correctness") : "");
+      el.v2BenchmarkCommand.setCustomValidity(el.v2CustomCommands.checked ? commandLabelValidationError(el.v2BenchmarkCommand.value, "benchmark") : "");
       el.startOptimizationBtn.disabled = state.taskSubmitting || !!error;
       if (!state.taskSubmitting) el.startOptimizationBtn.textContent = startActionLabel();
       el.startValidationMessage.textContent = state.taskSubmitting
@@ -3263,6 +3348,20 @@
         throw new Error("后端响应格式无效，请检查服务状态后重试。");
       }
       if (!response.ok) {
+        if (options.taskRequest && response.status === 422) {
+          const details = typeof payload?.detail === "object" ? payload.detail : null;
+          const code = details?.code || details?.error_category;
+          const messages = Array.isArray(details) ? details.map((row) => row?.msg) : [];
+          let message = FILE_TASK_ERRORS[code]?.join("：");
+          if (messages.includes("operator entry_file must be separate from protected test files")) message = "算子入口必须与受保护的测试文件分开；正确性与性能可以共用脚本。";
+          if (!message && (typeof payload?.detail === "string" && payload.detail.startsWith("sample file not found"))) message = "测试文件不在本次上传清单中，请重新选择文件角色。";
+          if (message || !details?.code) {
+            const failure = new Error(message || "后端拒绝了文件任务，请确认服务支持 test_files，并核对文件角色、预算及高级设置。");
+            failure.code = code || "file_task_validation_failed";
+            failure.status = response.status;
+            throw failure;
+          }
+        }
         if (options.privateRequest) {
           const code = typeof payload?.detail?.code === "string" && Object.prototype.hasOwnProperty.call(SSH_ERROR_MESSAGES, payload.detail.code) ? payload.detail.code : "";
           const message = SSH_ERROR_MESSAGES[code] || (response.status === 404 && path === "/api/ssh/sessions"
@@ -3278,7 +3377,9 @@
         const detail = typeof rawDetail === "string" ? rawDetail : JSON.stringify(rawDetail);
         if (response.status === 404 && path === "/api/health") throw new Error("后端服务未启动，请确认本地服务已开启。");
         if (response.status === 502 && String(detail).includes("backend API unavailable")) throw new Error("后端服务未启动，请确认本地服务已开启。");
-        throw new Error(detail || `${response.status} ${response.statusText}`);
+        const failure = new Error(sanitizeText(detail || `${response.status} ${response.statusText}`));
+        failure.status = response.status;
+        throw failure;
       }
       return payload;
     }
@@ -3421,6 +3522,8 @@
         const rawMessage = error.message || "上传失败";
         state.sampleUploadError = /not found/i.test(rawMessage)
           ? "当前后端尚未提供 sample 上传接口，请更新并完全重启同源 FastAPI 服务。"
+          : error.status === 413 ? "上传内容超过后端大小限制，请减少文件或缩小文件体积。"
+          : error.status >= 500 ? "文件上传失败，后端暂时无法处理请求。可以保留当前文件并重试。"
           : rawMessage;
         renderSampleUploadPanel();
         throw new Error(state.sampleUploadError);
@@ -3428,6 +3531,8 @@
     }
 
     function buildApiTaskRequest(uploadId = null) {
+      const validationError = startFormValidationError();
+      if (validationError) throw new Error(validationError);
       const budget = readBudgetInputs();
       const sampleText = sanitizeText(el.v2SampleText.value);
       const sample = isUploadSourceMode()
@@ -3451,11 +3556,6 @@
           allow_llm_lookup: false,
           allow_web_lookup: false,
         },
-        commands: {
-          build_command: inputValue("v2BuildCommand"),
-          correctness_command: inputValue("v2CorrectnessCommand"),
-          benchmark_command: inputValue("v2BenchmarkCommand"),
-        },
         budget: {
           strategy: "rule_based",
           max_iterations: budget.max_iterations,
@@ -3474,6 +3574,12 @@
           type: el.v2RunnerType.value === "ssh" ? "ssh" : "local",
         },
       };
+      if (isUploadSourceMode()) request.test_files = {...state.testFiles};
+      if (el.v2CustomCommands.checked) request.commands = {
+        build_command: inputValue("v2BuildCommand"),
+        correctness_command: inputValue("v2CorrectnessCommand"),
+        benchmark_command: inputValue("v2BenchmarkCommand"),
+      };
       if (request.runner.type === "ssh") {
         const blocker = remoteRunnerBlocker("ssh");
         if (blocker) throw new Error(blocker);
@@ -3485,7 +3591,7 @@
           enabled: true,
           ...readSourceOptimizationInputs(),
         };
-      }
+      } else request.optimization = {enabled: false};
       return request;
     }
 
@@ -3516,20 +3622,25 @@
         const runnerType = el.v2RunnerType.value === "ssh" ? "ssh" : "local";
         const remoteBlocker = remoteRunnerBlocker(runnerType);
         if (remoteBlocker) throw new Error(remoteBlocker);
+        const formSnapshot = JSON.stringify(buildApiTaskRequest());
         const uploadId = isUploadSourceMode() ? await uploadSelectedSample() : null;
+        if (JSON.stringify(buildApiTaskRequest()) !== formSnapshot) throw new Error("文件角色或运行设置在上传期间发生变化，请确认后重新提交。");
         const request = buildApiTaskRequest(uploadId);
         el.startOptimizationBtn.textContent = "提交任务";
-        renderTaskWaiting("正在创建真实运行任务，等待后端返回 task_id。");
-        activateView("taskView");
-        const payload = await apiFetch("/api/tasks", { method: "POST", body: request, privateRequest: runnerType === "ssh" });
+        const payload = await apiFetch("/api/tasks", { method: "POST", body: request, privateRequest: runnerType === "ssh", taskRequest: true });
+        stopTaskPolling();
         state.task = unwrapTaskPayload(payload);
         state.activeTaskId = pick(payload.task_id, state.task?.task_id);
         if (!state.activeTaskId) throw new Error("后端没有返回 task_id，任务状态未知。");
         state.taskEvents = state.task?.events || [];
         state.taskResults = null;
+        el.downloadBestKernelBtn.disabled = true;
+        el.downloadReportBtn.disabled = true;
         state.cancellationPending = false;
         el.cancelTaskBtn.disabled = false;
         renderTaskDetail();
+        renderApiResults();
+        activateView("taskView");
         loadTaskList();
         startTaskPolling();
       } catch (error) {
@@ -3543,11 +3654,16 @@
         }
         el.taskStatus.textContent = "提交失败";
         el.taskDetailPanel.innerHTML = `<div class="empty">任务启动失败：${escapeHtml(error.message)}</div>`;
+        state.taskSubmitError = error.message;
         addOneShotWarning(`任务启动失败：${error.message}`);
         renderAlerts();
       } finally {
         state.taskSubmitting = false;
         updateStartButtonState();
+        if (state.taskSubmitError) {
+          el.startValidationMessage.textContent = `任务未创建：${state.taskSubmitError}`;
+          state.taskSubmitError = "";
+        }
       }
     }
 
@@ -3586,7 +3702,7 @@
           await loadTaskList();
         }
       } catch (error) {
-        el.taskStatus.textContent = "failed";
+        el.taskStatus.textContent = "读取失败";
         el.taskDetailPanel.innerHTML = `<div class="empty">读取任务状态失败：${escapeHtml(error.message)}</div>`;
       }
     }
@@ -3936,6 +4052,27 @@
       return `<div class="alert warn">执行模式说明：${escapeHtml(display(reason))} 请核对 entry_file 是否指向实际算子源码。</div>`;
     }
 
+    function fileTaskOutcome(results, task) {
+      if (task?.status === "cancelled") return {label: "已取消，验证未完成", message: "后端已确认取消。正确性、性能与回滚情况以实际结果为准，不将未核验的源码当作已验证 best。", kind: "warn"};
+      const source = sourceOptimizationPayload(results);
+      const rows = [...(Array.isArray(results?.failed_cases) ? results.failed_cases : []), ...(Array.isArray(results?.summary_table) ? results.summary_table : []), ...sourceOptimizationTrials(source)];
+      const hints = [results?.preflight?.error_category, task?.error, source?.reason,
+        ...rows.flatMap((row) => [row.status, row.error_category, row.reason, row.correctness?.reason]),
+        ...state.taskEvents.filter((event) => ["preflight_failed", "execution_failed"].includes(event.type)).map((event) => event.message)].filter((value) => typeof value === "string");
+      const code = Object.keys(FILE_TASK_ERRORS).find((key) => hints.some((value) => value === key || value.startsWith(`${key}:`)));
+      if (code) return {label: FILE_TASK_ERRORS[code][0], message: FILE_TASK_ERRORS[code][1], kind: "bad"};
+      if (!task || !["completed", "failed", "cancelled"].includes(task.status)) return null;
+      if (source?.status === "unavailable") return {label: "没有适用优化", message: "后端未识别到可安全执行的源码变换。本次仅保留实际基线验证结果，不代表算子没有优化空间。", kind: "warn"};
+      const trials = sourceOptimizationTrials(source);
+      if (trials.some((trial) => trial.status === "no_improvement")) return {label: "收益不足或不确定", message: "候选未通过后端性能门禁，未采纳源码修改；是否回滚以后端校验记录为准。", kind: "warn"};
+      return null;
+    }
+
+    function renderFileTaskFeedback(results, task, id) {
+      const outcome = fileTaskOutcome(results, task);
+      return outcome ? `<div id="${id}" class="alert ${outcome.kind}" role="status"><strong>${outcome.label}</strong>：${outcome.message}</div>` : "";
+    }
+
     function renderTaskDetail() {
       const task = state.task;
       if (!task) {
@@ -3976,15 +4113,16 @@
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>执行模式</div><div>${executionModeBadge(executionMode)}</div><div>状态</div><div>${taskStatusBadge(task.status, task, state.taskResults)}</div></div></article>
           <article class="result-card"><div class="metric-label">${sourceMode ? "已尝试次数" : "已尝试 trial"}</div><div class="metric-main">${escapeHtml(display(attemptedCount))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>${baselineOnly ? "源码优化" : "current best latency"}</div><div>${baselineOnly ? "未执行" : sourceMode ? escapeHtml(sourceCurrentBest) : escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
-          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : sourceMode ? "源码修改决定" : "性能提升"}</div><div class="metric-main ${acceptedVerified ? "good" : ""}">${baselineOnly ? completionVerification === "failed" ? "基线验证未通过" : completionVerification === "unknown" && taskCompleted ? "基线结果待核验" : "仅基线测量" : sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? "已接受源码修改" : sourceOptimization && !["running", "unknown"].includes(sourceOptimizationStatus(sourceOptimization)) ? "保留 baseline" : "等待后端决定" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : sourceMode ? "源码修改决定" : "性能提升"}</div><div class="metric-main ${acceptedVerified ? "good" : ""}">${task.status === "cancelled" ? "已取消" : baselineOnly ? completionVerification === "failed" ? "基线验证未通过" : completionVerification === "unknown" && taskCompleted ? "基线结果待核验" : "仅基线测量" : sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? "已接受源码修改" : sourceOptimization && !["running", "unknown"].includes(sourceOptimizationStatus(sourceOptimization)) ? "保留 baseline" : "等待后端决定" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
         </div>
         ${executionModeNotice(executionMode)}
         ${executionModeReasonNotice(task)}
         ${taskCompletionNotice(task, state.taskResults)}
+        ${renderFileTaskFeedback(state.taskResults, task, "taskIntakeFeedback")}
         ${sourceMode ? sourceBestVerificationNotice(state.taskResults, task) : ""}
         ${sourceMode ? `<div class="alert">源码结果：${escapeHtml(sourceOutcomeLabel(sourceOptimization, state.taskResults, task))}</div>` : ""}
         ${state.cancellationPending ? `<div class="alert warn">取消请求已提交，仍在等待后端确认终态。</div>` : ""}
-        ${task.error ? `<div class="empty">失败原因：${escapeHtml(task.error)}</div>` : ""}
+        ${task.error ? `<div class="empty">失败原因：${escapeHtml(display(task.error))}</div>` : ""}
         <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${events.slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(latestEventLabel(event)))}</td><td>${escapeHtml(display(eventMessage(event)))}</td></tr>`).join("") || `<tr><td colspan="3">暂无任务事件</td></tr>`}</tbody></table></div>
       `;
     }
@@ -4854,6 +4992,7 @@
       const benchmarkBest = [results.best_row, ...summary].find((row) => row && typeof row === "object" && String(row.status || "").trim().toLowerCase() === "benchmark_ok") || null;
       const best = benchmarkBest || {};
       const executionMode = state.task?.execution_mode;
+      const taskCancelled = state.task?.status === "cancelled";
       const baselineOnly = executionMode === "baseline_only";
       const sourceMode = executionMode === "source_optimization";
       const sourceOptimization = sourceOptimizationPayload(results);
@@ -4872,32 +5011,35 @@
       const baselineLatency = sourceMode && acceptedVerified ? acceptedBaselineLatency : fallbackBaselineLatency;
       const sourceBestLatency = acceptedVerified ? acceptedCandidateLatency : baselineLatency;
       const sourceImprovement = acceptedVerified ? numeric(acceptedTrial?.improvement_percent) : null;
-      const verifiedArtifact = sourceMode ? acceptedVerified || sourceBaselineVerified : !!benchmarkBest;
+      const verifiedArtifact = !taskCancelled && (sourceMode ? acceptedVerified || sourceBaselineVerified : !!benchmarkBest);
       el.downloadBestKernelBtn.disabled = !results.best_kernel || !verifiedArtifact;
       const evidenceSummary = evidenceSummaryFromResults(results);
       const diagnosisRows = diagnosisRowsFromResults(results);
       const profilerAvailable = pick(results.profiler_available, results.profilerAvailable, evidenceSummary?.profiler_available);
       const shapeResultsHtml = renderShapeResults(results);
       el.apiResultsPanel.innerHTML = `
+        ${renderFileTaskFeedback(results, state.task, "fileTaskFeedback")}
         ${executionModeNotice(executionMode)}
-        ${baselineOnly && baselineVerification === "failed" ? `<div class="alert bad">correctness 或 benchmark 未通过，本次没有已验证的基线性能结果。</div>` : ""}
+        ${!taskCancelled && baselineOnly && baselineVerification === "failed" ? `<div class="alert bad">correctness 或 benchmark 未通过，本次没有已验证的基线性能结果。</div>` : ""}
         ${baselineOnly && baselineVerification === "unknown" ? `<div class="alert warn">后端没有返回可核验的 baseline correctness 与 benchmark 结果；当前结果不标记为成功，也不开放 kernel 下载。</div>` : ""}
         ${sourceMode && !acceptedVerified && !sourceBaselineVerified ? `<div class="alert warn">未能同时确认 baseline correctness、benchmark、终态和同源 hash；当前 baseline 产物不开放下载。</div>` : ""}
         <div class="compare-grid">
           <article class="result-card"><div class="metric-label">baseline latency</div><div class="metric-main">${escapeHtml(display(baselineLatency))}</div></article>
           <article class="result-card ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best-card"}"><div class="metric-label">${baselineOnly ? "源码优化结果" : sourceBestPending ? "当前 best 待核验" : sourceBestInvalid ? "当前 best 不可用" : sourceMode && !acceptedVerified ? "best latency（保留 baseline）" : "best latency"}</div><div class="metric-main ${sourceMode && !acceptedVerified || baselineOnly ? "" : "best"}">${baselineOnly ? "未执行" : sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "未验证" : escapeHtml(display(sourceMode ? sourceBestLatency : pick(best.latency, best.objective_value, state.task?.best_latency)))}</div>${baselineOnly ? "" : `<div class="kv"><div>${sourceMode ? "accepted trial id" : "best trial id"}</div><div>${escapeHtml(display(bestTrialId))}</div></div>`}</article>
-          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${baselineSucceeded || sourceMode && acceptedVerified && numeric(sourceImprovement) !== null && numeric(sourceImprovement) >= 0 || !sourceMode && !baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0 ? "good" : ""}">${baselineOnly ? baselineSucceeded ? "基线验证完成" : "基线验证未通过" : sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? sourceImprovement === null || sourceImprovement === undefined ? "未采集" : `${formatNumber(sourceImprovement)}%` : "未接受源码修改" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
+          <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : "性能提升"}</div><div class="metric-main ${!taskCancelled && (baselineSucceeded || sourceMode && acceptedVerified && numeric(sourceImprovement) !== null && numeric(sourceImprovement) >= 0 || !sourceMode && !baselineOnly && numeric(results.improvement_percent) !== null && numeric(results.improvement_percent) >= 0) ? "good" : ""}">${taskCancelled ? "已取消，验证未完成" : baselineOnly ? baselineSucceeded ? "基线验证完成" : "基线验证未通过" : sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? sourceImprovement === null || sourceImprovement === undefined ? "未采集" : `${formatNumber(sourceImprovement)}%` : "未接受源码修改" : results.improvement_percent === null || results.improvement_percent === undefined ? "暂无性能提升数据" : `${formatNumber(results.improvement_percent)}%`}</div></article>
         </div>
         ${renderSourceOptimization(results, executionMode, state.task)}
         ${renderProfilerCollections(results)}
-        <h3>${baselineOnly ? baselineSucceeded ? "已验证基线 kernel" : "基线 kernel 未通过验证" : sourceMode && !acceptedVerified ? sourceBaselineVerified ? "最终 kernel（baseline）" : "baseline kernel 待核验" : verifiedArtifact ? "best kernel" : "尚无 best kernel"}</h3>
-        <pre>${escapeHtml(verifiedArtifact ? results.best_kernel || "等待结果文件：best_kernel.py" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
-        <h3>${baselineOnly ? baselineSucceeded ? "基线配置产物" : "基线配置未通过验证" : "best_config.yaml"}</h3>
+        <h3>${taskCancelled ? "源码验证未完成" : baselineOnly ? baselineSucceeded ? "已验证基线 kernel" : "基线 kernel 未通过验证" : sourceMode && !acceptedVerified ? sourceBaselineVerified ? "最终 kernel（baseline）" : "baseline kernel 待核验" : verifiedArtifact ? "best kernel" : "尚无 best kernel"}</h3>
+        <pre>${escapeHtml(verifiedArtifact ? results.best_kernel || "等待结果文件：best_kernel.py" : taskCancelled ? "任务已取消；未完成核验的源码不作为已验证 best 下载。" : "没有通过 correctness 和 benchmark 的 kernel。")}</pre>
+        <h3>${taskCancelled ? "配置未完成核验" : baselineOnly ? baselineSucceeded ? "基线配置产物" : "基线配置未通过验证" : "best_config.yaml"}</h3>
         <pre>${escapeHtml(verifiedArtifact && results.best_config ? JSON.stringify(redactObject(results.best_config), null, 2) : "没有可作为 best 的已验证配置。")}</pre>
         <h3>report.md</h3>
         <pre>${escapeHtml(reportMarkdown || "等待结果文件：report.md")}</pre>
         <details id="apiResultsAdvanced" style="margin-top:12px">
           <summary>高级详情</summary>
+          ${results.preflight ? `<h3>执行环境检查</h3><pre>${escapeHtml(JSON.stringify(redactObject(results.preflight), null, 2))}</pre>` : ""}
+          ${results.file_task ? `<h3>实际文件角色</h3><pre>${escapeHtml(JSON.stringify(redactObject(results.file_task), null, 2))}</pre>` : ""}
           ${renderProfilerDetails(results)}
           ${shapeResultsHtml}
           ${renderEvidenceSummary(evidenceSummary, diagnosisRows, profilerAvailable)}
@@ -5422,6 +5564,7 @@
     function taskStatusPresentation(status, task = null, results = null) {
       const text = display(status);
       const normalized = text.toLowerCase();
+      const labels = {pending: "排队中", queued: "排队中", running: "运行中", waiting: "等待中", cancelled: "已取消", failed: "失败"};
       if (["completed", "success", "done"].includes(normalized)) {
         if (task?.source_best_verified === false || results?.source_best_verified === false) {
           return { kind: "bad", label: "已结束，结果验证失败" };
@@ -5431,8 +5574,8 @@
         if (verification === "failed") return { kind: "bad", label: "已结束，基线未通过" };
         return { kind: "warn", label: "已结束，结果待核验" };
       }
-      if (["pending", "running", "waiting", "cancelled"].includes(normalized)) return { kind: "warn", label: text };
-      return { kind: "bad", label: text };
+      if (["pending", "queued", "running", "waiting", "cancelled"].includes(normalized)) return { kind: "warn", label: labels[normalized] };
+      return { kind: "bad", label: labels[normalized] || text };
     }
 
     function taskStatusBadge(status, task = null, results = null) {
