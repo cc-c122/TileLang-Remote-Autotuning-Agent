@@ -18,6 +18,7 @@ from kernel_opt_agent.benchmark.correctness import parse_correctness
 from kernel_opt_agent.benchmark.metrics import is_better
 from kernel_opt_agent.benchmark.parser import parse_benchmark
 from kernel_opt_agent.config_model import AppConfig, load_config, resolve_path, safe_config_dict
+from kernel_opt_agent.file_task import FileTaskError, audit_files, restore_files, strict_correctness, strict_benchmark
 from kernel_opt_agent.diagnosis import (
     EvidenceBundle,
     diagnose_bottlenecks,
@@ -299,30 +300,62 @@ def run_trial(
     benchmark_stdout = ""
     benchmark_stderr = ""
     compile_log = ""
+    validation: dict[str, Any] = {"stage_hashes": {}}
+    expected_files = {}
+    last_execution = None
+    if config.file_task:
+        expected_files = {**config.file_task.protected_files,
+                          config.kernel.entry_file: hashlib.sha256(paths["kernel"].read_bytes()).hexdigest()}
+
+    def execute(name, command):
+        nonlocal last_execution
+        if config.file_task and should_cancel and should_cancel():
+            raise FileTaskError("cancelled", "cancelled before " + name)
+        if config.file_task and hasattr(runner, "run_cancellable"):
+            result = runner.run_cancellable(name, command, should_cancel, timeout_seconds=config.search.timeout_seconds)
+        else:
+            result = runner.run(name, command)
+        last_execution = result
+        if config.file_task and "stop could not be verified" in (result.error_message or ""):
+            stdout_all.append(result.stdout)
+            stderr_all.append(result.stderr)
+            raise FileTaskError("cleanup_unverified", "execution stop unverified; workspace rewrite withheld")
+        return result
+
+    def audit(stage):
+        if config.file_task:
+            validation["stage_hashes"][stage] = audit_files(runner, expected_files)
 
     try:
         runner = build_runner(config, paths["trial_dir"])
+        audit("before_build")
         if config.kernel.build_command:
             if on_event:
                 on_event("build_started", "running build command")
-            build = runner.run("build", config.kernel.build_command)
+            build = execute("build", config.kernel.build_command)
             stdout_all.append(build.stdout)
             stderr_all.append(build.stderr)
             compile_log = "\n".join([build.stdout, build.stderr])
+            audit("after_build")
             if build.returncode != 0:
                 status = command_failure_status(build, "build")
                 error = {"category": status, "message": build.error_message or build.stderr[-500:]}
         if error is None:
             if on_event:
                 on_event("correctness_started", "running correctness command")
-            corr_cmd = runner.run("correctness", config.kernel.correctness_command)
+            corr_cmd = execute("correctness", config.kernel.correctness_command)
             stdout_all.append(corr_cmd.stdout)
             stderr_all.append(corr_cmd.stderr)
+            audit("after_correctness")
             if corr_cmd.returncode != 0 and corr_cmd.guard_denied:
                 status = command_failure_status(corr_cmd, "correctness")
                 error = {"category": status, "message": corr_cmd.error_message or corr_cmd.stderr}
             else:
-                corr = parse_correctness(corr_cmd.stdout, corr_cmd.stderr, corr_cmd.returncode)
+                if config.file_task:
+                    bound_hash = expected_files[config.kernel.entry_file] if config.file_task.attest_entry else None
+                    corr = strict_correctness(corr_cmd.stdout, corr_cmd.stderr, corr_cmd.returncode, bound_hash)
+                else:
+                    corr = parse_correctness(corr_cmd.stdout, corr_cmd.stderr, corr_cmd.returncode)
                 correctness_data = {
                     "passed": corr.passed,
                     "status": corr.status,
@@ -331,21 +364,24 @@ def run_trial(
                     "parse_error": corr.parse_error,
                 }
                 if not corr.passed:
-                    status = "correctness_failed"
+                    status = "script_protocol_incompatible" if config.file_task and corr.parse_error else "correctness_failed"
                     error = {"category": status, "message": corr.reason}
         if error is None:
             if on_event:
                 on_event("benchmark_started", "running benchmark command")
-            bench = runner.run("benchmark", config.kernel.run_command)
+            bench = execute("benchmark", config.kernel.run_command)
             stdout_all.append(bench.stdout)
             stderr_all.append(bench.stderr)
             benchmark_stdout = bench.stdout
             benchmark_stderr = bench.stderr
+            audit("after_benchmark")
             if bench.returncode != 0:
                 status = command_failure_status(bench, "run")
                 error = {"category": status, "message": bench.error_message or bench.stderr[-500:]}
             else:
-                parsed = parse_benchmark(
+                parsed = strict_benchmark(
+                    bench.stdout, expected_files[config.kernel.entry_file] if config.file_task.attest_entry else None,
+                ) if config.file_task else parse_benchmark(
                     bench.stdout,
                     {
                         "latency": config.metrics.latency_regex,
@@ -355,15 +391,26 @@ def run_trial(
                 )
                 metrics_data = {"latency": parsed.latency, "tflops": parsed.tflops, "bandwidth": parsed.bandwidth, "parse_error": parsed.parse_error, "reason": parsed.reason}
                 if parsed.parse_error:
-                    status = "parse_error"
-                    error = {"category": "parse_error", "message": parsed.reason or "benchmark parse failed"}
+                    status = "script_protocol_incompatible" if config.file_task else "parse_error"
+                    error = {"category": status, "message": parsed.reason or "benchmark parse failed"}
                 else:
                     status = "benchmark_ok"
                     objective["value"] = metrics_data.get(config.search.objective)
     except Exception as exc:
-        status = runner_exception_category(config, str(exc))
+        status = exc.code if isinstance(exc, FileTaskError) else runner_exception_category(config, str(exc))
         error = {"category": status, "message": str(exc)}
         stderr_all.append(str(exc))
+
+    if config.file_task and should_cancel and should_cancel() and status != "cleanup_unverified":
+        if last_execution is None or (last_execution.returncode in {0, 130} and not last_execution.timeout and not last_execution.guard_denied):
+            status = "cancelled"
+            error = {"category": "cancelled", "message": "cancel requested; no later command was started"}
+    if config.file_task and error and runner is not None:
+        validation["rollback"] = ({"verified": False, "reason": "command stop unverified"} if status == "cleanup_unverified"
+                                  else restore_files(runner, resolve_path(config.kernel.sample_path), expected_files))
+        if not validation["rollback"]["verified"]:
+            status = "rollback_failed"
+            error = {"category": status, "message": "baseline workspace recovery was not verified"}
 
     source_trial_id = f"{run_id}:{label}"
     source_sha256 = hashlib.sha256(paths["kernel"].read_bytes()).hexdigest()
@@ -468,6 +515,8 @@ def run_trial(
         "error": error,
         "timestamps": {"started": started, "finished": datetime.utcnow().isoformat() + "Z"},
     }
+    if config.file_task:
+        record["execution_validation"] = validation
     record = redact_data(config, record)
     if runner is not None:
         maybe_run_controlled_patch_trial(config, db, record, paths, runner, metrics_data)

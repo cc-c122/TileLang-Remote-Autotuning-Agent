@@ -10,6 +10,7 @@ import kernel_opt_agent.main as agent_main
 import yaml
 from kernel_opt_agent.agent.llm_client import OpenAICompatibleClient
 from kernel_opt_agent.config_model import safe_config_dict
+from kernel_opt_agent.file_task import FileTaskError
 from kernel_opt_agent.source_optimizer import (
     SourceOptimizationResult,
     inspect_source_optimization,
@@ -26,6 +27,7 @@ from .profiler_status import profiler_status, read_jsonl
 from .run_request_builder import build_effective_config
 from .sample_uploads import SampleUploadStore
 from .task_manager import TaskManager
+from .task_preflight import run_file_preflight
 
 
 WORKER_LOCK = threading.Lock()
@@ -127,6 +129,15 @@ class JobWorker:
                 yaml.safe_dump(safe_config_dict(config), sort_keys=True),
                 encoding="utf-8",
             )
+            if config.file_task:
+                self.manager.add_event(task_id, "preflight_started", "checking Python, dependencies, device binding and protected files")
+                run_file_preflight(config, results_dir, lambda: self.manager.is_cancel_requested(task_id), execution_context)
+                if self.manager.is_cancel_requested(task_id):
+                    if request.optimization.enabled:
+                        write_source_result(results_dir, SourceOptimizationResult(status="cancelled", reason="cancelled during preflight"))
+                    self.manager.set_status(task_id, "cancelled")
+                    return
+                self.manager.add_event(task_id, "preflight_completed", "file task preflight passed")
             agent_main.WORKSPACE_ROOT = workspace
             agent_main.RESULTS_DIR = results_dir
             agent_main.GENERATED_DIR = generated_dir
@@ -136,9 +147,20 @@ class JobWorker:
                 should_cancel=lambda: self.manager.is_cancel_requested(task_id),
                 event_callback=lambda event_type, message: self.manager.add_event(task_id, event_type, message),
             )
+            if config.file_task:
+                records = read_jsonl(results_dir / "experiments.jsonl")
+                failures = [row for row in records if row.get("status") not in {"benchmark_ok", "cancelled"}]
+                if failures:
+                    failure = failures[-1]
+                    raise FileTaskError(failure["status"], (failure.get("error") or {}).get("message") or "file task baseline failed")
+                if self.manager.is_cancel_requested(task_id):
+                    if request.optimization.enabled:
+                        write_source_result(results_dir, SourceOptimizationResult(status="cancelled", reason="cancelled during baseline; rollback verified"))
+                    self.manager.set_status(task_id, "cancelled")
+                    return
             if execution_context:
                 execution_context.verify_bound_device()
-            if request.optimization.enabled and source_entry is not None and source_analysis is not None:
+            if request.optimization.enabled and source_entry is not None and source_analysis is not None and (config.file_task is None or source_analysis.targets):
                 self.manager.add_event(task_id, "source_optimization_started", "running controlled source optimization trial")
                 planning_client = None
                 if os.environ.get(config.llm.api_key_env):
@@ -169,6 +191,8 @@ class JobWorker:
                     error = (source_result.reason or "source baseline failed") if source_result.status == "failed" else None
                     self.manager.set_status(task_id, source_result.status, error)
                     return
+            elif config.file_task and request.optimization.enabled and source_analysis is not None:
+                self.manager.add_event(task_id, "source_optimization_unavailable", source_analysis.reason or "no authorized source transformation")
             if self.manager.is_cancel_requested(task_id):
                 self.manager.set_status(task_id, "cancelled")
             else:
@@ -194,6 +218,12 @@ class JobWorker:
                 self.manager.set_status(task_id, "completed")
         except Exception as exc:
             public_error = redact_source_text(config, str(exc)) if "config" in locals() else "task failed before effective configuration was available"
+            if isinstance(exc, FileTaskError) and "config" not in locals():
+                public_error = exc.code + ": file task input is incompatible"
+            if request.test_files:
+                category = getattr(exc, "code", "file_task_failed")
+                (results_dir / "file_task_failure.json").write_text(json.dumps({"error_category": category, "message": public_error, "exception_type": type(exc).__name__}), encoding="utf-8")
+                self.manager.add_event(task_id, "preflight_failed" if not (results_dir / "experiments.jsonl").exists() else "execution_failed", category)
             if request.optimization.enabled:
                 source_result = SourceOptimizationResult.model_validate(read_source_result(results_dir))
                 source_result.status = "failed"

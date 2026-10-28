@@ -49,6 +49,8 @@ async def safe_validation_error(request: Request, exc: RequestValidationError):
         location = error.get("loc", ())
         field = location[-1] if location else None
         message = f"{field} must be >= 1" if field in {"max_iterations", "candidates_per_iteration", "timeout_seconds"} else "invalid request field"
+        if "test_files" in location:
+            message = "test_files require safe sample-relative .py paths"
         for budget_field in ("max_iterations", "candidates_per_iteration", "timeout_seconds"):
             known_message = f"{budget_field} must be >= 1"
             if known_message in str(error.get("msg", "")):
@@ -59,6 +61,7 @@ async def safe_validation_error(request: Request, exc: RequestValidationError):
             "sample.inline_text and sample.upload_id must be omitted for path samples",
             "device_id requires an SSH session",
             "ssh_session_id requires runner.type=ssh",
+            "operator entry_file must be separate from protected test files",
         ):
             if str(error.get("msg", "")) == "Value error, " + known_message:
                 message = known_message
