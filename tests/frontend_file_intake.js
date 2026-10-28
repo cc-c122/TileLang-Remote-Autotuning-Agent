@@ -173,6 +173,10 @@ async (page) => {
   check(await page.evaluate(() => fileTaskOutcome({source_optimization: {status: "completed", trials: [{status: "no_improvement"}]}}, {status: "completed"}).label) === "收益不足或不确定", "Rejected performance is not optimization success");
   check(await page.evaluate(() => fileTaskOutcome({source_optimization: {status: "unavailable", trials: []}}, {status: "completed"}).label) === "没有适用优化", "Unavailable transformation remains distinct from failure or speedup");
   check(await page.evaluate(() => fileTaskOutcome({source_optimization: {status: "completed", trials: [{status: "no_improvement"}]}}, {status: "running"})) === null, "Running task does not prematurely declare insufficient benefit");
+  check(await page.evaluate(() => {
+    state.taskEvents = [{type: "preflight_failed", message: "dependency_missing"}];
+    return fileTaskOutcome({preflight: {status: "passed"}, failed_cases: [null, "malformed row"], source_optimization: {status: "unavailable", trials: []}}, {status: "completed"}).label;
+  }) === "没有适用优化", "Previous-task events and malformed rows cannot fabricate a current-task dependency failure");
   await page.evaluate(() => {
     stopTaskPolling();
     state.task = {status: "cancelled", execution_mode: "baseline_only"};

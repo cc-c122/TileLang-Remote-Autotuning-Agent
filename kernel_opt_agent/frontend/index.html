@@ -4055,10 +4055,9 @@
     function fileTaskOutcome(results, task) {
       if (task?.status === "cancelled") return {label: "已取消，验证未完成", message: "后端已确认取消。正确性、性能与回滚情况以实际结果为准，不将未核验的源码当作已验证 best。", kind: "warn"};
       const source = sourceOptimizationPayload(results);
-      const rows = [...(Array.isArray(results?.failed_cases) ? results.failed_cases : []), ...(Array.isArray(results?.summary_table) ? results.summary_table : []), ...sourceOptimizationTrials(source)];
+      const rows = [...(Array.isArray(results?.failed_cases) ? results.failed_cases : []), ...(Array.isArray(results?.summary_table) ? results.summary_table : []), ...sourceOptimizationTrials(source)].filter((row) => row && typeof row === "object");
       const hints = [results?.preflight?.error_category, task?.error, source?.reason,
-        ...rows.flatMap((row) => [row.status, row.error_category, row.reason, row.correctness?.reason]),
-        ...state.taskEvents.filter((event) => ["preflight_failed", "execution_failed"].includes(event.type)).map((event) => event.message)].filter((value) => typeof value === "string");
+        ...rows.flatMap((row) => [row.status, row.error_category, row.reason, row.correctness?.reason])].filter((value) => typeof value === "string");
       const code = Object.keys(FILE_TASK_ERRORS).find((key) => hints.some((value) => value === key || value.startsWith(`${key}:`)));
       if (code) return {label: FILE_TASK_ERRORS[code][0], message: FILE_TASK_ERRORS[code][1], kind: "bad"};
       if (!task || !["completed", "failed", "cancelled"].includes(task.status)) return null;
