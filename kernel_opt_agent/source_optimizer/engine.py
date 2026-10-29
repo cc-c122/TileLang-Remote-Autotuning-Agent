@@ -632,6 +632,12 @@ def run_source_optimization(
     (results_dir / "optimization_rounds.jsonl").write_text("", encoding="utf-8")
     result = SourceOptimizationResult(status="running", baseline_source_sha256=baseline_hash, best_source_sha256=baseline_hash)
     write_source_result(results_dir, result, config)
+    if not analysis.targets and config.file_task is None:
+        result.status, result.reason = "unavailable", analysis.reason
+        result = _sanitized_result(config, result)
+        write_source_result(results_dir, result)
+        _append_report(results_dir, result)
+        return result
     trials_root = workspace / "source_trials"
     _assert_within(trials_root, workspace)
     trials_root.mkdir(parents=True, exist_ok=True)

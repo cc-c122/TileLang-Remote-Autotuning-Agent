@@ -65,6 +65,10 @@ against the original source baseline; both retain their raw measurement arrays.
 The budget is the existing `optimization.max_candidates`; it bounds planning
 rounds/candidate attempts. One invalid-response retry is allowed inside a round.
 There is no new parameter-search budget or relaxation of the performance gate.
+File-intake requests without an authorized transformation still complete strict
+repeated baseline measurement and report `baseline_only / unavailable`. Legacy
+advanced-command requests without file contracts retain their previous
+baseline-only compatibility instead of acquiring a new strict script protocol.
 
 ## Validation Boundary
 
@@ -77,3 +81,12 @@ Real C500 feedback-loop acceptance must be recorded separately on the final
 commit through the normal Web task path. No synthetic test speedup or unavailable
 profiler result is GPU optimization evidence. No new tool installation, system
 changes or profiler attribution validation is performed by this change.
+
+On 2026-10-29 the normal Web/SSH route reached a real C500 and uploaded the
+Paged Attention sample for context lengths 128 and 512. Both stopped in build
+because the selected Python environment could not import `tilelang`. A bounded,
+read-only check of existing Conda/system interpreters and whitelisted project
+locations did not find TileLang/mcTileLang. Nothing was installed or changed in
+the system. Correctness, benchmark, candidate optimization and mcProfiler
+collection are not credited as real-GPU acceptance. The PR remains Draft until
+the runtime dependency is available and final-commit GPU validation completes.
