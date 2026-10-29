@@ -160,8 +160,9 @@ class JobWorker:
                     return
             if execution_context:
                 execution_context.verify_bound_device()
-            if request.optimization.enabled and source_entry is not None and source_analysis is not None and (config.file_task is None or source_analysis.targets):
-                self.manager.add_event(task_id, "source_optimization_started", "running controlled source optimization trial")
+            if request.optimization.enabled and source_entry is not None and source_analysis is not None:
+                if source_analysis.targets:
+                    self.manager.add_event(task_id, "source_optimization_started", "running controlled source optimization trial")
                 planning_client = None
                 if os.environ.get(config.llm.api_key_env):
                     planning_client = OpenAICompatibleClient(
@@ -183,7 +184,7 @@ class JobWorker:
                 )
                 self.manager.add_event(
                     task_id,
-                    "source_optimization_completed",
+                    "source_optimization_unavailable" if source_result.status == "unavailable" else "source_optimization_completed",
                     source_result.reason or source_result.status,
                     {"status": source_result.status, "accepted_trial_id": source_result.accepted_trial_id},
                 )

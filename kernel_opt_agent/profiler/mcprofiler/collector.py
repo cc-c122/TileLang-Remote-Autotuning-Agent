@@ -73,8 +73,14 @@ class McProfilerCollectionRequest:
     per_kernel: bool = False
     profile_from_start: bool = True
     server_mode: Literal["embedded", "managed_external"] = "embedded"
+    device_id: str | None = None
+    dtype: str | None = None
 
     def __post_init__(self) -> None:
+        if self.device_id is not None and not re.fullmatch(r"device_sha256:[0-9a-f]{64}", self.device_id):
+            raise ValueError("mcProfiler device_id must be a redacted device SHA-256 identifier")
+        if self.dtype is not None and (not isinstance(self.dtype, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", self.dtype)):
+            raise ValueError("mcProfiler dtype must be null or a simple dtype name")
         if not self.target_command.strip():
             raise ValueError("mcProfiler target command is required")
         if self.case_name in {".", ".."} or not _SAFE_CASE_NAME.fullmatch(self.case_name):
@@ -167,6 +173,8 @@ def _result(
         "source_trial_id": request.source_trial_id,
         "source_sha256": request.source_sha256,
         "shape_id": request.shape_id,
+        "device_id": request.device_id,
+        "dtype": request.dtype,
         "working_directory_scope": "managed_remote_workspace",
         "credentials_forwarded_to_vendor": False,
     }
@@ -528,9 +536,10 @@ def collect_remote_mcprofiler_case(
                    if key in {"MACA_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES"}}
         device_id = ("device_sha256:" + hashlib.sha256(json.dumps(visible, sort_keys=True).encode()).hexdigest()) if visible else None
         context = {
-            "tool_version": tool_version, "device_id": device_id,
+            "tool_version": tool_version, "device_id": request.device_id or device_id,
             "requested_kernel": request.kernel_names[0] if len(request.kernel_names) == 1 else None,
             "source_sha256": request.source_sha256, "report_sha256": selected_hash,
+            "source_trial_id": request.source_trial_id, "shape_id": request.shape_id, "dtype": request.dtype,
             "collection_window": {"started_at": started_at, "finished_at": _utc_now(),
                                   "kind": "collector_wall_clock", "target_only_window_verified": False},
         }

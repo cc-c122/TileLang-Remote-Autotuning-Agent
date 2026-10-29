@@ -39,6 +39,9 @@ def read_report_context(root: Path, metadata: dict[str, Any], kernel_name: str |
         "device_binding": "runner_visible_devices_request" if device else "unknown",
         "collection_window": agent.get("collection_window"),
         "source_sha256": agent.get("source_sha256"),
+        "source_trial_id": agent.get("source_trial_id"),
+        "shape_id": agent.get("shape_id"),
+        "dtype": agent.get("dtype"),
         "report_sha256": agent.get("report_sha256"),
     }
     return {"device_id": device, "tool_version": version, "collection_scope": scope}

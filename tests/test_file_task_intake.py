@@ -148,6 +148,30 @@ print(f'BENCHMARK_RESULT latency_ms={latency}')
         self.assertLess(events.index("preflight_completed"), events.index("build_started"))
         self.assertLess(events.index("correctness_started"), events.index("benchmark_started"))
 
+    def test_web_file_request_runs_two_feedback_rounds_with_actual_local_scripts(self):
+        from tests.test_optimization_rounds import two_copies
+
+        files = self.fixture()
+        files["ops/kernel.py"] = two_copies()
+        files["checks/benchmark check.py"] = files["checks/benchmark check.py"].replace(
+            "latency = 5 if changed else 10",
+            "latency = {0: 10, 1: 7, 2: 4}[Path('ops/kernel.py').read_text().count('TL.copy(')]",
+        )
+        request = self.request(files)
+        request["optimization"]["max_candidates"] = 2
+        task, result = self.run_request(request)
+        self.assertEqual(task.status, "completed", task.error)
+        trials = result["source_optimization"]["trials"]
+        self.assertEqual([trial["status"] for trial in trials], ["accepted", "accepted"])
+        self.assertEqual(trials[1]["source_before_sha256"], trials[0]["source_after_sha256"])
+        self.assertEqual(result["improvement_percent"], 60)
+        self.assertEqual(result["best_kernel"].count("TL.copy("), 2)
+        rounds = result["optimization_rounds"]
+        self.assertEqual([item["round_index"] for item in rounds], [0, 1, 2])
+        self.assertTrue(all(item["plan"]["source"] == "rule_based" for item in rounds[1:]))
+        self.assertTrue(all(trial["correctness"]["passed"] for trial in trials))
+        self.assertTrue(all(trial["artifacts"]["performance_gate"]["baseline_recheck_passed"] for trial in trials))
+
     def test_missing_file_rejected_without_task_workspace(self):
         request = self.request()
         request["test_files"]["benchmark"] = "absent.py"
@@ -364,6 +388,8 @@ print(f'BENCHMARK_RESULT latency_ms={latency}')
         self.assertEqual(task.execution_mode, "baseline_only")
         self.assertEqual(result["source_optimization"]["status"], "unavailable")
         self.assertTrue(result["source_optimization"]["reason"])
+        self.assertTrue(result["source_optimization"]["baseline_verified"])
+        self.assertEqual(len(result["source_optimization"]["baseline"]["benchmark_samples_ms"]), 3)
         self.assertIsNone(result["improvement_percent"])
         self.assertNotIn("source_optimization_started", [event["type"] for event in self.manager.get(task.task_id).events])
 
