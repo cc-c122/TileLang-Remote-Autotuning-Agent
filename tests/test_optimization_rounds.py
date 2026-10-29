@@ -84,7 +84,7 @@ class OptimizationRoundTests(unittest.TestCase):
         request = TaskCreateRequest.model_validate({
             "sample": {"source_type": "inline", "inline_text": "value = 1\n", "entry_file": "kernel.py"},
             "runner": {"type": "local"},
-            "profiler": {"enabled": True, "type": "mxmaca", "auto_collect": True,
+            "profiler": {"enabled": True, "type": "mxmaca", "auto_collect": False,
                          "mcprofiler_executable": "/tmp/managed-tools/mcProfiler",
                          "mcprofiler_server_executable": "/tmp/managed-tools/profiler_server"},
         })
