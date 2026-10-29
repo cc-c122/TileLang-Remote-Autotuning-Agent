@@ -102,6 +102,11 @@ def choose_plan(
                 "Only target-attribution-verified metrics are eligible. Parsing confidence does not establish target attribution. Missing metrics remain null. "
                 "Without eligible metrics use bottleneck_type=source_structure or insufficient_evidence, confidence=low; "
                 "a source/log hypothesis is not a measured hardware bottleneck. Explain expected_effect, risk and validation_plan. "
+                "Source/log-only structural experiments are permitted, not required: an authorized target may be tried "
+                "with bottleneck_type=source_structure, confidence=low, evidence_ids=[], and an explicitly unmeasured expected effect. "
+                "Use the current authorized source excerpts and template description to justify that hypothesis; "
+                "the unchanged build, correctness and independent performance gates decide acceptance. "
+                "Stop remains permitted when the supplied source/log context cannot justify an authorized experiment. "
                 "If the needed change is unsupported, say so; do not select an unrelated change. "
                 + "\nPLANNING_CONTEXT_JSON:\n" + json.dumps(payload, sort_keys=True, default=str)
             ),

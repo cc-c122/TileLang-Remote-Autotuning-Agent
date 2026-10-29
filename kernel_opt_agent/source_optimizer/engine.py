@@ -766,12 +766,21 @@ def run_source_optimization(
         targets = tuple(item for item in current_analysis.targets if (parent_hash, item.target_id) not in attempted_targets)
         evidence_rows, excluded = bound_evidence(results_dir, parent_trial_id, parent_hash, _source_binding(config))
         evidence_warnings = (["available evidence excluded: attribution unverified or current parent binding mismatch"] if excluded else [])
+        source_lines = parent_source.splitlines()
+        source_regions = []
+        for item in targets:
+            first = max(1, min(item.start_line, getattr(item, "insert_before_line", item.start_line)) - 3)
+            last = min(len(source_lines), max(item.end_line, getattr(item, "insert_before_line", item.end_line)) + 3)
+            excerpt = "\n".join(source_lines[first - 1:last])
+            source_regions.append({"target_id": item.target_id, "start_line": first, "end_line": last,
+                                   "source_excerpt": excerpt[:6000], "truncated": len(excerpt) > 6000})
         context = _redact_value(config, {
             "round_index": round_index, "remaining_budget": config.source_optimization.max_candidates - round_index + 1,
             "current_best": {"source_sha256": parent_hash, "trial_id": parent_trial_id,
                              "line_count": len(parent_source.splitlines()),
                              "functions": sorted({item.function_name for item in current_analysis.targets}),
-                             "benchmark_samples_ms": parent_samples},
+                             "benchmark_samples_ms": parent_samples, "authorized_source_regions": source_regions},
+            "workload": _source_binding(config),
             "history": history, "excluded_evidence_count": len(excluded),
             "excluded_evidence_reasons": sorted({reason for row in excluded for reason in row["reasons"]}),
             "analysis_basis": "eligible_metrics_and_source" if evidence_rows else "source_and_logs_only",

@@ -136,6 +136,12 @@ class OptimizationRoundTests(unittest.TestCase):
         self.assertEqual(second_context["current_best"]["source_sha256"], first.source_after_sha256)
         self.assertEqual(second_context["history"][0]["status"], "accepted")
         self.assertEqual(second_context["remaining_budget"], 1)
+        regions = second_context["current_best"]["authorized_source_regions"]
+        self.assertEqual([item["target_id"] for item in regions],
+                         [item["target_id"] for item in planner.contexts[1]["authorized_targets"]])
+        self.assertTrue(all("TL.Parallel" in item["source_excerpt"] for item in regions))
+        self.assertIn("dtype", second_context["workload"])
+        self.assertIsNone(second_context["workload"]["dtype"])
         old_ids = {item["target_id"] for item in planner.contexts[0]["authorized_targets"]}
         self.assertNotIn(planner.contexts[1]["authorized_targets"][0]["target_id"], old_ids)
         self.assertEqual(second.artifacts["baseline_recheck"]["source_sha256"], first.source_after_sha256)
