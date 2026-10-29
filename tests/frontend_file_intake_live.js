@@ -99,7 +99,7 @@ async (page) => {
   check(normal.data.results.preflight.gpu_check === "local_demo_no_gpu_validation", "No GPU validation is claimed");
   check(normal.data.results.source_optimization.status === "unavailable" && normal.data.task.execution_mode === "baseline_only", "No eligible plain-Python transform remains baseline-only");
   check(normal.text.includes("没有适用优化"), "No applicable optimization is explained");
-  check(await page.locator("#taskDetailPanel .task-source-rounds").count() === 0, "Real baseline-only response does not generate source-round placeholders");
+  check(await page.locator("#taskDetailPanel .task-source-rounds .source-trial").count() === (normal.data.results.optimization_rounds || []).length, "Baseline-only view renders exactly the backend audit rounds, not placeholder source trials");
   check(Number(normal.data.results.summary_table[0].latency) > 0, "Real measured CPU latency is returned");
   check(normal.events.findIndex((event) => event.type === "correctness_started") < normal.events.findIndex((event) => event.type === "benchmark_started"), "Correctness precedes real benchmark execution");
   normal.result.downloads = [];
