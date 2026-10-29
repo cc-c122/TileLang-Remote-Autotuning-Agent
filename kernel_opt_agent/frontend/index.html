@@ -1709,6 +1709,7 @@
       dependency_missing: ["环境缺依赖", "执行环境缺少脚本依赖，或依赖无法导入。系统不会自动安装依赖，请检查远端环境。"],
       python_environment_unavailable: ["Python 环境不可用", "执行环境需提供可运行的 Python 3.10 及以上版本，请检查环境日志。"],
       correctness_failed: ["正确性失败", "本次算子未通过正确性检查，不会把该版本作为 best kernel。"],
+      correctness_timeout: ["正确性检查超时", "正确性检查未能在时限内完成，尚不能判断结果是否正确；不会继续测速或采纳该版本。"],
       sample_file_missing: ["文件选择有误", "算子入口或测试脚本不在本次上传清单中，请重新选择文件角色。"],
       protected_file_changed: ["受保护文件发生变化", "正确性脚本、性能脚本或参考实现被修改，后端已拒绝继续验证。"],
       gpu_preflight_failed: ["GPU 环境未就绪", "未能确认远程设备身份，请重新连接并识别硬件。"],
@@ -4009,8 +4010,27 @@
     }
 
     function taskBaselineRow(results) {
-      const summary = taskResultSummary(results);
-      return summary.find((row) => String(pick(row?.trial_id, row?.candidate_id, "")).toLowerCase() === "baseline") || summary[0] || null;
+      const summary = taskResultSummary(results).filter((row) => row && typeof row === "object");
+      const explicit = summary.filter((row) => String(pick(row.trial_id, row.candidate_id, "")).toLowerCase() === "baseline");
+      if (explicit.length) return explicit.length === 1 ? explicit[0] : null;
+      const baseline = summary.filter((row) => numeric(row.iteration) === 0 && numeric(row.candidate_id) === 0);
+      if (baseline.length) return baseline.length === 1 ? baseline[0] : null;
+      const unkeyed = summary.every((row) => [row.trial_id, row.iteration, row.candidate_id].every((value) => value === undefined || value === null || value === ""));
+      return unkeyed ? summary[0] || null : null;
+    }
+
+    function taskBaselineFailure(results, baseline) {
+      if (!baseline || !Array.isArray(results?.failed_cases)) return null;
+      const matches = results.failed_cases.filter((row) => {
+        if (!row || typeof row !== "object") return false;
+        if (baseline.trial_id && row.trial_id === baseline.trial_id) return true;
+        return !!baseline.run_id && !!baseline.config_hash
+          && row.run_id === baseline.run_id && row.config_hash === baseline.config_hash
+          && numeric(baseline.iteration) !== null && numeric(baseline.candidate_id) !== null
+          && numeric(row.iteration) === numeric(baseline.iteration)
+          && numeric(row.candidate_id) === numeric(baseline.candidate_id);
+      });
+      return matches.length === 1 ? matches[0] : null;
     }
 
     function taskCompletionVerification(task, results = null) {
@@ -4058,11 +4078,18 @@
       const source = sourceOptimizationPayload(results);
       if (task.status === "completed" && acceptedSourceTrialVerified(source, results, task)) return null;
       // Candidate failures belong in trial details, not the final task verdict.
-      const baseline = taskResultSummary(results).find((row) => String(row?.trial_id || "").toLowerCase() === "baseline");
-      const hints = [results?.preflight?.error_category, task?.error, source?.status === "failed" ? source.reason : null,
-        baseline?.status, baseline?.error_category, baseline?.reason, baseline?.correctness?.reason].filter((value) => typeof value === "string");
-      const code = Object.keys(FILE_TASK_ERRORS).find((key) => hints.some((value) => value === key || value.startsWith(`${key}:`)));
-      if (code) return {label: FILE_TASK_ERRORS[code][0], message: FILE_TASK_ERRORS[code][1], kind: "bad"};
+      const baseline = taskBaselineRow(results);
+      const failure = taskBaselineFailure(results, baseline);
+      const hints = [results?.preflight?.error_category, baseline?.error?.category, failure?.error?.category,
+        baseline?.status, baseline?.error_category, task?.error, source?.status === "failed" ? source.reason : null,
+        baseline?.reason, baseline?.correctness?.reason].filter((value) => typeof value === "string");
+      const code = hints.map((value) => Object.keys(FILE_TASK_ERRORS).find((key) => value === key || value.startsWith(`${key}:`))).find(Boolean);
+      if (code) return {
+        label: FILE_TASK_ERRORS[code][0], message: FILE_TASK_ERRORS[code][1], kind: "bad",
+        stage: pick(failure?.error?.stage, baseline?.error?.stage, code.startsWith("correctness_") ? "correctness" : null),
+        reason: pick(failure?.error?.message, baseline?.error?.message, baseline?.correctness?.reason, failure?.correctness?.reason, task?.error),
+        maxError: pick(baseline?.correctness?.max_error, failure?.correctness?.max_error),
+      };
       if (source?.accepted_trial_id) return null;
       if (source?.status === "unavailable") return {label: "没有适用优化", message: "后端未识别到可安全执行的源码变换。本次仅保留实际基线验证结果，不代表算子没有优化空间。", kind: "warn"};
       const trials = sourceOptimizationTrials(source);
@@ -4072,7 +4099,12 @@
 
     function renderFileTaskFeedback(results, task, id) {
       const outcome = fileTaskOutcome(results, task);
-      return outcome ? `<div id="${id}" class="alert ${outcome.kind}" role="status"><strong>${outcome.label}</strong>：${outcome.message}</div>` : "";
+      if (!outcome) return "";
+      const stages = {correctness: "正确性验证", build: "构建", benchmark: "测速", run: "测速"};
+      const details = [outcome.stage ? `阶段：${stages[outcome.stage] || display(outcome.stage)}` : "",
+        outcome.reason ? `原因：${display(outcome.reason)}` : "",
+        outcome.maxError !== undefined && outcome.maxError !== null ? `max_error：${display(outcome.maxError)}` : ""].filter(Boolean);
+      return `<div id="${id}" class="alert ${outcome.kind}" role="status"><strong>${escapeHtml(outcome.label)}</strong>：${escapeHtml(outcome.message)}${details.length ? `<div>${escapeHtml(details.join("；"))}</div>` : ""}</div>`;
     }
 
     function renderTaskDetail() {
@@ -4085,7 +4117,7 @@
       const latestEvent = events[events.length - 1] || null;
       const summary = state.taskResults?.summary_table || state.taskResults?.summary || [];
       const best = state.taskResults?.best_row || state.task?.best_row || null;
-      const baseline = summary[0] || null;
+      const baseline = taskBaselineRow(state.taskResults);
       const improvement = pick(state.task?.improvement_percent, state.taskResults?.improvement_percent);
       const executionMode = task.execution_mode;
       const baselineOnly = executionMode === "baseline_only";
@@ -4990,7 +5022,7 @@
       el.downloadReportBtn.disabled = !reportMarkdown;
       const summary = Array.isArray(results.summary_table) ? results.summary_table : (Array.isArray(results.summary) ? results.summary : []);
       const failedCases = Array.isArray(results.failed_cases) ? results.failed_cases : [];
-      const baseline = summary[0] || {};
+      const baseline = taskBaselineRow(results) || {};
       const benchmarkBest = [results.best_row, ...summary].find((row) => row && typeof row === "object" && String(row.status || "").trim().toLowerCase() === "benchmark_ok") || null;
       const best = benchmarkBest || {};
       const executionMode = state.task?.execution_mode;

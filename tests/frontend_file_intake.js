@@ -175,6 +175,30 @@ async (page) => {
   check(await page.evaluate(() => fileTaskOutcome({source_optimization: {status: "completed", trials: [{status: "no_improvement"}]}}, {status: "running"})) === null, "Running task does not prematurely declare insufficient benefit");
   check(await page.evaluate(() => fileTaskOutcome({failed_cases: [{status: "correctness_failed"}], source_optimization: {status: "running", trials: [{status: "correctness_failed"}]}}, {status: "running"})) === null, "Running task with a rejected candidate does not declare a final correctness failure");
   check(await page.evaluate(() => fileTaskOutcome({summary_table: [{trial_id: "baseline", status: "correctness_failed", correctness: {passed: false}}]}, {status: "failed"})?.label) === "正确性失败", "An actual baseline correctness failure still has a task-level explanation");
+  for (const [status, label, reason, maxError] of [
+    ["correctness_failed", "正确性失败", "reference mismatch", 7],
+    ["correctness_timeout", "正确性检查超时", "command timed out after 1s", null],
+    ["script_protocol_incompatible", "测试脚本不兼容", "missing structured result", null],
+  ]) {
+    await page.evaluate(({status, reason, maxError}) => {
+      stopTaskPolling();
+      const baseline = {run_id: "20261029-181526", iteration: "0", candidate_id: "0", config_hash: "baseline-hash", status,
+        correctness: {passed: false, max_error: maxError, reason}};
+      const failure = {...baseline, iteration: 0, candidate_id: 0, trial_id: "20261029-181526:iter000_cand000", error: {category: status, stage: "correctness", message: reason}};
+      state.task = {status: "failed", execution_mode: "baseline_only", error: reason};
+      state.taskResults = {summary_table: [{...baseline, iteration: "1", candidate_id: "1", status: "correctness_failed"}, baseline],
+        failed_cases: [{...failure, run_id: "another-run", error: {category: "dependency_missing", message: "unrelated failure"}}, failure],
+        source_optimization: {status: "failed", reason, trials: []}, best_kernel: "# unverified", report_markdown: "# Real response contract"};
+      renderTaskDetail(); renderApiResults();
+    }, {status, reason, maxError});
+    for (const selector of ["#taskIntakeFeedback", "#fileTaskFeedback"]) {
+      const feedback = await page.locator(selector).textContent();
+      check(feedback.includes(label) && feedback.includes(reason) && feedback.includes("正确性验证"), `${status}: ${selector} uses the real CSV identity and structured failure stage/reason`);
+      check(!feedback.includes("unrelated failure") && (maxError === null || feedback.includes("max_error：7")), `${status}: baseline details never borrow another run's failure`);
+    }
+    check(await page.locator("#downloadBestKernelBtn").isDisabled() && await page.locator("#downloadReportBtn").isEnabled(), `${status}: invalid best stays disabled while report remains readable`);
+  }
+  check(await page.evaluate(() => taskBaselineRow({summary_table: [{iteration: "1", candidate_id: "1", status: "correctness_failed"}]})) === null, "A source candidate is never guessed to be a missing baseline");
   check(await page.evaluate(() => {
     state.taskEvents = [{type: "preflight_failed", message: "dependency_missing"}];
     return fileTaskOutcome({preflight: {status: "passed"}, failed_cases: [null, "malformed row"], source_optimization: {status: "unavailable", trials: []}}, {status: "completed"}).label;
