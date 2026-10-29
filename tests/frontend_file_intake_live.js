@@ -99,6 +99,7 @@ async (page) => {
   check(normal.data.results.preflight.gpu_check === "local_demo_no_gpu_validation", "No GPU validation is claimed");
   check(normal.data.results.source_optimization.status === "unavailable" && normal.data.task.execution_mode === "baseline_only", "No eligible plain-Python transform remains baseline-only");
   check(normal.text.includes("没有适用优化"), "No applicable optimization is explained");
+  check(await page.locator("#taskDetailPanel .task-source-rounds").count() === 0, "Real baseline-only response does not generate source-round placeholders");
   check(Number(normal.data.results.summary_table[0].latency) > 0, "Real measured CPU latency is returned");
   check(normal.events.findIndex((event) => event.type === "correctness_started") < normal.events.findIndex((event) => event.type === "benchmark_started"), "Correctness precedes real benchmark execution");
   normal.result.downloads = [];
@@ -173,6 +174,7 @@ async (page) => {
   const slowFiles = files.map((file) => file.name === "benchmark.py" ? {...file, buffer: Buffer.from("import time\ntime.sleep(8)\n" + file.buffer.toString())} : file);
   const cancelId = await create("cancel-running", slowFiles);
   await page.waitForFunction(() => state.task?.status === "running" && state.task.current_stage === "benchmark_started", null, {timeout: 60000});
+  check((await page.locator("#taskDetailPanel .metric-main").first().innerText()) === "测速", "Real running stage follows the backend benchmark_started event");
   await screenshot("cancel-running");
   const cancelWait = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/tasks/${cancelId}/cancel`);
   await page.locator("#cancelTaskBtn").click();

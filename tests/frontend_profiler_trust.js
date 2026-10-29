@@ -117,6 +117,7 @@ async (page) => {
     const sourceTrial = page.locator("#apiResultsPanel > section .source-trial").first();
     check((await sourceTrial.innerText()).includes(label) && (await sourceTrial.innerText()).includes("已回滚"), `${status} is distinguished from completion and shows verified rollback`);
     await sourceTrial.locator(":scope > summary").click();
+    await sourceTrial.locator(".source-trial-details > summary").click();
     check((await sourceTrial.innerText()).includes("- old") && (await sourceTrial.innerText()).includes("Backend decision"), `${status} retains the actual diff and decision reason`);
   }
   value = copy();

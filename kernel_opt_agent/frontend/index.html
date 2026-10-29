@@ -348,6 +348,7 @@
 
     .source-trial > summary {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
@@ -355,6 +356,9 @@
       cursor: pointer;
       font-weight: 760;
     }
+
+    .source-trial > summary > span:first-child { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+    .source-trial > summary > span:last-child { display: flex; flex-wrap: wrap; gap: 4px; }
 
     .source-trial-body {
       border-top: 1px solid var(--line);
@@ -1689,6 +1693,14 @@
       preflight_failed: "执行前检查失败",
       execution_failed: "脚本执行失败",
       source_optimization_unavailable: "没有适用优化，保留基线结果",
+      profiling_started: "采集性能",
+      build_started: "编译验证",
+      correctness_started: "正确性验证",
+      benchmark_started: "测速",
+      source_optimization_started: "准备源码优化",
+      source_trial_started: "生成修改：候选已写入，开始验证",
+      source_optimization_completed: "采纳或回滚：源码优化核验结束",
+      best_updated: "最终选择已更新",
       collecting_performance_evidence: "正在采集性能证据",
       performance_evidence_collecting: "正在采集性能证据",
       profiler_collecting: "正在采集性能证据",
@@ -3859,6 +3871,21 @@
       return pick(event.message, event.detail, event.description, EVIDENCE_EVENT_LABELS[eventKey(pick(event.type, event.event_type, event.name))]);
     }
 
+    function taskStageLabel(task, latestEvent) {
+      const key = eventKey(task.current_stage || latestEvent?.type || task.status);
+      const stages = {
+        profiling_started: "采集性能", profiler_parsed: "分析证据：性能报告已解析",
+        diagnosis_completed: "分析证据：诊断已完成",
+        source_trial_started: "生成修改：候选已写入，开始验证",
+        correctness_started: "正确性验证", benchmark_started: "测速",
+        baseline_recheck_started: "测速：复测原版，检查计时漂移",
+        source_trial_completed: "采纳或回滚：候选验证结束",
+        source_optimization_completed: "采纳或回滚：源码优化核验结束",
+        best_updated: "最终选择已更新",
+      };
+      return stages[key] || eventLabel(task.current_stage || latestEvent?.type || task.status);
+    }
+
     function sourceOptimizationPayload(results) {
       const value = results?.source_optimization;
       return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -4140,12 +4167,12 @@
       const statusPresentation = taskStatusPresentation(task.status, task, state.taskResults);
       const taskCompleted = ["completed", "success", "done"].includes(String(task.status || "").trim().toLowerCase());
       const completionVerification = taskCompleted ? taskCompletionVerification(task, state.taskResults) : "unknown";
-      const currentStage = taskCompleted ? statusPresentation.label : eventLabel(task.current_stage || latestEvent?.type || task.status);
+      const currentStage = taskCompleted ? statusPresentation.label : taskStageLabel(task, latestEvent);
       const latestEventText = pick(task.latest_message, eventMessage(latestEvent), latestEventLabel(latestEvent));
       el.taskStatus.textContent = statusPresentation.label;
       el.taskDetailPanel.innerHTML = `
         <div class="compare-grid">
-          <article class="result-card"><div class="metric-label">current_stage</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>执行模式</div><div>${executionModeBadge(executionMode)}</div><div>状态</div><div>${taskStatusBadge(task.status, task, state.taskResults)}</div></div></article>
+          <article class="result-card"><div class="metric-label">当前阶段</div><div class="metric-main">${escapeHtml(display(currentStage))}</div><div class="kv"><div>task_id</div><div>${escapeHtml(display(task.task_id))}</div><div>project_name</div><div>${escapeHtml(display(task.project_name))}</div><div>执行模式</div><div>${executionModeBadge(executionMode)}</div><div>状态</div><div>${taskStatusBadge(task.status, task, state.taskResults)}</div></div></article>
           <article class="result-card"><div class="metric-label">${sourceMode ? "已尝试次数" : "已尝试 trial"}</div><div class="metric-main">${escapeHtml(display(attemptedCount))}</div><div class="kv"><div>baseline latency</div><div>${escapeHtml(display(pick(task.baseline_latency, baseline?.latency, baseline?.objective_value)))}</div><div>${baselineOnly ? "源码优化" : "current best latency"}</div><div>${baselineOnly ? "未执行" : sourceMode ? escapeHtml(sourceCurrentBest) : escapeHtml(display(pick(task.best_latency, best?.latency, best?.objective_value)))}</div></div></article>
           <article class="result-card"><div class="metric-label">${baselineOnly ? "运行结论" : sourceMode ? "源码修改决定" : "性能提升"}</div><div class="metric-main ${acceptedVerified ? "good" : ""}">${task.status === "cancelled" ? "已取消" : baselineOnly ? completionVerification === "failed" ? "基线验证未通过" : completionVerification === "unknown" && taskCompleted ? "基线结果待核验" : "仅基线测量" : sourceMode ? sourceBestPending ? "等待结果核验" : sourceBestInvalid ? "当前 best 验证失败" : acceptedVerified ? "已接受源码修改" : sourceOptimization && !["running", "unknown"].includes(sourceOptimizationStatus(sourceOptimization)) ? "保留 baseline" : "等待后端决定" : improvement === null || improvement === undefined ? "暂无性能提升数据" : `${formatNumber(improvement)}%`}</div><div class="kv"><div>最新事件</div><div>${escapeHtml(display(latestEventText))}</div><div>事件类型</div><div>${escapeHtml(display(latestEventLabel(latestEvent)))}</div></div></article>
         </div>
@@ -4157,7 +4184,8 @@
         ${sourceMode ? `<div class="alert">源码结果：${escapeHtml(sourceOutcomeLabel(sourceOptimization, state.taskResults, task))}</div>` : ""}
         ${state.cancellationPending ? `<div class="alert warn">取消请求已提交，仍在等待后端确认终态。</div>` : ""}
         ${task.error ? `<div class="empty">失败原因：${escapeHtml(display(task.error))}</div>` : ""}
-        <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>time</th><th>type</th><th>message</th></tr></thead><tbody>${events.slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(latestEventLabel(event)))}</td><td>${escapeHtml(display(eventMessage(event)))}</td></tr>`).join("") || `<tr><td colspan="3">暂无任务事件</td></tr>`}</tbody></table></div>
+        ${renderTaskSourceRounds(state.taskResults, task)}
+        <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>时间</th><th>阶段 / 事件</th><th>记录</th></tr></thead><tbody>${events.slice(-20).map((event) => `<tr><td>${escapeHtml(display(event.time))}</td><td>${escapeHtml(display(latestEventLabel(event)))}</td><td>${escapeHtml(display(eventMessage(event)))}</td></tr>`).join("") || `<tr><td colspan="3">暂无任务事件</td></tr>`}</tbody></table></div>
       `;
     }
 
@@ -4891,19 +4919,69 @@
       return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
     }
 
-    function sourceTrialEvidenceList(trial, evidenceMap) {
+    function sourceTrialEvidenceList(trial, evidenceMap, limit = Infinity) {
       const ids = Array.isArray(trial?.evidence_ids) ? trial.evidence_ids : [];
       if (!ids.length) return `<div class="empty">未引用证据。</div>`;
-      return `<ul class="list-plain">${ids.map((rawId) => {
+      return `<ul class="list-plain">${ids.slice(0, limit).map((rawId) => {
         const id = String(rawId);
         const record = evidenceMap.get(id);
         if (!record) return `<li>${escapeHtml(id)}：证据记录未返回</li>`;
         const confidence = pick(record.confidence, "unknown");
-        return `<li>${escapeHtml(evidenceRecordLabel(record, id))}；综合置信度：${escapeHtml(display(confidence))}；${escapeHtml(evidencePlanningLabel(record))}。${escapeHtml(evidenceEligibilityReasons(record))}${record.attribution_status === "unverified" ? "；仅供检查，未用于优化决策" : ""}</li>`;
-      }).join("")}</ul>`;
+        return `<li>${evidencePlanningStatus(record) === "eligible" ? "" : `<span class="badge warn">待核验证据</span> `}${escapeHtml(evidenceRecordLabel(record, id))}；综合置信度：${escapeHtml(display(confidence))}；${escapeHtml(evidencePlanningLabel(record))}。${escapeHtml(evidenceEligibilityReasons(record))}${evidenceAttributionStatus(record) === "unverified" ? "；仅供检查，未用于优化决策" : ""}${record.source === "synthetic" ? "；仅解析测试，不是性能证据" : ""}</li>`;
+      }).join("")}</ul>${ids.length > limit ? `<div class="muted">另有 ${ids.length - limit} 条证据引用。</div>` : ""}`;
     }
 
-    function renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified) {
+    function sourceTrialModification(trial) {
+      if (trial.artifacts?.source_was_modified === false) return {label: "未实际修改", kind: "warn"};
+      const before = sourceSha256(trial.source_before_sha256);
+      const after = sourceSha256(trial.source_after_sha256);
+      if (before && after && before !== after && typeof trial.diff === "string" && trial.diff.trim()) {
+        return {label: "实际已修改（候选源码）", kind: "best"};
+      }
+      return {label: trial.diff ? "修改记录待核验" : "尚无实际修改记录", kind: "warn"};
+    }
+
+    function sourceTrialPerformanceLabel(trial, selected, acceptedVerified, speedupVerified) {
+      if (selected && speedupVerified) return {label: "性能改善已验证", kind: "ok"};
+      const gate = sourceTrialPerformanceGate(trial);
+      if (gate.present && !gate.accepted) return {label: performanceGateLabel(gate), kind: "warn"};
+      if ((selected && acceptedVerified) || gate.accepted) return {label: "验证记录已返回，提速待完整核验", kind: "warn"};
+      if (sourceTrialStatus(trial) === "no_improvement") return {label: "收益不足或不确定", kind: "warn"};
+      return {label: sourceMeasurementValues(trial.candidate_latency_ms).length ? "已有测量，性能改善未验证" : "未完成性能验证", kind: "warn"};
+    }
+
+    function sourceTrialDecision(trial, selected, acceptedVerified, finalSelectionKnown) {
+      if (selected && acceptedVerified) return "最终采纳，作为当前 best";
+      if (selected) return "接受记录待核验，不作为已验证 best";
+      const status = sourceTrialStatus(trial);
+      if (["proposed", "running"].includes(status)) return "验证中，等待采纳或回滚决定";
+      if (status === "accepted") return finalSelectionKnown ? "候选被后端接受，未选为最终 best" : "候选被后端接受，最终选择待确认";
+      if (status === "unknown") return "最终决定未返回，等待核验";
+      return `${status === "cancelled" ? "已取消，验证未完成" : "未采纳该候选"}；${trial.rollback_verified === true ? "已回滚（校验通过）" : trial.rollback_verified === false ? "回滚未验证" : "回滚状态未返回"}`;
+    }
+
+    function sourceTrialCorrectnessLabel(trial) {
+      const correctness = trial.correctness;
+      if (correctness?.passed === true) return sourceTrialStatus(trial) === "correctness_failed"
+        ? {label: "正确性记录冲突", kind: "bad"} : {label: "正确性通过", kind: "ok"};
+      if (correctness?.passed === false) return {
+        label: String(correctness.reason || "").startsWith("correctness_timeout:") ? "正确性检查超时" : "正确性未通过", kind: "bad",
+      };
+      return {label: "正确性待验证", kind: "warn"};
+    }
+
+    function renderTaskSourceRounds(results, task) {
+      const source = sourceOptimizationPayload(results);
+      const trials = sourceOptimizationTrials(source);
+      if (!trials.length) return "";
+      const evidenceMap = evidenceRecordMap(evidenceSummaryFromResults(results));
+      const acceptedVerified = acceptedSourceTrialVerified(source, results, task);
+      const context = {speedupVerified: sourceSpeedupVerified(results, task), finalSelectionKnown: sourceOptimizationStatus(source) === "completed" && results?.source_best_verified === true && !sourceBestVerificationFailed(results, task)};
+      const acceptedId = typeof source.accepted_trial_id === "string" ? source.accepted_trial_id.trim() : "";
+      return `<section class="section task-source-rounds"><div class="section-head"><h2>每轮优化记录</h2><span class="muted">${trials.length} 个候选</span></div><div class="source-trials">${trials.map((trial) => renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified, context)).join("")}</div></section>`;
+    }
+
+    function renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified, {speedupVerified = false, finalSelectionKnown = false} = {}) {
       const trialId = typeof trial.trial_id === "string" && trial.trial_id.trim() ? trial.trial_id.trim() : "未返回 trial_id";
       const selected = acceptedId && trialId === acceptedId;
       const correctness = trial.correctness && typeof trial.correctness === "object" ? trial.correctness : null;
@@ -4911,6 +4989,12 @@
       const title = pick(trial.optimization_name, trial.hypothesis, trialId);
       const performanceGate = sourceTrialPerformanceGate(trial);
       const measurementAccepted = !!selected && acceptedVerified;
+      const modification = sourceTrialModification(trial);
+      const performance = sourceTrialPerformanceLabel(trial, selected, acceptedVerified, speedupVerified);
+      const correctnessLabel = sourceTrialCorrectnessLabel(trial);
+      const plannerSource = trial.artifacts?.planner?.source;
+      const proposalLabel = plannerSource === "llm" ? "LLM 建议" : plannerSource === "rule_based" ? "规则建议" : "建议来源未返回";
+      const changeLabels = {parallel_copy_to_t_copy: "将逐元素拷贝改为 T.copy", prefetch_shared_load: "调整 shared load 的预取顺序"};
       const gateMedianImprovement = numeric(performanceGate.gate?.median_improvement_percent);
       const gateConservativeImprovement = numeric(performanceGate.gate?.conservative_improvement_percent);
       const gateUncertainty = Array.isArray(performanceGate.gate?.uncertainty)
@@ -4928,8 +5012,16 @@
         artifacts: trial.artifacts ?? null,
       };
       return `<details class="source-trial" ${selected ? "open" : ""}>
-        <summary><span>${escapeHtml(display(title))}</span><span>${sourceTrialStatusBadge(trial, selected, acceptedVerified)} ${trial.rollback_verified === true ? sourceRollbackBadge(true) : ""}</span></summary>
+        <summary><span>${escapeHtml(display(title))} <span class="muted">${escapeHtml(display(trialId))}</span></span><span>${sourceTrialStatusBadge(trial, selected, acceptedVerified)} ${trial.rollback_verified === true && !measurementAccepted ? sourceRollbackBadge(true) : ""}</span></summary>
         <div class="source-trial-body">
+          <div class="kv source-round-summary">
+            <div>发现的问题</div><div data-round-part="problem"><span class="badge warn">${proposalLabel}</span> ${escapeHtml(display(trial.hypothesis))}<div class="muted">规划假设，不代表瓶颈已确认。</div></div>
+            <div>证据</div><div data-round-part="evidence">${sourceTrialEvidenceList(trial, evidenceMap, 3)}</div>
+            <div>修改内容</div><div data-round-part="change"><span class="badge ${modification.kind}">${modification.label}</span> ${escapeHtml(display(changeLabels[trial.optimization_name] || trial.optimization_name))}<div>${escapeHtml([trial.target_file, trial.target_function].filter(Boolean).map(display).join(" / ") || "目标位置未返回")}</div></div>
+            <div>验证结果</div><div data-round-part="validation"><span class="badge ${correctnessLabel.kind}">${correctnessLabel.label}</span> <span class="badge ${performance.kind}">${performance.label}</span></div>
+            <div>最终决定</div><div data-round-part="decision">${escapeHtml(sourceTrialDecision(trial, selected, acceptedVerified, finalSelectionKnown))}${!measurementAccepted && trial.decision_reason ? `<div>${escapeHtml(display(trial.decision_reason))}</div>` : ""}</div>
+          </div>
+          <details class="source-trial-details"><summary>详细指标、diff 与日志</summary>
           <div class="kv">
             <div>trial_id</div><div>${escapeHtml(trialId)}</div>
             <div>目标位置</div><div>${escapeHtml([trial.target_file, trial.target_function].filter(Boolean).map(display).join(" / ") || "未返回")}</div>
@@ -4954,6 +5046,7 @@
           <h3>源码 diff</h3>
           <pre>${escapeHtml(typeof trial.diff === "string" && trial.diff ? trial.diff : "未返回 diff")}</pre>
           <details style="margin-top:10px"><summary>原始测量、哈希与日志</summary><pre>${escapeHtml(JSON.stringify(redactObject(advanced), null, 2))}</pre></details>
+          </details>
         </div>
       </details>`;
     }
@@ -5006,7 +5099,7 @@
         <p>${escapeHtml(sourceOutcomeLabel(sourceOptimization, results, task))}</p>
         ${decision}
         ${status === "unavailable" ? `<div class="alert warn">后端没有在本次 entry_file 中识别到当前实现可安全修改的目标，因此当前 sample 无法安全进入源码优化，本次未执行源码修改并保留 baseline。这不表示算子没有优化空间；请核对 entry_file 是否指向实际算子源码。</div>` : ""}
-        <div class="source-trials">${trials.length ? trials.map((trial) => renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified)).join("") : `<div class="empty">暂无源码候选记录。</div>`}</div>
+        <div class="source-trials">${trials.length ? trials.map((trial) => renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified, {speedupVerified: sourceSpeedupVerified(results, task), finalSelectionKnown: status === "completed" && results?.source_best_verified === true && !sourceBestVerificationFailed(results, task)})).join("") : `<div class="empty">暂无源码候选记录。</div>`}</div>
       </section>`;
     }
 
