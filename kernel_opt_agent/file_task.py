@@ -141,10 +141,12 @@ def _test_bootstrap():
     except SystemExit as exc:
         if exc.code not in (None, 0):
             raise
+    finally:
+        if executed:
+            print("FILE_TASK_ENTRY_SHA256=" + executed[-1], flush=True)
     if not executed:
         print("FILE_TASK_COMPATIBILITY_ERROR entry_not_executed", file=sys.stderr)
         raise SystemExit(78)
-    print("FILE_TASK_ENTRY_SHA256=" + executed[-1])
 
 
 def python_command(runner_type: str, script: str, *arguments: str) -> str:

@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from kernel_opt_agent.config_model import TestFilesConfig as FilesConfig
 from kernel_opt_agent.file_task import automatic_commands, strict_benchmark, strict_correctness
-from kernel_opt_agent.runner.local_runner import LocalRunner
+from kernel_opt_agent.runner.local_runner import CommandResult, LocalRunner
 from kernel_opt_agent.server.job_worker import JobWorker
 from kernel_opt_agent.server.models import TaskCreateRequest
 from kernel_opt_agent.server.run_request_builder import build_effective_config
@@ -81,6 +81,7 @@ factory()(values, output)
 error = max(abs(a-b) for a,b in zip(output, reference(values)))
 status = 'PASS' if error == 0 else 'FAIL'
 print(f'CORRECTNESS_RESULT status={status} max_error={error} reason="fixed reference and tolerance=0"')
+raise SystemExit(0 if error == 0 else 1)
 ''',
             "checks/benchmark check.py": '''from pathlib import Path
 from ops.kernel import factory
@@ -189,6 +190,79 @@ print(f'BENCHMARK_RESULT latency_ms={latency}')
         self.assertIsNone(result["best_kernel"])
         self.assertEqual(result["summary_table"][0]["status"], "script_protocol_incompatible")
 
+    def test_structured_fail_exit_one_keeps_error_and_reason(self):
+        files = self.fixture()
+        files["checks/correctness check.py"] = files["checks/correctness check.py"].replace(
+            "error = max(abs(a-b) for a,b in zip(output, reference(values)))", "error = 0.125",
+        )
+        request = self.request(files)
+        request["optimization"]["enabled"] = False
+        task, result = self.run_request(request)
+        self.assertEqual(task.status, "failed")
+        self.assertEqual(result["summary_table"][0]["status"], "correctness_failed")
+        trial = result["failed_cases"][0]
+        self.assertEqual(trial["status"], "correctness_failed")
+        self.assertEqual(trial["error"]["category"], "correctness_failed")
+        self.assertFalse(trial["correctness"]["passed"])
+        self.assertFalse(trial["correctness"]["parse_error"])
+        self.assertEqual(trial["correctness"]["max_error"], 0.125)
+        self.assertEqual(trial["correctness"]["reason"], "fixed reference and tolerance=0")
+        self.assertTrue(trial["execution_validation"]["rollback"]["verified"])
+        self.assertNotIn("benchmark_started", [event["type"] for event in self.manager.get(task.task_id).events])
+
+    def test_correctness_timeout_keeps_category_stage_and_partial_logs(self):
+        actual_run = LocalRunner.run
+
+        def timed_out(runner, name, command):
+            if name == "correctness":
+                return CommandResult(name, command, 124, "partial correctness output", "partial correctness error", 0, 1, 1,
+                                     timeout=True, error_message="command timed out after 10s")
+            return actual_run(runner, name, command)
+
+        request = self.request()
+        request["optimization"]["enabled"] = False
+        with patch.object(LocalRunner, "run", timed_out):
+            task, result = self.run_request(request)
+        self.assertEqual(task.status, "failed")
+        self.assertIn("timed out after 10s", task.error)
+        self.assertEqual(result["summary_table"][0]["status"], "correctness_timeout")
+        trial = result["failed_cases"][0]
+        self.assertEqual(trial["status"], "correctness_timeout")
+        self.assertEqual(trial["error"]["category"], "correctness_timeout")
+        self.assertEqual(trial["error"]["stage"], "correctness")
+        self.assertIn("timed out after 10s", trial["error"]["message"])
+        self.assertFalse(trial["correctness"]["passed"])
+        self.assertFalse(trial["correctness"]["parse_error"])
+        self.assertTrue(trial["execution_validation"]["rollback"]["verified"])
+        self.assertIn("partial correctness output", Path(trial["paths"]["stdout"]).read_text(encoding="utf-8"))
+        self.assertIn("partial correctness error", Path(trial["paths"]["stderr"]).read_text(encoding="utf-8"))
+        self.assertNotIn("benchmark_started", [event["type"] for event in self.manager.get(task.task_id).events])
+
+    def test_correctness_timeout_cannot_be_overridden_by_complete_pass_record(self):
+        actual_run = LocalRunner.run
+
+        def timed_out(runner, name, command):
+            if name == "correctness":
+                digest = hashlib.sha256((runner.workspace / "ops/kernel.py").read_bytes()).hexdigest()
+                output = 'CORRECTNESS_RESULT status=PASS max_error=0 reason="before hanging"\nFILE_TASK_ENTRY_SHA256=' + digest
+                return CommandResult(name, command, 124, output, "", 0, 1, 1, timeout=True)
+            return actual_run(runner, name, command)
+
+        request = self.request()
+        request["optimization"]["enabled"] = False
+        with patch.object(LocalRunner, "run", timed_out), patch("kernel_opt_agent.main.strict_correctness") as parse:
+            task, result = self.run_request(request)
+        parse.assert_not_called()
+        self.assertEqual(task.status, "failed")
+        self.assertEqual(result["summary_table"][0]["status"], "correctness_timeout")
+        trial = result["failed_cases"][0]
+        self.assertEqual(trial["status"], "correctness_timeout")
+        self.assertEqual(trial["error"]["stage"], "correctness")
+        self.assertIn("timed out after 10s", trial["error"]["message"])
+        self.assertFalse(trial["correctness"]["passed"])
+        self.assertIsNone(result["best_row"])
+        self.assertNotIn("benchmark_started", [event["type"] for event in self.manager.get(task.task_id).events])
+
     def test_missing_benchmark_protocol_fails_instead_of_guessing_latency(self):
         files = self.fixture()
         files["checks/benchmark check.py"] = "from ops.kernel import factory\nprint('latency=1 PASS')\n"
@@ -202,6 +276,29 @@ print(f'BENCHMARK_RESULT latency_ms={latency}')
         self.assertEqual(task.status, "completed", task.error)
         trial = result["source_optimization"]["trials"][0]
         self.assertEqual(trial["status"], "correctness_failed")
+        self.assertEqual(trial["correctness"]["max_error"], 1)
+        self.assertEqual(trial["correctness"]["reason"], "fixed reference and tolerance=0")
+        self.assertTrue(trial["rollback_verified"])
+        self.assertEqual(trial["candidate_latency_ms"], [])
+        self.assertNotIn("TL.copy(", result["best_kernel"])
+
+    def test_candidate_correctness_timeout_keeps_reason_and_rolls_back(self):
+        actual_run = LocalRunner.run
+
+        def timed_out(runner, name, command):
+            if name == "correctness" and runner.workspace.parent.name.startswith("source-"):
+                return CommandResult(name, command, 124, "partial candidate output", "", 0, 1, 1,
+                                     timeout=True, error_message="command timed out after 10s")
+            return actual_run(runner, name, command)
+
+        with patch.object(LocalRunner, "run", timed_out):
+            task, result = self.run_request(self.request())
+        self.assertEqual(task.status, "completed", task.error)
+        trial = result["source_optimization"]["trials"][0]
+        self.assertEqual(trial["status"], "correctness_failed")
+        self.assertIn("correctness_timeout", trial["correctness"]["reason"])
+        self.assertIn("timed out after 10s", trial["decision_reason"])
+        self.assertNotIn("script_protocol_incompatible", trial["decision_reason"])
         self.assertTrue(trial["rollback_verified"])
         self.assertEqual(trial["candidate_latency_ms"], [])
         self.assertNotIn("TL.copy(", result["best_kernel"])
@@ -345,6 +442,29 @@ print(f'BENCHMARK_RESULT latency_ms={latency}')
 
 
 class FileProtocolTests(unittest.TestCase):
+    def test_nonzero_exit_preserves_binding_but_never_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / "kernel.py"
+            entry.write_text("value = 1\n", encoding="utf-8")
+            digest = hashlib.sha256(entry.read_bytes()).hexdigest()
+            commands = automatic_commands("local", "kernel.py", FilesConfig(correctness="check.py", benchmark="bench.py"))
+            runner = LocalRunner(root, 5)
+            for status, load_entry in (("FAIL", True), ("PASS", True), ("FAIL", False)):
+                with self.subTest(status=status, load_entry=load_entry):
+                    script = "import kernel\n" if load_entry else ""
+                    script += f'print(\'CORRECTNESS_RESULT status={status} max_error=0.125 reason="reference mismatch"\')\nraise SystemExit(1)\n'
+                    (root / "check.py").write_text(script, encoding="utf-8")
+                    command = runner.run("correctness", commands["correctness_command"])
+                    self.assertEqual(command.returncode, 1)
+                    self.assertEqual("FILE_TASK_ENTRY_SHA256=" in command.stdout, load_entry)
+                    parsed = strict_correctness(command.stdout, command.stderr, command.returncode, digest)
+                    self.assertFalse(parsed.passed)
+                    self.assertEqual(parsed.parse_error, not load_entry)
+                    if load_entry:
+                        self.assertEqual(parsed.max_error, 0.125)
+                        self.assertEqual(parsed.reason, "reference mismatch")
+
     def test_timeout_partial_logs_remain_text_without_timing_assertions(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = LocalRunner(Path(directory), 1)

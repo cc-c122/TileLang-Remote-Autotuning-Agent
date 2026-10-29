@@ -207,6 +207,11 @@ def _execute_version(
             return outcome
         if command_cancelled(correctness, "correctness"):
             return outcome
+        if correctness.timeout or correctness.guard_denied:
+            outcome.status = "correctness_failed"
+            outcome.error = f"{command_failure_status(correctness, 'correctness')}: {_command_error(correctness, 'correctness')}"
+            outcome.correctness = SourceTrialCorrectness(passed=False, reason=outcome.error)
+            return outcome
         strict_valid = CORRECTNESS_STRICT_RE.search(correctness.stdout + "\n" + correctness.stderr) is not None
         if config.file_task:
             parsed_correctness = strict_correctness(correctness.stdout, correctness.stderr, correctness.returncode,

@@ -347,9 +347,17 @@ def run_trial(
             stdout_all.append(corr_cmd.stdout)
             stderr_all.append(corr_cmd.stderr)
             audit("after_correctness")
-            if corr_cmd.returncode != 0 and corr_cmd.guard_denied:
+            if corr_cmd.guard_denied or corr_cmd.timeout:
                 status = command_failure_status(corr_cmd, "correctness")
-                error = {"category": status, "message": corr_cmd.error_message or corr_cmd.stderr}
+                message = corr_cmd.error_message or (
+                    f"correctness command timed out after {config.search.timeout_seconds}s"
+                    if corr_cmd.timeout else corr_cmd.stderr or "correctness command denied by guard"
+                )
+                error = {"category": status, "stage": "correctness", "message": message}
+                correctness_data = {
+                    "passed": False, "status": "FAIL", "max_error": None,
+                    "reason": message, "parse_error": False,
+                }
             else:
                 if config.file_task:
                     bound_hash = expected_files[config.kernel.entry_file] if config.file_task.attest_entry else None
@@ -365,7 +373,7 @@ def run_trial(
                 }
                 if not corr.passed:
                     status = "script_protocol_incompatible" if config.file_task and corr.parse_error else "correctness_failed"
-                    error = {"category": status, "message": corr.reason}
+                    error = {"category": status, "stage": "correctness", "message": corr.reason}
         if error is None:
             if on_event:
                 on_event("benchmark_started", "running benchmark command")
