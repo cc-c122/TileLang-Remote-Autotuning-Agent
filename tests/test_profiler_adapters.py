@@ -67,8 +67,11 @@ class ProfilerAdapterTests(unittest.TestCase):
 
     def test_capability_exception_does_not_echo_secret(self):
         runner = Mock()
-        runner.run.side_effect = RuntimeError("sensitive-value-119")
-        capability = get_profiler_adapter("mcprofiler").capabilities(ProfileContext(runner, Path("results"), self.request()))
+        runner.info.remote_workspace = "/managed/task"
+        runner.denied_commands = []
+        runner.run_cancellable.side_effect = RuntimeError("sensitive-value-119")
+        with tempfile.TemporaryDirectory() as temporary:
+            capability = get_profiler_adapter("mcprofiler").capabilities(ProfileContext(runner, Path(temporary), self.request()))
         self.assertNotIn("sensitive-value-119", json.dumps(capability.to_dict()))
 
     def test_artifact_path_cannot_escape_root(self):

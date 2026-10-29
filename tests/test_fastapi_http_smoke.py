@@ -67,8 +67,9 @@ class FastApiHttpSmokeTests(unittest.TestCase):
     def test_real_http_local_runner_smoke(self) -> None:
         port = _free_port()
         base = f"http://127.0.0.1:{port}"
+        state = Path("kernel_opt_agent/workspace/server_runtime") / ("http-smoke-" + uuid.uuid4().hex)
         proc = subprocess.Popen(
-            [sys.executable, "-m", "kernel_opt_agent.server.app", "--host", "127.0.0.1", "--port", str(port)],
+            [sys.executable, "-m", "scripts.serve_acceptance_api", "--port", str(port), "--state-dir", str(state)],
             cwd=Path(__file__).resolve().parents[1],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

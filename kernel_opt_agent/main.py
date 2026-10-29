@@ -391,6 +391,8 @@ def run_trial(
             "server_executable": config.profiler.mcprofiler_server_executable,
             "service_port": config.profiler.service_port,
             "timeout_seconds": config.profiler.timeout_seconds,
+            "discovery_hint": config.profiler._tool_discovery,
+            "build_log": compile_log,
         }
         if metrics:
             request_kwargs["metrics"] = metrics
@@ -405,7 +407,9 @@ def run_trial(
                 import_output_dir=db.results_dir / "mcprofiler_imports" / label,
             )
             collection_record = collection.to_dict(lambda value: redact_data(config, value))
-            if collection.status == "collected" and collection.case_dir:
+            if collection.status == "collected" and collection.case_dir and len(collection.target_reports) > 1:
+                profiler_context["mcprofiler_report_paths"] = [str(db.results_dir / collection.case_dir / row["report"]) for row in collection.target_reports]
+            elif collection.status == "collected" and collection.case_dir:
                 profiler_context["mcprofiler_case_path"] = str(
                     db.results_dir / collection.case_dir / (collection.primary_report or ".")
                 )

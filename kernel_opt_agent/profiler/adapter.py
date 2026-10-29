@@ -57,6 +57,7 @@ class RawProfileArtifact:
     native_result: Any = field(default=None, repr=False)
     primary_report: str | None = None
     partial_artifact_dir: str | None = None
+    target_reports: list[dict[str, Any]] = field(default_factory=list)
 
     def case_path(self) -> Path | None:
         if self.case_dir is None:
@@ -64,6 +65,8 @@ class RawProfileArtifact:
         root = self.results_dir.resolve()
         path = (root / self.case_dir).resolve()
         path.relative_to(root)
+        if len(self.target_reports) > 1:
+            return None
         if self.primary_report is not None:
             report_path = (path / self.primary_report).resolve()
             report_path.relative_to(path)
@@ -76,6 +79,7 @@ class RawProfileArtifact:
             "collection_id": self.collection_id, "reason_category": self.reason_category,
             "case_dir": self.case_dir, "artifact_manifest": self.artifact_manifest,
             "primary_report": self.primary_report, "partial_artifact_dir": self.partial_artifact_dir,
+            "target_reports": self.target_reports,
             "warnings": self.warnings,
         })
 

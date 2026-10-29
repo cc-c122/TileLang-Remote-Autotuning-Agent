@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from kernel_opt_agent.config_model import AppConfig, safe_config_dict
 from kernel_opt_agent.hardware.profile_loader import normalize_profile_name
@@ -107,7 +107,15 @@ class ProfilerRequest(BaseModel):
     command: str | None = None
     timeout_seconds: int = Field(default=120, gt=0, le=3600)
     mcprofiler_executable: str = "mcProfiler"
+    mcprofiler_server_executable: str = "profiler_server"
     kernel_names: list[str] = Field(default_factory=list)
+
+    @field_validator("mcprofiler_executable", "mcprofiler_server_executable")
+    @classmethod
+    def validate_profiler_path(cls, value, info):
+        from kernel_opt_agent.profiler.mcprofiler.tool_discovery import validate_tool_path
+
+        return validate_tool_path(value, "mcProfiler" if info.field_name == "mcprofiler_executable" else "profiler_server")
 
 
 class PatchingRequest(BaseModel):

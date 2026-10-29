@@ -50,6 +50,8 @@ class SettingsStore:
 
     def save(self, payload: SettingsPayload) -> dict[str, Any]:
         data = payload.model_dump()
+        if "profiler" not in payload.model_fields_set and self.path.exists():
+            data["profiler"] = self.load_raw().profiler.model_dump()
         _reject_plaintext_secrets(data)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(yaml.safe_dump(data, sort_keys=True), encoding="utf-8")

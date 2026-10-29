@@ -64,6 +64,15 @@ class FakeRemoteCollectionRunner:
 
     def run_cancellable(self, name: str, command: str, should_cancel=None, timeout_seconds=None) -> CommandResult:
         self.commands.append((name, command))
+        if name == "mcprofiler_discovery":
+            available = self.mode != "missing_tool"
+            capability = {"available": available, "status": "available" if available else "unavailable",
+                          "reason_category": "none" if available else "client_unavailable",
+                          "version": "3.9.0.29" if available else None,
+                          "executable": "/tools/mcProfiler" if available else None,
+                          "server_executable": "/tools/profiler_server" if available else None,
+                          "discovery_source": "allowlist" if available else "none"}
+            return self._result(name, command, stdout="MCPROFILER_DISCOVERY_RESULT " + json.dumps(capability))
         self.collection_timeout = timeout_seconds
         if self.mode == "cancel":
             return self._result(name, command, 130, stderr="command cancelled")
@@ -146,6 +155,8 @@ class McProfilerCollectionTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), artifact["sha256"])
                 self.assertEqual(artifact["source"], "mcprofiler_auto_collection")
             collection_command = next(command for name, command in runner.commands if name == "mcprofiler_collection")
+            self.assertIn("/tools/mcProfiler", collection_command)
+            self.assertEqual(result.execution_manifest["tool_discovery"]["discovery_source"], "allowlist")
             self.assertIn("mcProfiler", collection_command)
             self.assertIn("profiler_server", collection_command)
             self.assertIn("127.0.0.1", collection_command)
@@ -184,6 +195,8 @@ class McProfilerCollectionTests(unittest.TestCase):
     def test_returncode_zero_without_report_preserves_partial_native_artifacts(self) -> None:
         class PartialRunner(FakeRemoteCollectionRunner):
             def run_cancellable(self, name, command, should_cancel=None, **kwargs):
+                if name == "mcprofiler_discovery":
+                    return super().run_cancellable(name, command, should_cancel, **kwargs)
                 self.commands.append((name, command))
                 match = re.search(r"\.kernel_opt_agent/mcprofiler/collections/(mcprof-[a-f0-9]+)", command)
                 root = self.remote_root / ".kernel_opt_agent/mcprofiler/collections" / match.group(1)
@@ -222,6 +235,8 @@ class McProfilerCollectionTests(unittest.TestCase):
         class EmptyReportRunner(FakeRemoteCollectionRunner):
             def run_cancellable(self, name, command, should_cancel=None, **kwargs):
                 result = super().run_cancellable(name, command, should_cancel, **kwargs)
+                if name == "mcprofiler_discovery":
+                    return result
                 report = next(self.remote_root.rglob("report_dumped_result.json"))
                 payload = json.loads(report.read_text())
                 if self.mode == "unavailable":

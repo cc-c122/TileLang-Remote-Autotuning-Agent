@@ -19,6 +19,7 @@ from kernel_opt_agent.hardware.hardware_info import CANONICAL_FIELDS, HardwareIn
 from kernel_opt_agent.hardware.profile_loader import HardwareProfileLoader, normalize_profile_name
 from kernel_opt_agent.main import WORKSPACE_ROOT
 from kernel_opt_agent.profiler.attribution import annotate_planning_eligibility
+from kernel_opt_agent.profiler.mcprofiler.tool_discovery import McProfilerCapability, discover_mcprofiler, persist_capability
 from kernel_opt_agent.source_optimizer import read_source_result
 from kernel_opt_agent.source_optimizer.performance import saved_gate_is_accepted
 
@@ -214,6 +215,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "experiments.jsonl",
         "summary.csv",
         "profiler_results.jsonl",
+        "profiler_capabilities.json",
         "mcprofiler_collection.jsonl",
         "metric_observations.jsonl",
         "diagnosis.jsonl",
@@ -236,6 +238,15 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
     profiler_rows = _read_jsonl(results_dir / "profiler_results.jsonl")
     profiler_collections = _read_jsonl(results_dir / "mcprofiler_collection.jsonl")
     status = profiler_status(profiler_rows, evidence_summary)
+    capability = {"mcprofiler": McProfilerCapability().model_dump(mode="json")}
+    capability_path = results_dir / "profiler_capabilities.json"
+    if capability_path.is_file():
+        try:
+            capability_path.resolve().relative_to(results_dir.resolve())
+            raw_capability = json.loads(capability_path.read_text(encoding="utf-8"))
+            capability["mcprofiler"] = McProfilerCapability.model_validate(raw_capability["mcprofiler"]).model_dump(mode="json")
+        except (ValueError, KeyError, TypeError):
+            capability["mcprofiler"]["reason_category"] = "invalid_capability_record"
     payload = {
         "results_dir": str(results_dir),
         "best_kernel": best_kernel,
@@ -250,6 +261,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "profiler_status": status,
         "profiler_available": status == "profiler_metrics_available",
         "profiler_collections": profiler_collections,
+        "profiler_capabilities": capability,
         "source_optimization": source_optimization,
         "source_best_verified": source_best_verified if source_mode else None,
         "source_best_verification_error": source_error if source_mode else None,
@@ -399,7 +411,17 @@ def hardware_resolve(payload: HardwareResolveRequest) -> dict[str, Any]:
             lease = ssh_sessions.acquire(payload.ssh_session_id)
             lease.add_redaction_values([os.environ.get(settings_store.load_raw().llm.api_key_env, "")])
             with lease.operation():
-                return {"ok": True, **lease.resolve(payload.device_id, payload.user_overrides)}
+                response = lease.resolve(payload.device_id, payload.user_overrides)
+                settings = settings_store.load_raw().profiler
+                directory = ssh_sessions.evidence_root / response["detection_id"]
+                directory.resolve().relative_to(ssh_sessions.evidence_root.resolve())
+                capability = discover_mcprofiler(
+                    lease.detection_runner(), settings.mcprofiler_executable or "mcProfiler",
+                    settings.mcprofiler_server_executable or "profiler_server", results_dir=directory, redactor=lease.redact,
+                )
+                persist_capability(directory, capability, lease.redact)
+                response["profiler_capabilities"] = {"mcprofiler": capability.model_dump(mode="json")}
+                return {"ok": True, **response}
         except Exception as exc:
             raise _session_http_error(exc) from None
         finally:
@@ -407,7 +429,8 @@ def hardware_resolve(payload: HardwareResolveRequest) -> dict[str, Any]:
                 lease.release()
     hardware = resolve_hardware(payload)
     return {"ok": True, "hardware": hardware, "devices": [], "selected_device_id": None,
-            "detection_status": "partial", "warnings": ["remote detection was not requested", *hardware.get("warnings", [])]}
+            "detection_status": "partial", "warnings": ["remote detection was not requested", *hardware.get("warnings", [])],
+            "profiler_capabilities": {"mcprofiler": McProfilerCapability(reason_category="ssh_session_required").model_dump(mode="json")}}
 
 
 @app.post("/api/samples/upload")

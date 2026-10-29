@@ -5,6 +5,7 @@ import csv
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -16,6 +17,8 @@ from fastapi.testclient import TestClient
 import kernel_opt_agent.sample_security as sample_security
 from kernel_opt_agent.config_model import AppConfig, load_config
 from kernel_opt_agent.kernel.variant_generator import VariantGenerator
+from kernel_opt_agent.runner.command_guard import validate
+from kernel_opt_agent.runner.local_runner import CommandResult, LocalRunner
 from kernel_opt_agent.server.app import TASKS_ROOT, app, upload_store
 from kernel_opt_agent.server.models import TaskCreateRequest
 from kernel_opt_agent.server.run_request_builder import materialize_sample
@@ -664,17 +667,36 @@ class WebSampleRuntimeTests(unittest.TestCase):
         upload_id = self._valid_upload()
         timed_out = _task_request(upload_id, project_name="timeout-first")
         timed_out["budget"]["timeout_seconds"] = 1
-        timed_out["commands"]["benchmark_command"] = (
-            "python -c \"import time; time.sleep(2); "
-            "print('BENCHMARK_RESULT latency_ms=1 tflops=1 bandwidth_gbps=1')\""
-        )
-        first_id = self.client.post("/api/tasks", json=timed_out).json()["task_id"]
-        second_id = self.client.post(
-            "/api/tasks",
-            json=_task_request(upload_id, project_name="after-timeout"),
-        ).json()["task_id"]
-        first = self._wait(first_id)
-        second = self._wait(second_id)
+        started, release = threading.Event(), threading.Event()
+        real_run = LocalRunner.run
+
+        def deterministic_timeout(runner, name, command):
+            if runner.timeout_seconds != 1:
+                return real_run(runner, name, command)
+            guard = validate(command, runner.workspace, runner.workspace, runner.denied_commands)
+            self.assertTrue(guard.allowed)
+            if name == "benchmark":
+                started.set()
+                self.assertTrue(release.wait(10))
+                return CommandResult(name, command, 124, "", "deterministic timeout fixture", 0, 0, 0,
+                                     timeout=True, error_message="deterministic timeout fixture")
+            output = 'CORRECTNESS_RESULT status=PASS max_error=0 reason="fixture"' if name == "correctness" else ""
+            return CommandResult(name, command, 0, output, "", 0, 0, 0)
+
+        # Exercise queue/error handling without making correctness depend on
+        # Python startup completing inside the benchmark's one-second budget.
+        with patch.object(LocalRunner, "run", autospec=True, side_effect=deterministic_timeout):
+            try:
+                first_id = self.client.post("/api/tasks", json=timed_out).json()["task_id"]
+                self.assertTrue(started.wait(10))
+                second_id = self.client.post(
+                    "/api/tasks", json=_task_request(upload_id, project_name="after-timeout"),
+                ).json()["task_id"]
+                self.assertEqual(self.client.get(f"/api/tasks/{second_id}").json()["task"]["status"], "pending")
+            finally:
+                release.set()
+            first = self._wait(first_id)
+            second = self._wait(second_id)
         self.assertEqual(first["status"], "completed")
         self.assertEqual(second["status"], "completed")
         with (Path(first["results_dir"]) / "summary.csv").open(newline="", encoding="utf-8") as handle:

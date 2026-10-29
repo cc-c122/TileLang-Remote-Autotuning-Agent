@@ -16,7 +16,11 @@ def _observation_value(metric_map, name):
 class MxmacaProfiler(BaseProfiler):
     @staticmethod
     def from_observations(observations: list[MetricObservation], *, benchmark_stdout="", raw_logs=None, raw_artifact_refs=None):
-        metric_map = {item.metric_name: item for item in observations}
+        groups = {}
+        for item in observations:
+            groups.setdefault(item.metric_name, []).append(item)
+        # Multiple native reports have no agreed aggregation denominator.
+        metric_map = {name: rows[0] if len(rows) == 1 else None for name, rows in groups.items()}
         benchmark_metrics = parse_benchmark_output(benchmark_stdout)
         names = ("vl1_hit_rate", "l2c_hit_rate", "dnoc_read_average_latency", "shared_memory_access_efficiency",
                  "shared_conflict_cycles", "achieved_waves", "dispatched_waves", "mma_duty")
@@ -24,10 +28,20 @@ class MxmacaProfiler(BaseProfiler):
             latency_ms=benchmark_metrics.get("latency"), tflops=benchmark_metrics.get("tflops"),
             estimated_hbm_bandwidth=benchmark_metrics.get("estimated_hbm_bandwidth"),
             **{name: _observation_value(metric_map, name) for name in names},
+            available_metrics={name: any(item.available for item in groups.get(name, [])) for name in names},
             observations=observations, raw_artifact_refs=raw_artifact_refs or {}, raw_logs=raw_logs or {},
         )
 
     def collect(self, run_context):
+        report_paths = run_context.get("mcprofiler_report_paths")
+        if report_paths:
+            reports = [parse_mcprofiler_case(path) for path in report_paths]
+            return self.from_observations(
+                [item for report in reports for item in report.observations],
+                benchmark_stdout=run_context.get("benchmark_stdout") or "",
+                raw_artifact_refs={"reports": [report.to_dict()["artifacts"] for report in reports]},
+                raw_logs={"note": "Native reports are retained separately; repeated scalar metrics are null, not aggregated."},
+            )
         case_path = run_context.get("mcprofiler_case_path") or run_context.get("profiler_case_path")
         if case_path:
             parsed_case = parse_mcprofiler_case(case_path)

@@ -186,7 +186,11 @@ def redact_mcprofiler_sensitive(data: Any) -> Any:
 
 def _artifact_id(metadata: dict[str, Any], case: McProfilerCase, report_sha256: str) -> str:
     case_id = metadata.get("case_name") or metadata.get("exec_id") or case.case_root.name
-    return f"{case_id}:{report_sha256[:16]}"
+    artifact_id = f"{case_id}:{report_sha256[:16]}"
+    if case.report_path and re.fullmatch(r"\d+_.+_dumped_result\.json", case.report_path.name):
+        relative = case.report_path.relative_to(case.case_root).as_posix()
+        artifact_id += ":" + hashlib.sha256(relative.encode()).hexdigest()[:12]
+    return artifact_id
 
 
 def parse_mcprofiler_case(path: str | Path) -> McProfilerParseResult:
@@ -226,7 +230,8 @@ def parse_discovered_case(case: McProfilerCase) -> McProfilerParseResult:
         kernel_name = None
     # A named report describes layout, not PMU isolation or counter scope.
     scope = "unknown"
-    context = _redact_sensitive(read_report_context(case.case_root, metadata, kernel_name))
+    context = _redact_sensitive(read_report_context(case.case_root, metadata, kernel_name,
+        case.report_path.relative_to(case.case_root).as_posix() if case.report_path else None))
     artifacts["target_attribution"] = {
         "status": "unverified", "confidence": "low", "scope": scope, "kernel_name": kernel_name,
         **context,
