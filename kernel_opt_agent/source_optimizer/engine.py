@@ -23,6 +23,7 @@ from kernel_opt_agent.profiler.mcprofiler import McProfilerCollectionRequest
 from kernel_opt_agent.profiler.registry import collect_mcprofiler_case as collect_remote_mcprofiler_case
 from kernel_opt_agent.redaction import configured_secret_values, redact_data, redact_text
 from kernel_opt_agent.sample_security import copy_safe_sample_contents, normalize_sample_path
+from kernel_opt_agent.file_task import strict_correctness, strict_benchmark
 
 from .analyzer import AnalysisResult, SourceOptimizationTarget, analyze_source, rewrite_source_target, sha256_bytes, sha256_file
 from .models import SourceOptimizationResult, SourceOptimizationTrial, SourceTrialCorrectness
@@ -172,6 +173,10 @@ def _execute_version(
             outcome.status = "cancelled"
             outcome.error = "cancel requested before candidate execution"
             return outcome
+        if config.file_task and any(expected_manifest.get(name) != digest for name, digest in config.file_task.protected_files.items()):
+            outcome.status = "validation_failed"
+            outcome.error = "protected_file_changed: original test/reference hashes no longer match"
+            return outcome
         outcome.runner = build_runner(config, trial_dir)
         if not audit("before_build"):
             return outcome
@@ -202,14 +207,24 @@ def _execute_version(
             return outcome
         if command_cancelled(correctness, "correctness"):
             return outcome
-        strict_match = CORRECTNESS_STRICT_RE.search(correctness.stdout + "\n" + correctness.stderr)
-        parsed_correctness = parse_correctness(correctness.stdout, correctness.stderr, correctness.returncode)
+        if correctness.timeout or correctness.guard_denied:
+            outcome.status = "correctness_failed"
+            outcome.error = f"{command_failure_status(correctness, 'correctness')}: {_command_error(correctness, 'correctness')}"
+            outcome.correctness = SourceTrialCorrectness(passed=False, reason=outcome.error)
+            return outcome
+        strict_valid = CORRECTNESS_STRICT_RE.search(correctness.stdout + "\n" + correctness.stderr) is not None
+        if config.file_task:
+            parsed_correctness = strict_correctness(correctness.stdout, correctness.stderr, correctness.returncode,
+                                                    expected_manifest[entry_name] if config.file_task.attest_entry else None)
+            strict_valid = not parsed_correctness.parse_error
+        else:
+            parsed_correctness = parse_correctness(correctness.stdout, correctness.stderr, correctness.returncode)
         outcome.correctness = SourceTrialCorrectness(
-            passed=parsed_correctness.passed if strict_match is not None else False,
+            passed=parsed_correctness.passed if strict_valid else False,
             max_error=parsed_correctness.max_error,
-            reason=parsed_correctness.reason if strict_match is not None else "strict CORRECTNESS_RESULT record is required",
+            reason=parsed_correctness.reason if strict_valid or config.file_task else "strict CORRECTNESS_RESULT record is required",
         )
-        if correctness.returncode != 0 or strict_match is None or not parsed_correctness.passed:
+        if correctness.returncode != 0 or not strict_valid or not parsed_correctness.passed:
             outcome.status = "correctness_failed"
             outcome.error = outcome.correctness.reason
             return outcome
@@ -234,7 +249,9 @@ def _execute_version(
                 outcome.status = "benchmark_failed"
                 outcome.error = "strict BENCHMARK_RESULT record is required"
                 return outcome
-            parsed = parse_benchmark(benchmark.stdout, {"latency": None, "tflops": None, "bandwidth": None})
+            parsed = strict_benchmark(
+                benchmark.stdout, expected_manifest[entry_name] if config.file_task.attest_entry else None,
+            ) if config.file_task else parse_benchmark(benchmark.stdout, {"latency": None, "tflops": None, "bandwidth": None})
             if parsed.parse_error or parsed.latency is None or not math.isfinite(parsed.latency) or parsed.latency <= 0:
                 outcome.status = "benchmark_failed"
                 outcome.error = parsed.reason or "benchmark latency is invalid"

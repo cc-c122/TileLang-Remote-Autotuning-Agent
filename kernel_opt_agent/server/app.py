@@ -21,6 +21,7 @@ from kernel_opt_agent.main import WORKSPACE_ROOT
 from kernel_opt_agent.profiler.attribution import annotate_planning_eligibility
 from kernel_opt_agent.source_optimizer import read_source_result
 from kernel_opt_agent.source_optimizer.performance import saved_gate_is_accepted
+from kernel_opt_agent.file_task import validate_files
 
 from .job_worker import JobWorker
 from .models import HardwareResolveRequest, SettingsPayload, TaskCreateRequest, SSHSessionRequest
@@ -225,6 +226,9 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "source_optimization.json",
         "hardware_snapshot.yaml",
         "hardware_detected.yaml",
+        "preflight.json",
+        "file_task_manifest.json",
+        "file_task_failure.json",
     ]:
         path = results_dir / name
         files[name] = {"exists": path.exists(), "size": path.stat().st_size if path.exists() else 0}
@@ -254,6 +258,8 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "source_best_verified": source_best_verified if source_mode else None,
         "source_best_verification_error": source_error if source_mode else None,
         "hardware_snapshot": _read_yaml(results_dir / "hardware_snapshot.yaml"),
+        "preflight": _read_yaml(results_dir / "preflight.json"),
+        "file_task": _read_yaml(results_dir / "file_task_manifest.json"),
     }
     payload.update({"files": files, "summary": summary, "best_row": best_row, "report": report})
     return payload
@@ -436,13 +442,39 @@ async def upload_sample(request: Request) -> dict[str, Any]:
 def create_task(payload: TaskCreateRequest) -> dict[str, Any]:
     if payload.sample.source_type == "upload":
         try:
-            upload_store.validate_reference(payload.sample.upload_id or "", payload.sample.entry_file)
+            manifest = upload_store.validate_reference(payload.sample.upload_id or "", payload.sample.entry_file)
+            if payload.test_files:
+                names = {row["path"] for row in manifest["files"]}
+                for role, name in payload.test_files.model_dump().items():
+                    if name not in names:
+                        raise SampleUploadError("sample file not found for " + role)
         except SampleUploadError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    lease = None
-    if payload.ssh_session_id:
+    elif payload.test_files:
+        if payload.sample.source_type == "inline":
+            raise HTTPException(status_code=422, detail="test_files require an uploaded or local sample directory")
         try:
-            lease = ssh_sessions.acquire(payload.ssh_session_id)
+            validate_files(Path(payload.sample.path or "").expanduser(), payload.sample.entry_file, payload.test_files)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+    lease = None
+    owned_session_id = None
+    session_id = payload.ssh_session_id
+    if session_id or payload.test_files and payload.runner.type == "ssh":
+        try:
+            if session_id is None:
+                from pydantic import SecretStr
+
+                saved_ssh = settings_store.load_raw().ssh
+                password = None
+                if saved_ssh.auth_type == "password":
+                    value = os.environ.get(saved_ssh.password_env or "")
+                    if not value:
+                        raise SessionError("ssh_password_env_not_set", 422)
+                    password = SecretStr(value)
+                created = ssh_sessions.create(SSHSessionRequest(ssh=saved_ssh, password=password))
+                session_id = owned_session_id = created["session_id"]
+            lease = ssh_sessions.acquire(session_id)
             lease.add_redaction_values([os.environ.get(settings_store.load_raw().llm.api_key_env, "")])
             with lease.operation():
                 text = json.dumps(payload.model_dump(), ensure_ascii=False)
@@ -453,6 +485,9 @@ def create_task(payload: TaskCreateRequest) -> dict[str, Any]:
             if lease:
                 lease.release()
             raise _session_http_error(exc) from None
+        finally:
+            if owned_session_id:
+                ssh_sessions.delete(owned_session_id)
     try:
         task = manager.create(payload)
         if lease:
