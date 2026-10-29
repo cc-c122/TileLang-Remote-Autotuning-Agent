@@ -110,9 +110,11 @@ async (page) => {
   }
   async function runnable() {
     await page.evaluate(() => { activateView("startView"); el.v2ExecutionIntent.value = "baseline_only"; syncSourceOptimizationUi(); });
+    await page.locator("#v2SampleSourceType").selectOption("inline");
     await page.locator("#v2SampleText").fill("print('contract only')");
-    const advanced = page.locator("#startView details");
+    const advanced = page.locator("#advancedTaskSettings");
     if (await advanced.getAttribute("open") === null) await advanced.locator("summary").click();
+    await page.locator("#v2BuildCommand").fill("python -m py_compile kernel.py");
     await page.locator("#v2CorrectnessCommand").fill("python kernel.py --check");
     await page.locator("#v2BenchmarkCommand").fill("python kernel.py --benchmark");
   }
@@ -319,9 +321,11 @@ async (page) => {
     await page.evaluate(() => window.scrollTo(0, 0));
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Hardware view fits ${name} viewport`);
     check(await page.evaluate(() => {
-      const section = document.querySelector('.hardware-card').getBoundingClientRect();
+      const section = document.getElementById('advancedTaskSettings');
+      const style = getComputedStyle(section);
+      const contentWidth = section.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
       const table = document.getElementById('v2HardwareEditor').getBoundingClientRect();
-      return Math.abs(section.width - table.width - 34) < 3;
+      return Math.abs(contentWidth - table.width) < 3;
     }), `Hardware table uses the full available section width at ${name}`);
     await page.screenshot({path: `output/playwright/ssh-session-${name}.png`, fullPage: true});
   }
