@@ -8,6 +8,7 @@ import yaml
 from kernel_opt_agent.config_model import AppConfig, safe_config_dict
 from kernel_opt_agent.run_request import RunRequest, app_config_from_run_request
 from kernel_opt_agent.redaction import redact_data
+from kernel_opt_agent.file_task import automatic_commands, prepare_contract, FileTaskError
 from kernel_opt_agent.sample_security import (
     UnsafeSampleError,
     copy_safe_sample_contents,
@@ -78,6 +79,9 @@ def build_internal_run_request(
     upload_store: SampleUploadStore | None = None,
 ) -> RunRequest:
     sample_dir = materialize_sample(request, task_workspace, upload_store)
+    commands = request.commands.model_dump()
+    if request.test_files and "commands" not in request.model_fields_set:
+        commands = automatic_commands(request.runner.type, request.sample.entry_file, request.test_files)
     raw: dict[str, Any] = {
         "schema_version": "v2.run_request.v1",
         "project_name": request.project_name,
@@ -88,9 +92,9 @@ def build_internal_run_request(
             "entry_file": request.sample.entry_file,
         },
         "commands": {
-            "build_command": request.commands.build_command or "",
-            "correctness_command": request.commands.correctness_command,
-            "benchmark_command": request.commands.benchmark_command,
+            "build_command": commands["build_command"] or "",
+            "correctness_command": commands["correctness_command"],
+            "benchmark_command": commands["benchmark_command"],
         },
         "target": {
             "gpu_model": request.target.gpu_model,
@@ -145,6 +149,13 @@ def build_effective_config(
     run_request = build_internal_run_request(request, task_workspace, upload_store)
     run_request.settings_ref.use_saved_settings = False
     config = app_config_from_run_request(run_request)
+    if request.test_files:
+        if config.search_space:
+            raise FileTaskError("python_script_incompatible", "file-driven tasks accept plain Python source, not parameter templates")
+        config.file_task = prepare_contract(
+            Path(config.kernel.sample_path), config.kernel.entry_file, request.test_files,
+            "commands" not in request.model_fields_set,
+        )
     config.runner.type = request.runner.type
     config.source_optimization.enabled = request.optimization.enabled
     config.source_optimization.max_candidates = request.optimization.max_candidates

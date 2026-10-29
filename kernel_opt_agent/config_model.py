@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from kernel_opt_agent.sample_security import UnsafeSampleError, ensure_no_link_components, normalize_sample_path
 
@@ -54,6 +54,36 @@ class KernelConfig(BaseModel):
     build_command: str | None = None
     run_command: str
     correctness_command: str
+
+
+def python_sample_path(value: str) -> str:
+    normalized = normalize_sample_path(value, label="Python sample file")
+    if not normalized.endswith(".py"):
+        raise ValueError("file-driven tasks require directly runnable .py files")
+    if any(char in normalized for char in ';&|<>`$%!"'):
+        raise ValueError("Python sample file contains shell metacharacters")
+    return normalized
+
+
+class TestFilesConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    correctness: str
+    benchmark: str
+
+    @field_validator("correctness", "benchmark")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return python_sample_path(value)
+
+
+class FileTaskConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    test_files: TestFilesConfig
+    attest_entry: bool = True
+    protected_files: dict[str, str] = Field(default_factory=dict)
+    required_modules: list[str] = Field(default_factory=list)
 
 
 class SearchConfig(BaseModel):
@@ -140,6 +170,7 @@ class AppConfig(BaseModel):
     profiler: ProfilerConfig = Field(default_factory=ProfilerConfig)
     patching: PatchingConfig = Field(default_factory=PatchingConfig)
     source_optimization: SourceOptimizationConfig = Field(default_factory=SourceOptimizationConfig)
+    file_task: FileTaskConfig | None = None
 
     @model_validator(mode="after")
     def validate_app(self) -> "AppConfig":

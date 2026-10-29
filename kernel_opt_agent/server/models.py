@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from kernel_opt_agent.run_request import ProfilerRequest
+from kernel_opt_agent.config_model import TestFilesConfig, python_sample_path
 
 
 TaskStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
@@ -176,6 +177,7 @@ class TaskCreateRequest(BaseModel):
     sample: SamplePayload
     target: HardwareTargetPayload = Field(default_factory=HardwareTargetPayload)
     commands: CommandPayload = Field(default_factory=CommandPayload)
+    test_files: TestFilesConfig | None = None
     budget: BudgetPayload = Field(default_factory=BudgetPayload)
     profiler: ProfilerPayload = Field(default_factory=ProfilerPayload)
     patching: PatchingPayload = Field(default_factory=PatchingPayload)
@@ -187,8 +189,18 @@ class TaskCreateRequest(BaseModel):
     def validate_session_runner(self) -> "TaskCreateRequest":
         if self.ssh_session_id and self.runner.type != "ssh":
             raise ValueError("ssh_session_id requires runner.type=ssh")
-        if self.target.device_id and not self.ssh_session_id:
+        if self.target.device_id and not self.ssh_session_id and not (self.test_files and self.runner.type == "ssh"):
             raise ValueError("device_id requires an SSH session")
+        return self
+
+    @model_validator(mode="after")
+    def validate_test_files(self) -> "TaskCreateRequest":
+        if self.test_files:
+            entry = python_sample_path(self.sample.entry_file)
+            if entry.casefold() in {self.test_files.correctness.casefold(), self.test_files.benchmark.casefold()}:
+                raise ValueError("operator entry_file must be separate from protected test files")
+            if "optimization" not in self.model_fields_set:
+                self.optimization = OptimizationPayload(enabled=True)
         return self
 
     @model_validator(mode="after")

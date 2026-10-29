@@ -1,0 +1,22 @@
+{
+  "project_name": "file-driven-operator",
+  "sample": {
+    "source_type": "upload",
+    "upload_id": "<upload response upload_id>",
+    "entry_file": "kernel.py"
+  },
+  "test_files": {
+    "correctness": "correctness.py",
+    "benchmark": "benchmark.py"
+  },
+  "runner": {"type": "local"},
+  "target": {"gpu_model": "unknown", "backend": "unknown"},
+  "budget": {"timeout_seconds": 60},
+  "optimization": {
+    "enabled": true,
+    "max_candidates": 1,
+    "benchmark_repeats": 5,
+    "min_improvement_percent": 1.0
+  },
+  "profiler": {"enabled": false}
+}
