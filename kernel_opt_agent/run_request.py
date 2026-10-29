@@ -107,6 +107,7 @@ class ProfilerRequest(BaseModel):
     command: str | None = None
     timeout_seconds: int = Field(default=120, gt=0, le=3600)
     mcprofiler_executable: str = "mcProfiler"
+    mcprofiler_server_executable: str = "profiler_server"
     kernel_names: list[str] = Field(default_factory=list)
 
 

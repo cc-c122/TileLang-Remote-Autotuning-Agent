@@ -77,6 +77,22 @@ class FeedbackRunner(FakeRunner):
 
 
 class OptimizationRoundTests(unittest.TestCase):
+    def test_explicit_profiler_server_path_reaches_internal_config(self):
+        from kernel_opt_agent.server.models import TaskCreateRequest
+        from kernel_opt_agent.server.run_request_builder import build_effective_config
+
+        request = TaskCreateRequest.model_validate({
+            "sample": {"source_type": "inline", "inline_text": "value = 1\n", "entry_file": "kernel.py"},
+            "runner": {"type": "local"},
+            "profiler": {"enabled": True, "type": "mxmaca", "auto_collect": True,
+                         "mcprofiler_executable": "/tmp/managed-tools/mcProfiler",
+                         "mcprofiler_server_executable": "/tmp/managed-tools/profiler_server"},
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            config = build_effective_config(request, Path(directory))
+            self.assertEqual(config.profiler.mcprofiler_executable, "/tmp/managed-tools/mcProfiler")
+            self.assertEqual(config.profiler.mcprofiler_server_executable, "/tmp/managed-tools/profiler_server")
+
     def run_fixture(self, mode="accept", planner=None, budget=2, profiler=False, rewrite=None, collector=None, cancel=None, on_event=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
