@@ -119,6 +119,8 @@ async (page) => {
       renderApiResults();
       activateView("resultsView");
     }, {results: {...resultFixture(sourceOptimization), ...overrides}, executionMode});
+    // These legacy assertions inspect raw validation details; the default fold is tested separately.
+    await page.locator("#apiResultsPanel .source-trial-details").evaluateAll((panels) => panels.forEach((panel) => { panel.open = true; }));
     return page.locator("#apiResultsPanel").innerText();
   }
 
