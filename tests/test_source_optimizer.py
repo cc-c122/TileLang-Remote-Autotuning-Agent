@@ -176,12 +176,16 @@ class InvalidPlanner:
 
     def chat_json(self, messages):
         self.calls += 1
-        return {"target_id": "outside", "template": "arbitrary_code", "hypothesis": "bad", "evidence_ids": []}
+        return {"decision": "attempt", "bottleneck_type": "source_structure", "confidence": "low",
+                "target_id": "outside", "template": "arbitrary_code", "hypothesis": "bad", "evidence_ids": [],
+                "expected_effect": "unknown", "risk": "unknown", "validation_plan": ["correctness and repeated benchmark"]}
 
 
 class RecordingPlanner:
     def __init__(self, response):
-        self.response = response
+        self.response = {"decision": "attempt", "bottleneck_type": "source_structure", "confidence": "low",
+                         "expected_effect": "unmeasured structural change", "risk": "compilation may fail",
+                         "validation_plan": ["build, correctness and independent repeated benchmark"], **response}
         self.messages = []
 
     def chat_json(self, messages):
@@ -363,6 +367,7 @@ class SourceEngineTests(unittest.TestCase):
                             "value": 64,
                             "available": True,
                             "source_trial_id": "source-baseline",
+                            "source_sha256": request.source_sha256,
                             "confidence": "high", "parse_confidence": "high",
                             "attribution_status": "verified", "attribution_confidence": "high",
                             "scope": "kernel", "kernel_name": "fixture_kernel",

@@ -1,0 +1,36 @@
+{
+  "schema_version": "v2.optimization_round.v1",
+  "round_index": 1,
+  "trial_id": "example-not-executed",
+  "parent_source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "candidate_source_sha256": null,
+  "evidence_ids": [],
+  "analysis": {
+    "bottleneck_type": "insufficient_evidence",
+    "confidence": "low",
+    "hypothesis": "No eligible measured hardware evidence supports another authorized change.",
+    "expected_effect": "unknown",
+    "risk": "A hardware bottleneck would be speculative.",
+    "validation_plan": ["Collect appropriately attributed evidence before reconsidering."],
+    "basis": "source_and_logs_only"
+  },
+  "plan": {
+    "decision": "insufficient_evidence",
+    "target_id": null,
+    "template": null,
+    "source": "llm"
+  },
+  "template_description": null,
+  "diff": "",
+  "validation": {},
+  "acceptance": {
+    "decision": "insufficient_evidence",
+    "reason": "Example only; no candidate was executed.",
+    "scope": "validated_parent_selection_not_final_publication"
+  },
+  "artifacts": {
+    "example_only": true,
+    "evidence_binding": {"device_id": null, "shape_id": null, "dtype": null, "kernel_names": []},
+    "excluded_evidence": []
+  }
+}

@@ -17,7 +17,6 @@ from kernel_opt_agent.benchmark.correctness import STRICT_RE as CORRECTNESS_STRI
 from kernel_opt_agent.benchmark.correctness import parse_correctness
 from kernel_opt_agent.benchmark.parser import parse_benchmark
 from kernel_opt_agent.config_model import AppConfig, resolve_path
-from kernel_opt_agent.diagnosis.evidence import planning_evidence_allowed
 from kernel_opt_agent.main import build_runner, command_failure_status
 from kernel_opt_agent.profiler.mcprofiler import McProfilerCollectionRequest
 from kernel_opt_agent.profiler.registry import collect_mcprofiler_case as collect_remote_mcprofiler_case
@@ -25,10 +24,11 @@ from kernel_opt_agent.redaction import configured_secret_values, redact_data, re
 from kernel_opt_agent.sample_security import copy_safe_sample_contents, normalize_sample_path
 from kernel_opt_agent.file_task import strict_correctness, strict_benchmark
 
-from .analyzer import AnalysisResult, SourceOptimizationTarget, analyze_source, rewrite_source_target, sha256_bytes, sha256_file
+from .analyzer import AnalysisResult, analyze_source, rewrite_source_target, sha256_bytes, sha256_file
 from .models import SourceOptimizationResult, SourceOptimizationTrial, SourceTrialCorrectness
 from .performance import CodegenEvidence, assess_performance, parse_codegen_evidence
 from .planner import SourcePlan, choose_plan
+from .rounds import OptimizationRound, append_round, bound_evidence
 
 
 SOURCE_RESULT_FILENAME = "source_optimization.json"
@@ -130,6 +130,8 @@ class _ExecutionOutcome:
         self.stage_hashes: dict[str, dict[str, str]] = {}
         self.runner: Any | None = None
         self.codegen = CodegenEvidence()
+        self.stages: dict[str, Any] = {}
+        self.restore_allowed = True
 
 
 def _execute_version(
@@ -148,11 +150,20 @@ def _execute_version(
     def run_command(name: str, command: str) -> Any:
         assert outcome.runner is not None
         if hasattr(outcome.runner, "run_cancellable"):
-            return outcome.runner.run_cancellable(name, command, should_cancel, timeout_seconds=config.search.timeout_seconds)
-        return outcome.runner.run(name, command)
+            result = outcome.runner.run_cancellable(name, command, should_cancel, timeout_seconds=config.search.timeout_seconds)
+        else:
+            result = outcome.runner.run(name, command)
+        outcome.stages[name] = {"returncode": result.returncode, "timeout": result.timeout, "guard_denied": result.guard_denied}
+        if "stop could not be verified" in (result.error_message or ""):
+            outcome.restore_allowed = False
+        return result
 
     def audit(stage: str) -> bool:
         assert outcome.runner is not None
+        if not outcome.restore_allowed:
+            outcome.status = "validation_failed"
+            outcome.error = "execution stop unverified; workspace rewrite withheld"
+            return False
         ok, error, hashes = _audit_runner(outcome.runner, expected_manifest)
         outcome.stage_hashes[stage] = hashes
         if not ok:
@@ -321,6 +332,24 @@ def _shape_id(config: AppConfig) -> str | None:
     return str(field) if field not in (None, "") else None
 
 
+def _source_binding(config: AppConfig) -> dict[str, Any]:
+    from kernel_opt_agent.runner.ssh_runtime import current_ssh_context
+
+    def value(name):
+        field = config.hardware.fields.get(name)
+        return field.get("value") if isinstance(field, dict) and "value" in field else field
+
+    context = current_ssh_context()
+    device = getattr(context, "device", None)
+    device_id = device.get("device_id") if isinstance(device, dict) else value("device_id")
+    return {
+        "device_id": "device_sha256:" + sha256_bytes(str(device_id).encode()) if device_id else None,
+        "shape_id": _shape_id(config), "dtype": value("dtype"),
+        "kernel_names": list(config.profiler.kernel_names),
+        "unknown_fields": [name for name, item in (("device_id", device_id), ("shape_id", _shape_id(config)), ("dtype", value("dtype"))) if item is None],
+    }
+
+
 def _collect_source_profiler(
     config: AppConfig,
     results_dir: Path,
@@ -341,12 +370,15 @@ def _collect_source_profiler(
     if event_callback:
         event_callback("profiling_started", f"{source_trial_id}: collecting mcProfiler evidence")
     metrics = tuple(config.profiler.metrics) if config.profiler.metrics else ()
+    binding = _source_binding(config)
     request_kwargs: dict[str, Any] = {
         "target_command": config.profiler.command or config.kernel.run_command,
         "case_name": source_trial_id.replace(":", "-")[:96],
         "source_trial_id": source_trial_id,
         "source_sha256": source_sha256,
         "shape_id": _shape_id(config),
+        "device_id": binding["device_id"],
+        "dtype": binding["dtype"],
         "kernel_names": tuple(config.profiler.kernel_names),
         "per_kernel": True,
         "executable": config.profiler.mcprofiler_executable,
@@ -392,6 +424,11 @@ def _collect_source_profiler(
             handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str) + "\n")
     if event_callback and payload.get("status") == "collected":
         event_callback("profiler_parsed", f"{source_trial_id}: mcProfiler Case parsed")
+    payload["evidence_binding"] = {**binding, "source_trial_id": source_trial_id, "source_sha256": source_sha256}
+    if payload.get("reason_category") == "cleanup_unverified":
+        outcome.restore_allowed = False
+        outcome.status = "validation_failed"
+        outcome.error = "profiler process stop unverified; workspace rewrite withheld"
     return payload
 
 
@@ -487,6 +524,7 @@ def _update_best_config(results_dir: Path, trial: SourceOptimizationTrial) -> No
         "latency_ms": trial.candidate_median_latency_ms,
         "latency_samples_ms": trial.candidate_latency_ms,
         "improvement_percent": trial.improvement_percent,
+        "cumulative_improvement_percent": trial.artifacts.get("cumulative_improvement_percent", trial.improvement_percent),
         "performance_gate": trial.artifacts.get("performance_gate"),
     }
     path.write_text(yaml.safe_dump(payload, sort_keys=True), encoding="utf-8")
@@ -496,15 +534,19 @@ def _append_report(results_dir: Path, result: SourceOptimizationResult) -> None:
     report_path = results_dir / "report.md"
     prior = report_path.read_text(encoding="utf-8") if report_path.is_file() else "# TileLang Autotuning Report\n"
     accepted = next((item for item in result.trials if item.trial_id == result.accepted_trial_id), None)
+    samples = result.baseline.get("benchmark_samples_ms") or []
+    root_median = statistics.median(samples) if samples else (accepted.baseline_median_latency_ms if accepted else None)
+    cumulative = ((root_median - accepted.candidate_median_latency_ms) / root_median * 100.0
+                  if accepted and root_median and accepted.candidate_median_latency_ms is not None else None)
     if result.accepted_trial_id:
         prior = prior.replace("## Best Seen", "## Pre-source Best Seen", 1)
     if accepted is not None:
         authoritative = [
             "## Authoritative Source Result",
             f"- Accepted trial: {accepted.trial_id}",
-            f"- Baseline median latency: {accepted.baseline_median_latency_ms} ms",
+            f"- Baseline median latency: {root_median} ms",
             f"- Best median latency: {accepted.candidate_median_latency_ms} ms",
-            f"- Improvement: {accepted.improvement_percent:.3f}%" if accepted.improvement_percent is not None else "- Improvement: unknown",
+            f"- Improvement: {cumulative:.3f}%" if cumulative is not None else "- Improvement: unknown",
             "- The earlier single-trial result is retained below as pre-source context.",
             "",
         ]
@@ -512,8 +554,11 @@ def _append_report(results_dir: Path, result: SourceOptimizationResult) -> None:
         prior = title + separator + "\n".join(authoritative) + body.lstrip("\n")
     lines = ["", "## Source Optimization", f"- Status: {result.status}", f"- Reason: {result.reason or 'none'}", f"- Baseline source SHA-256: `{result.baseline_source_sha256 or 'unknown'}`", f"- Best source SHA-256: `{result.best_source_sha256 or 'unknown'}`", f"- Accepted trial: {result.accepted_trial_id or 'none'}"]
     if accepted is not None:
-        lines += [f"- Authoritative best latency: {accepted.candidate_median_latency_ms} ms", f"- Improvement vs source baseline: {accepted.improvement_percent:.3f}%" if accepted.improvement_percent is not None else "- Improvement vs source baseline: unknown"]
-    lines += ["", "| Trial | Optimization | Status | Baseline median (ms) | Candidate median (ms) | Improvement | Rollback verified |", "| --- | --- | --- | ---: | ---: | ---: | --- |"]
+        lines += [f"- Authoritative best latency: {accepted.candidate_median_latency_ms} ms", f"- Improvement vs source baseline: {cumulative:.3f}%" if cumulative is not None else "- Improvement vs source baseline: unknown"]
+    lines += [f"- Stop reason: {result.stop_reason or result.status}",
+              "- Round audit: optimization_rounds.jsonl; round acceptance selects a verified parent, not final publication.",
+              "- Unverified profiler attribution remains excluded. Source/log-only plans are low-confidence hypotheses.",
+              "", "| Trial | Optimization | Status | Parent median (ms) | Candidate median (ms) | Parent-relative improvement | Rollback verified |", "| --- | --- | --- | ---: | ---: | ---: | --- |"]
     if not result.trials:
         lines.append("| none | none | none |  |  |  |  |")
     for trial in result.trials:
@@ -521,6 +566,9 @@ def _append_report(results_dir: Path, result: SourceOptimizationResult) -> None:
         rollback = "not_applicable" if trial.rollback_verified is None else str(trial.rollback_verified).lower()
         lines.append(f"| {trial.trial_id} | {trial.optimization_name} | {trial.status} | {trial.baseline_median_latency_ms or ''} | {trial.candidate_median_latency_ms or ''} | {improvement} | {rollback} |")
     for trial in result.trials:
+        lines += ["", f"### Analysis: {trial.trial_id}", f"- Hypothesis: {trial.hypothesis}",
+                  f"- Rule template: {trial.artifacts.get('template_description', 'unknown')}",
+                  f"- Evidence IDs: {trial.evidence_ids}"]
         gate = trial.artifacts.get("performance_gate")
         if isinstance(gate, dict):
             lines += [
@@ -538,19 +586,31 @@ def _append_report(results_dir: Path, result: SourceOptimizationResult) -> None:
     report_path.write_text(prior.rstrip() + "\n" + "\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _plans_for_targets(targets: tuple[SourceOptimizationTarget, ...], evidence_rows: list[dict[str, Any]], max_candidates: int, planning_client: Any | None) -> list[tuple[SourcePlan, str]]:
-    evidence_rows = [row for row in evidence_rows if planning_evidence_allowed(row)]
-    first, source = choose_plan(targets, evidence_rows, planning_client)
-    plans = [(first, source)]
-    selected = {first.target_id}
-    evidence_ids = [str(row["evidence_id"]) for row in evidence_rows if row.get("evidence_id")]
-    for target in targets:
-        if len(plans) >= max_candidates:
-            break
-        if target.target_id not in selected:
-            plans.append((SourcePlan(target_id=target.target_id, template=target.template, hypothesis=target.hypothesis, evidence_ids=evidence_ids), "rule_based"))
-            selected.add(target.target_id)
-    return plans
+def _record_round(config: AppConfig, results_dir: Path, index: int, parent_hash: str,
+                  plan: SourcePlan, plan_source: str, trial: SourceOptimizationTrial | None,
+                  excluded: list[dict[str, Any]], stop_reason: str | None = None) -> None:
+    analysis = plan.model_dump(include={"bottleneck_type", "confidence", "hypothesis", "expected_effect", "risk", "validation_plan"})
+    analysis["basis"] = "eligible_metrics_and_source" if plan.evidence_ids else "source_and_logs_only"
+    artifacts = dict(trial.artifacts) if trial is not None else {}
+    artifacts.update({"excluded_evidence": excluded, "planner_attempts": plan.planning_attempts,
+                      "fallback_reason": plan.fallback_reason, "unsupported_reason": plan.unsupported_reason,
+                      "evidence_binding": _source_binding(config)})
+    append_round(results_dir, OptimizationRound(
+        round_index=index, trial_id=trial.trial_id if trial else f"source-round-{index:03d}-stop",
+        parent_source_sha256=parent_hash, candidate_source_sha256=trial.source_after_sha256 if trial else None,
+        evidence_ids=list(plan.evidence_ids), analysis=analysis,
+        plan={"decision": plan.decision, "target_id": plan.target_id, "template": plan.template, "source": plan_source},
+        template_description=artifacts.get("template_description"), diff=trial.diff if trial else "",
+        validation={} if trial is None else {
+            "status": trial.status, "correctness": trial.correctness.model_dump(mode="json"),
+            "benchmark_samples_ms": trial.candidate_latency_ms, "rollback_verified": trial.rollback_verified,
+            "stages": artifacts.get("stages", {}), "performance_gate": artifacts.get("performance_gate"),
+            "profiler_collection": artifacts.get("profiler_collection"),
+        },
+        acceptance={"decision": trial.status if trial else plan.decision,
+                    "reason": trial.decision_reason if trial else stop_reason,
+                    "scope": "validated_parent_selection_not_final_publication"}, artifacts=artifacts,
+    ), lambda value: _redact_value(config, value))
 
 
 def run_source_optimization(
@@ -569,16 +629,15 @@ def run_source_optimization(
     entry_name = normalize_sample_path(config.kernel.entry_file)
     baseline_hash = sha256_bytes(original_bytes)
     results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "optimization_rounds.jsonl").write_text("", encoding="utf-8")
     result = SourceOptimizationResult(status="running", baseline_source_sha256=baseline_hash, best_source_sha256=baseline_hash)
     write_source_result(results_dir, result, config)
-    if not analysis.targets:
-        result.status = "unavailable"
-        result.reason = analysis.reason
+    if not analysis.targets and config.file_task is None:
+        result.status, result.reason = "unavailable", analysis.reason
         result = _sanitized_result(config, result)
         write_source_result(results_dir, result)
         _append_report(results_dir, result)
         return result
-
     trials_root = workspace / "source_trials"
     _assert_within(trials_root, workspace)
     trials_root.mkdir(parents=True, exist_ok=True)
@@ -591,6 +650,9 @@ def run_source_optimization(
     copy_safe_sample_contents(baseline_dir, baseline_snapshot)
     baseline_manifest = _tree_hashes(baseline_dir)
     baseline_outcome = _execute_version(config, baseline_dir, baseline_manifest, config.source_optimization.benchmark_repeats, cancelled, event_callback, "source baseline", keep_runner=True)
+    result.baseline = {"source_sha256": baseline_hash, "status": baseline_outcome.status,
+                       "correctness": baseline_outcome.correctness.model_dump(mode="json"),
+                       "benchmark_samples_ms": list(baseline_outcome.samples), "stages": baseline_outcome.stages}
     if baseline_outcome.status != "benchmark_ok":
         if baseline_outcome.runner is None and baseline_outcome.status == "cancelled":
             try:
@@ -599,6 +661,8 @@ def run_source_optimization(
                 rollback_error = None if restored else "unstarted baseline workspace changed"
             except Exception as exc:
                 restored, rollback_error, rollback_hashes = False, f"baseline audit failed: {type(exc).__name__}: {exc}", {}
+        elif not baseline_outcome.restore_allowed:
+            restored, rollback_error, rollback_hashes = False, "execution stop unverified; restore withheld", {}
         else:
             restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, baseline_outcome.runner, baseline_snapshot, baseline_manifest)
         cleanup_error = _close_runner(baseline_outcome.runner)
@@ -610,6 +674,11 @@ def run_source_optimization(
             result.reason += f"; rollback failed: {rollback_error}"
         if cleanup_error:
             result.reason += f"; {cleanup_error}"
+        result.baseline["artifacts"] = baseline_artifacts
+        append_round(results_dir, OptimizationRound(
+            round_index=0, trial_id="source-baseline", parent_source_sha256=baseline_hash,
+            validation=result.baseline, acceptance={"decision": result.status, "reason": result.reason},
+        ), lambda value: _redact_value(config, value))
         result = _sanitized_result(config, result)
         write_source_result(results_dir, result)
         _append_report(results_dir, result)
@@ -624,13 +693,17 @@ def run_source_optimization(
         event_callback,
     )
     if baseline_collection is not None:
-        baseline_ok, baseline_error, baseline_hashes = _audit_runner(baseline_outcome.runner, baseline_manifest)
+        baseline_ok, baseline_error, baseline_hashes = (
+            _audit_runner(baseline_outcome.runner, baseline_manifest) if baseline_outcome.restore_allowed
+            else (False, baseline_outcome.error, {})
+        )
         baseline_outcome.stage_hashes["after_profiler"] = baseline_hashes
         if not baseline_ok:
             baseline_outcome.status = "validation_failed"
             baseline_outcome.error = baseline_error
-            restored, rollback_error, rollback_hashes = _restore_execution_workspace(
-                config, baseline_outcome.runner, baseline_snapshot, baseline_manifest
+            restored, rollback_error, rollback_hashes = (
+                _restore_execution_workspace(config, baseline_outcome.runner, baseline_snapshot, baseline_manifest)
+                if baseline_outcome.restore_allowed else (False, "profiler stop unverified; restore withheld", {})
             )
             _close_runner(baseline_outcome.runner)
             baseline_artifacts = _save_logs(trials_root / "baseline" / "logs", baseline_outcome.logs)
@@ -642,6 +715,11 @@ def run_source_optimization(
             }
             result.status = "failed"
             result.reason = f"source optimization baseline profiler audit failed: {baseline_error}"
+            result.baseline.update(status="validation_failed", artifacts=baseline_artifacts)
+            append_round(results_dir, OptimizationRound(
+                round_index=0, trial_id="source-baseline", parent_source_sha256=baseline_hash,
+                validation=result.baseline, acceptance={"decision": "failed", "reason": result.reason},
+            ), lambda value: _redact_value(config, value))
             result = _sanitized_result(config, result)
             write_source_result(results_dir, result)
             _append_report(results_dir, result)
@@ -650,80 +728,122 @@ def run_source_optimization(
     baseline_artifacts = _save_logs(trials_root / "baseline" / "logs", baseline_outcome.logs)
     if baseline_collection is not None:
         baseline_artifacts["profiler_collection"] = baseline_collection
+    result.baseline["artifacts"] = baseline_artifacts
+    append_round(results_dir, OptimizationRound(
+        round_index=0, trial_id="source-baseline", parent_source_sha256=baseline_hash,
+        validation=result.baseline, acceptance={"decision": "baseline_verified", "reason": "correctness and independent benchmark completed"},
+    ), lambda value: _redact_value(config, value))
     result.baseline_verified = True
     (results_dir / "best_kernel.py").write_bytes(original_bytes)
     if not (results_dir / "best_config.yaml").is_file():
         (results_dir / "best_config.yaml").write_text("{}\n", encoding="utf-8")
     baseline_best_config_bytes = (results_dir / "best_config.yaml").read_bytes()
     baseline_median = statistics.median(baseline_outcome.samples)
-    evidence_rows: list[dict[str, Any]] = []
-    excluded_evidence_count = 0
-    evidence_path = results_dir / "metric_observations.jsonl"
-    if evidence_path.is_file():
-        for line in evidence_path.read_text(encoding="utf-8").splitlines():
-            try:
-                row = json.loads(line)
-                if isinstance(row, dict) and row.get("available") is True:
-                    if row.get("source_trial_id") == "source-baseline" and planning_evidence_allowed(row):
-                        evidence_rows.append(_redact_value(config, row))
-                    else:
-                        excluded_evidence_count += 1
-            except json.JSONDecodeError:
-                pass
-    evidence_warnings = []
-    if excluded_evidence_count:
-        evidence_warnings.append(
-            f"{excluded_evidence_count} available evidence records excluded from planning: "
-            "target attribution is unverified or does not match the current baseline"
-        )
-    plans = _plans_for_targets(
-        analysis.targets,
-        evidence_rows,
-        config.source_optimization.max_candidates,
-        planning_client,
-    )
+    analysis = analyze_source(original_source)
+    if not analysis.targets:
+        result.status = "unavailable"
+        result.stop_reason = "authorized_targets_unavailable"
+        result.reason = analysis.reason
+        result = _sanitized_result(config, result)
+        write_source_result(results_dir, result)
+        _append_report(results_dir, result)
+        return result
     candidates: list[tuple[SourceOptimizationTrial, Path]] = []
     rollback_failed = False
+    parent_source, parent_hash = original_source, baseline_hash
+    parent_trial_id = "source-baseline"
+    parent_samples, parent_codegen = list(baseline_outcome.samples), baseline_outcome.codegen
+    parent_snapshot = baseline_snapshot
+    parent_logs = baseline_outcome.logs
+    attempted_targets: set[tuple[str, str]] = set()
+    attempted_hashes = {baseline_hash}
+    history: list[dict[str, Any]] = []
 
-    for plan, plan_source in plans:
+    for round_index in range(1, config.source_optimization.max_candidates + 1):
         if cancelled():
             break
-        target = next(item for item in analysis.targets if item.target_id == plan.target_id)
+        current_analysis = analyze_source(parent_source)
+        targets = tuple(item for item in current_analysis.targets if (parent_hash, item.target_id) not in attempted_targets)
+        evidence_rows, excluded = bound_evidence(results_dir, parent_trial_id, parent_hash, _source_binding(config))
+        evidence_warnings = (["available evidence excluded: attribution unverified or current parent binding mismatch"] if excluded else [])
+        source_lines = parent_source.splitlines()
+        source_regions = []
+        for item in targets:
+            first = max(1, min(item.start_line, getattr(item, "insert_before_line", item.start_line)) - 3)
+            last = min(len(source_lines), max(item.end_line, getattr(item, "insert_before_line", item.end_line)) + 3)
+            excerpt = "\n".join(source_lines[first - 1:last])
+            source_regions.append({"target_id": item.target_id, "start_line": first, "end_line": last,
+                                   "source_excerpt": excerpt[:6000], "truncated": len(excerpt) > 6000})
+        context = _redact_value(config, {
+            "round_index": round_index, "remaining_budget": config.source_optimization.max_candidates - round_index + 1,
+            "current_best": {"source_sha256": parent_hash, "trial_id": parent_trial_id,
+                             "line_count": len(parent_source.splitlines()),
+                             "functions": sorted({item.function_name for item in current_analysis.targets}),
+                             "benchmark_samples_ms": parent_samples, "authorized_source_regions": source_regions},
+            "workload": _source_binding(config),
+            "history": history, "excluded_evidence_count": len(excluded),
+            "excluded_evidence_reasons": sorted({reason for row in excluded for reason in row["reasons"]}),
+            "analysis_basis": "eligible_metrics_and_source" if evidence_rows else "source_and_logs_only",
+            "build_log_excerpt": parent_logs.get("build", "")[-4000:],
+        })
+        plan, plan_source = choose_plan(targets, evidence_rows, planning_client, context=context,
+                                        redactor=lambda value: _redact_value(config, value))
+        if cancelled():
+            result.stop_reason = "cancelled"
+            stopped = plan.model_copy(update={"decision": "stop", "target_id": None, "template": None})
+            _record_round(config, results_dir, round_index, parent_hash, stopped, plan_source, None, excluded, "cancelled during planning; no candidate started")
+            break
+        if plan.decision != "attempt":
+            result.stop_reason = plan.unsupported_reason or ("authorized_targets_exhausted" if not targets else plan.decision)
+            _record_round(config, results_dir, round_index, parent_hash, plan, plan_source, None, excluded, result.stop_reason)
+            break
+        target = next(item for item in targets if item.target_id == plan.target_id)
+        attempted_targets.add((parent_hash, target.target_id))
         trial_id = "source-" + uuid.uuid4().hex[:12]
         candidate_root = trials_root / trial_id
         candidate_dir = candidate_root / "workspace"
         snapshot_dir = candidate_root / "rollback_snapshot"
         _assert_within(candidate_dir, trials_root)
         copy_safe_sample_contents(resolve_path(config.kernel.sample_path), candidate_dir)
+        candidate_entry = candidate_dir.joinpath(*PurePosixPath(entry_name).parts)
+        candidate_entry.write_bytes(parent_source.encode("utf-8"))
         copy_safe_sample_contents(candidate_dir, snapshot_dir)
         baseline_candidate_manifest = _tree_hashes(snapshot_dir)
-        candidate_entry = candidate_dir.joinpath(*PurePosixPath(entry_name).parts)
         try:
-            candidate_source = rewrite_source_target(original_source, target)
+            if baseline_candidate_manifest != {**baseline_manifest, entry_name: parent_hash}:
+                raise ValueError("protected_file_changed: original sample tests/reference changed between rounds")
+            candidate_source = rewrite_source_target(parent_source, target)
+            if sha256_bytes(candidate_source.encode("utf-8")) in attempted_hashes:
+                raise ValueError("duplicate_source: this exact source version was already attempted")
         except Exception as exc:
             trial = SourceOptimizationTrial(
                 trial_id=trial_id, optimization_name=target.template,
                 target_file=config.kernel.entry_file, target_function=target.function_name,
                 hypothesis=redact_source_text(config, plan.hypothesis) or "",
-                evidence_ids=plan.evidence_ids, source_before_sha256=baseline_hash,
+                evidence_ids=plan.evidence_ids, source_before_sha256=parent_hash,
                 status="validation_failed",
                 decision_reason=redact_source_text(config, f"source rewrite rejected: {type(exc).__name__}: {exc}"),
-                baseline_latency_ms=list(baseline_outcome.samples), baseline_median_latency_ms=baseline_median,
+                baseline_latency_ms=list(parent_samples), baseline_median_latency_ms=statistics.median(parent_samples),
                 artifacts={"validation_stage": "source_rewrite", "baseline_logs": baseline_artifacts,
-                           "rollback_snapshot": str(snapshot_dir), "source_was_modified": False},
+                           "rollback_snapshot": str(snapshot_dir), "source_was_modified": False,
+                           "template_description": target.hypothesis, "round_index": round_index},
             )
             result.trials.append(trial)
+            history.append({"trial_id": trial_id, "status": trial.status, "reason": trial.decision_reason,
+                            "parent_source_sha256": parent_hash, "hypothesis": trial.hypothesis})
+            _record_round(config, results_dir, round_index, parent_hash, plan, plan_source, trial, excluded)
             write_source_result(results_dir, result, config)
             if event_callback:
                 event_callback("source_trial_completed", f"{trial_id}: validation_failed: {trial.decision_reason}")
             continue
         candidate_bytes = candidate_source.encode("utf-8")
         candidate_hash = sha256_bytes(candidate_bytes)
-        diff = "".join(difflib.unified_diff(original_source.splitlines(keepends=True), candidate_source.splitlines(keepends=True), fromfile=config.kernel.entry_file, tofile=config.kernel.entry_file))
+        attempted_hashes.add(candidate_hash)
+        diff = "".join(difflib.unified_diff(parent_source.splitlines(keepends=True), candidate_source.splitlines(keepends=True), fromfile=config.kernel.entry_file, tofile=config.kernel.entry_file))
         source_before_path = candidate_root / "source_before.py"
         source_after_path = candidate_root / "source_after.py"
         diff_path = candidate_root / "candidate.diff"
-        source_before_path.write_bytes(original_bytes)
+        source_before_path.write_bytes(parent_source.encode("utf-8"))
         source_after_path.write_bytes(candidate_bytes)
         diff_path.write_text(diff, encoding="utf-8", newline="")
         candidate_entry.write_bytes(candidate_bytes)
@@ -736,13 +856,13 @@ def run_source_optimization(
             target_function=target.function_name,
             hypothesis=redact_source_text(config, plan.hypothesis) or "",
             evidence_ids=plan.evidence_ids,
-            source_before_sha256=baseline_hash,
+            source_before_sha256=parent_hash,
             source_after_sha256=candidate_hash,
             status="running",
             diff=diff,
-            baseline_latency_ms=list(baseline_outcome.samples),
-            baseline_median_latency_ms=baseline_median,
-            artifacts={"planner": {"source": plan_source, "attempts": plan.planning_attempts, "fallback_reason": redact_source_text(config, plan.fallback_reason), "confidence": target.confidence, "evidence_warnings": evidence_warnings, "excluded_evidence_count": excluded_evidence_count}, "baseline_logs": baseline_artifacts, "source_before": str(source_before_path), "source_after": str(source_after_path), "diff": str(diff_path), "rollback_snapshot": str(snapshot_dir)},
+            baseline_latency_ms=list(parent_samples),
+            baseline_median_latency_ms=statistics.median(parent_samples),
+            artifacts={"planner": {"source": plan_source, "attempts": plan.planning_attempts, "fallback_reason": redact_source_text(config, plan.fallback_reason), "confidence": plan.confidence, "evidence_warnings": evidence_warnings, "excluded_evidence_count": len(excluded)}, "baseline_logs": baseline_artifacts, "source_before": str(source_before_path), "source_after": str(source_after_path), "diff": str(diff_path), "rollback_snapshot": str(snapshot_dir), "template_description": target.hypothesis, "round_index": round_index},
         )
         result.trials.append(trial)
         write_source_result(results_dir, result, config)
@@ -760,37 +880,50 @@ def run_source_optimization(
         )
         if candidate_collection is not None:
             trial.artifacts["profiler_collection"] = candidate_collection
-            candidate_ok, candidate_error, candidate_hashes = _audit_runner(outcome.runner, candidate_manifest)
+            candidate_ok, candidate_error, candidate_hashes = (
+                _audit_runner(outcome.runner, candidate_manifest) if outcome.restore_allowed
+                else (False, outcome.error, {})
+            )
             outcome.stage_hashes["after_profiler"] = candidate_hashes
             if not candidate_ok:
                 outcome.status = "validation_failed"
                 outcome.error = candidate_error
-        restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, outcome.runner, snapshot_dir, baseline_candidate_manifest)
+        if not outcome.restore_allowed:
+            restored, rollback_error, rollback_hashes = False, "execution stop unverified; restore withheld", {}
+        elif outcome.runner is None and outcome.status == "cancelled":
+            copy_safe_sample_contents(snapshot_dir, candidate_dir)
+            rollback_hashes = _tree_hashes(candidate_dir)
+            restored = rollback_hashes == baseline_candidate_manifest
+            rollback_error = None if restored else "unstarted candidate local restore failed"
+        else:
+            restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, outcome.runner, snapshot_dir, baseline_candidate_manifest)
         _close_runner(outcome.runner)
         trial.execution_source_sha256 = outcome.execution_hash
         trial.artifacts["source_hashes"] = {"local_candidate_sha256": candidate_hash, "execution_candidate_sha256": outcome.execution_hash, "runner_type": config.runner.type, "stage_hashes": outcome.stage_hashes}
         trial.correctness = outcome.correctness
+        trial.artifacts["stages"] = outcome.stages
         trial.candidate_latency_ms = list(outcome.samples)
         trial.artifacts["candidate_logs"] = _save_logs(candidate_root / "logs", outcome.logs)
         if outcome.samples:
             trial.candidate_median_latency_ms = statistics.median(outcome.samples)
-            trial.improvement_percent = ((baseline_median - trial.candidate_median_latency_ms) / baseline_median * 100.0) if baseline_median > 0 else None
+            trial.improvement_percent = (statistics.median(parent_samples) - trial.candidate_median_latency_ms) / statistics.median(parent_samples) * 100.0
+            trial.artifacts["cumulative_improvement_percent"] = (baseline_median - trial.candidate_median_latency_ms) / baseline_median * 100.0
         if outcome.status == "benchmark_ok" and restored and not cancelled():
             gate = assess_performance(
-                baseline_outcome.samples, outcome.samples, config.source_optimization.min_improvement_percent,
-                baseline_outcome.codegen, outcome.codegen, require_recheck=False,
+                parent_samples, outcome.samples, config.source_optimization.min_improvement_percent,
+                parent_codegen, outcome.codegen, require_recheck=False,
             )
             if gate.decision == "accepted":
                 recheck_dir = candidate_root / "baseline_recheck" / "workspace"
-                copy_safe_sample_contents(baseline_snapshot, recheck_dir)
+                copy_safe_sample_contents(parent_snapshot, recheck_dir)
                 if event_callback:
-                    event_callback("baseline_recheck_started", f"{trial_id}: rerunning original source to check timing drift")
+                    event_callback("baseline_recheck_started", f"{trial_id}: rerunning verified parent source to check timing drift")
                 recheck = _execute_version(
-                    config, recheck_dir, baseline_manifest, config.source_optimization.benchmark_repeats,
+                    config, recheck_dir, baseline_candidate_manifest, config.source_optimization.benchmark_repeats,
                     cancelled, event_callback, f"{trial_id} baseline recheck", keep_runner=True,
                 )
                 recheck_restored, recheck_error, recheck_hashes = _restore_execution_workspace(
-                    config, recheck.runner, baseline_snapshot, baseline_manifest,
+                    config, recheck.runner, parent_snapshot, baseline_candidate_manifest,
                 )
                 _close_runner(recheck.runner)
                 trial.artifacts["baseline_recheck"] = {
@@ -801,15 +934,15 @@ def run_source_optimization(
                     "rollback": {"verified": recheck_restored, "hashes": recheck_hashes, "error": recheck_error},
                 }
                 gate = assess_performance(
-                    baseline_outcome.samples, outcome.samples, config.source_optimization.min_improvement_percent,
-                    baseline_outcome.codegen, outcome.codegen, recheck.samples,
+                    parent_samples, outcome.samples, config.source_optimization.min_improvement_percent,
+                    parent_codegen, outcome.codegen, recheck.samples,
                 )
                 if recheck.status != "benchmark_ok" or not recheck_restored:
                     gate.decision = "inconclusive"
                     gate.baseline_recheck_passed = False
                     gate.reason = f"baseline recheck failed: {recheck.status}: {recheck.error or recheck_error}"
                 elif recheck.codegen.status == "inconsistent" or (
-                    baseline_outcome.codegen.sha256 and recheck.codegen.sha256 != baseline_outcome.codegen.sha256
+                    parent_codegen.sha256 and recheck.codegen.sha256 != parent_codegen.sha256
                 ):
                     gate.decision = "inconclusive"
                     gate.baseline_recheck_passed = False
@@ -839,22 +972,49 @@ def run_source_optimization(
             trial.decision_reason = f"execution workspace rollback failed: {rollback_error}"
             rollback_failed = True
             candidates = [item for item in candidates if item[0].trial_id != trial.trial_id]
-            break
         write_source_result(results_dir, result, config)
         if event_callback:
             event_callback("source_trial_completed", f"{trial_id}: {trial.status}: {trial.decision_reason}")
+
+        candidate_evidence, _ = bound_evidence(results_dir, trial_id, candidate_hash, _source_binding(config))
+        history.append({
+            "trial_id": trial_id, "parent_source_sha256": parent_hash, "candidate_source_sha256": candidate_hash,
+            "status": trial.status, "reason": trial.decision_reason, "hypothesis": trial.hypothesis,
+            "correctness": trial.correctness.model_dump(mode="json"), "benchmark_samples_ms": trial.candidate_latency_ms,
+            "performance_gate": trial.artifacts.get("performance_gate"), "eligible_metrics": candidate_evidence,
+            "profiler_status": (candidate_collection or {}).get("status", "not_collected"),
+        })
+        _record_round(config, results_dir, round_index, parent_hash, plan, plan_source, trial, excluded)
+        if rollback_failed:
+            break
+        if trial.status == "accepted":
+            parent_source, parent_hash, parent_trial_id = candidate_source, candidate_hash, trial_id
+            parent_samples, parent_codegen, parent_logs = list(outcome.samples), outcome.codegen, outcome.logs
+            parent_snapshot = candidate_root / "accepted_parent_snapshot"
+            copy_safe_sample_contents(snapshot_dir, parent_snapshot)
+            parent_snapshot.joinpath(*PurePosixPath(entry_name).parts).write_bytes(candidate_bytes)
+    else:
+        result.stop_reason = "budget_exhausted"
 
     accepted: SourceOptimizationTrial | None = None
     if cancelled():
         for trial, _ in candidates:
             trial.status = "cancelled"
             trial.decision_reason = "cancel requested after candidate measurement; verified baseline retained"
+        if parent_hash != baseline_hash and not rollback_failed:
+            recovery_runner = None
+            try:
+                recovery_runner = build_runner(config, baseline_snapshot)
+                restored, recovery_error, recovery_hashes = _audit_runner(recovery_runner, baseline_manifest)
+                result.baseline["cancel_restore"] = {"verified": restored, "hashes": recovery_hashes, "error": recovery_error}
+                rollback_failed = rollback_failed or not restored
+            except Exception as exc:
+                result.baseline["cancel_restore"] = {"verified": False, "exception_type": type(exc).__name__}
+                rollback_failed = True
+            finally:
+                _close_runner(recovery_runner)
     if not rollback_failed and candidates and not cancelled():
-        accepted, accepted_source_path = min(candidates, key=lambda item: item[0].candidate_median_latency_ms if item[0].candidate_median_latency_ms is not None else float("inf"))
-        for trial, _ in candidates:
-            if trial is not accepted:
-                trial.status = "no_improvement"
-                trial.decision_reason = "another verified candidate produced a better median latency"
+        accepted, accepted_source_path = candidates[-1]
         publish_dir = trials_root / "accepted" / "workspace"
         if publish_dir.exists():
             shutil.rmtree(publish_dir)
@@ -889,11 +1049,11 @@ def run_source_optimization(
             publish_error = redact_source_text(config, f"{type(exc).__name__}: {exc}")
         if not publish_ok:
             if publish_runner is not None and publish_needs_rollback:
-                restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, publish_runner, trials_root / accepted.trial_id / "rollback_snapshot", baseline_manifest)
+                restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, publish_runner, baseline_snapshot, baseline_manifest)
             elif deploy_started:
                 recovery_runner = None
                 try:
-                    recovery_runner = build_runner(config, trials_root / accepted.trial_id / "rollback_snapshot")
+                    recovery_runner = build_runner(config, baseline_snapshot)
                     restored, rollback_error, rollback_hashes = _audit_runner(recovery_runner, baseline_manifest)
                 except Exception as exc:
                     restored, rollback_error, rollback_hashes = False, redact_source_text(config, f"recovery runner failed: {type(exc).__name__}: {exc}"), {}
@@ -921,7 +1081,7 @@ def run_source_optimization(
                 result.accepted_trial_id = accepted.trial_id
                 result.best_source_sha256 = accepted.source_after_sha256
             except Exception as exc:
-                restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, publish_runner, trials_root / accepted.trial_id / "rollback_snapshot", baseline_manifest)
+                restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, publish_runner, baseline_snapshot, baseline_manifest)
                 accepted.status = "cancelled" if cancelled() else "validation_failed"
                 accepted.rollback_verified = restored
                 accepted.decision_reason = redact_source_text(config, f"accepted result publication failed: {type(exc).__name__}: {exc}; rollback: {rollback_error}")
@@ -938,7 +1098,7 @@ def run_source_optimization(
                 except Exception:
                     pass
             if accepted is not None and cancelled():
-                restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, publish_runner, trials_root / accepted.trial_id / "rollback_snapshot", baseline_manifest)
+                restored, rollback_error, rollback_hashes = _restore_execution_workspace(config, publish_runner, baseline_snapshot, baseline_manifest)
                 accepted.status = "cancelled"
                 accepted.rollback_verified = restored
                 accepted.decision_reason = "cancel requested after candidate publication; verified baseline restored"
@@ -950,17 +1110,19 @@ def run_source_optimization(
                 accepted = None
         _close_runner(publish_runner)
 
-    if cancelled():
-        result.status = "cancelled"
-        result.reason = "source optimization cancelled; verified baseline retained"
-    elif rollback_failed:
+    if rollback_failed:
         result.status = "failed"
         result.reason = "source optimization failed an execution workspace restore or publication audit; baseline retained"
         result.accepted_trial_id = None
         result.best_source_sha256 = baseline_hash
+    elif cancelled():
+        result.status = "cancelled"
+        result.reason = "source optimization cancelled; verified baseline retained"
     else:
         result.status = "completed"
-        result.reason = "candidate accepted" if accepted is not None else "no candidate passed all gates and the improvement threshold; baseline retained"
+        result.reason = ("candidate accepted" if accepted is not None else
+                         f"no candidate attempted: {result.stop_reason}; verified baseline retained" if not result.trials else
+                         "no candidate passed all gates and the improvement threshold; baseline retained")
 
     for trial in result.trials:
         if event_callback:

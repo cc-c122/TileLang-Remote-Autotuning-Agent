@@ -48,6 +48,7 @@ class ExperimentDB:
         self.diagnosis_path = results_dir / "diagnosis.jsonl"
         self.diagnoses_path = results_dir / "diagnoses.jsonl"
         self.patch_trials_path = results_dir / "patch_trials.jsonl"
+        self.optimization_rounds_path = results_dir / "optimization_rounds.jsonl"
         self.ablation_summary_path = results_dir / "ablation_summary.csv"
         self.summary_path = results_dir / "summary.csv"
         self.records: list[dict[str, Any]] = []
@@ -63,6 +64,7 @@ class ExperimentDB:
         self.diagnosis_path.write_text("", encoding="utf-8")
         self.diagnoses_path.write_text("", encoding="utf-8")
         self.patch_trials_path.write_text("", encoding="utf-8")
+        self.optimization_rounds_path.write_text("", encoding="utf-8")
         for log_path in self.logs_dir.glob("*.log"):
             log_path.unlink()
         with self.summary_path.open("w", newline="", encoding="utf-8") as f:

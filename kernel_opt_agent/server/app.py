@@ -5,6 +5,7 @@ import csv
 import hashlib
 import os
 import json
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -146,12 +147,40 @@ def _source_best_verification(
         return None, False, "accepted source trial hash does not match the best source hash"
     if accepted.get("execution_source_sha256") != accepted_hash:
         return None, False, "accepted source trial execution hash is inconsistent"
+    baseline_record = source_optimization.get("baseline") or {}
+    if baseline_record:
+        parent_hash = source_optimization.get("baseline_source_sha256")
+        parent_samples = baseline_record.get("benchmark_samples_ms")
+        for trial in source_optimization.get("trials", []):
+            if trial.get("status") != "accepted":
+                continue
+            gate = (trial.get("artifacts") or {}).get("performance_gate")
+            if (trial.get("source_before_sha256") != parent_hash or trial.get("baseline_latency_ms") != parent_samples
+                    or (trial.get("correctness") or {}).get("passed") is not True
+                    or trial.get("execution_source_sha256") != trial.get("source_after_sha256")
+                    or not saved_gate_is_accepted(gate)
+                    or gate["baseline_samples_ms"] != parent_samples
+                    or gate["candidate_samples_ms"] != trial.get("candidate_latency_ms")):
+                return None, False, "verified parent chain is inconsistent"
+            parent_hash, parent_samples = trial.get("source_after_sha256"), trial.get("candidate_latency_ms")
+            if trial.get("trial_id") == accepted_id:
+                break
+        if parent_hash != best_hash:
+            return None, False, "best source is not the final verified parent"
     return accepted, True, None
 
 
 def _accepted_source_trial(results_dir: Path, source_optimization: dict[str, Any]) -> dict[str, Any] | None:
     accepted, verified, _ = _source_best_verification(results_dir, source_optimization)
     return accepted if verified else None
+
+
+def _source_gain(source: dict[str, Any], accepted: dict[str, Any]) -> tuple[float | None, float | None]:
+    samples = (source.get("baseline") or {}).get("benchmark_samples_ms") or []
+    baseline = statistics.median(samples) if samples else _numeric(accepted.get("baseline_median_latency_ms"))
+    best = _numeric(accepted.get("candidate_median_latency_ms"))
+    improvement = (baseline - best) / baseline * 100.0 if baseline and best is not None else None
+    return baseline, improvement
 
 
 def _task_payload(task: Any) -> dict[str, Any]:
@@ -169,9 +198,8 @@ def _task_payload(task: Any) -> dict[str, Any]:
     accepted_latency = None
     source_baseline_latency = None
     if accepted is not None:
-        improvement = _numeric(accepted.get("improvement_percent"))
+        source_baseline_latency, improvement = _source_gain(source_optimization, accepted)
         accepted_latency = _numeric(accepted.get("candidate_median_latency_ms"))
-        source_baseline_latency = _numeric(accepted.get("baseline_median_latency_ms"))
     if source_mode and not source_best_verified:
         best_row = None
         improvement = None
@@ -204,7 +232,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
     source_mode = execution_mode == "source_optimization"
     accepted, source_best_verified, source_error = _source_best_verification(results_dir, source_optimization)
     if accepted is not None:
-        improvement = _numeric(accepted.get("improvement_percent"))
+        _, improvement = _source_gain(source_optimization, accepted)
         accepted_hash = accepted.get("source_after_sha256")
         best_row = next((row for row in summary if row.get("config_hash") == accepted_hash), best_row)
     elif source_mode and not source_best_verified:
@@ -224,6 +252,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "best_config.yaml",
         "report.md",
         "source_optimization.json",
+        "optimization_rounds.jsonl",
         "hardware_snapshot.yaml",
         "hardware_detected.yaml",
         "preflight.json",
@@ -255,6 +284,7 @@ def _result_payload(results_dir: Path, execution_mode: str | None = None) -> dic
         "profiler_available": status == "profiler_metrics_available",
         "profiler_collections": profiler_collections,
         "source_optimization": source_optimization,
+        "optimization_rounds": _read_jsonl(results_dir / "optimization_rounds.jsonl"),
         "source_best_verified": source_best_verified if source_mode else None,
         "source_best_verification_error": source_error if source_mode else None,
         "hardware_snapshot": _read_yaml(results_dir / "hardware_snapshot.yaml"),

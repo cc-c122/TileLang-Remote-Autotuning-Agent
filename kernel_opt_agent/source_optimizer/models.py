@@ -66,6 +66,8 @@ class SourceOptimizationResult(BaseModel):
     schema_version: Literal["v2.source_optimization.v1"] = SOURCE_OPTIMIZATION_SCHEMA_VERSION
     status: SourceOptimizationStatus = "not_requested"
     reason: str | None = None
+    stop_reason: str | None = None
+    baseline: dict[str, Any] = Field(default_factory=dict)
     baseline_source_sha256: str | None = None
     baseline_verified: bool = False
     best_source_sha256: str | None = None

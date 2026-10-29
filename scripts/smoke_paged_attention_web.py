@@ -11,7 +11,8 @@ import httpx
 
 
 def run_smoke(base_url: str, ssh: dict, password: str, evidence_dir: Path, *,
-              command_prefix: str = "python3", profiler_options: dict | None = None) -> dict:
+              command_prefix: str = "python3", profiler_options: dict | None = None,
+              max_candidates: int = 1) -> dict:
     from kernel_opt_agent.main import WORKSPACE_ROOT
     from kernel_opt_agent.server.security import validate_loopback_host
 
@@ -27,6 +28,7 @@ def run_smoke(base_url: str, ssh: dict, password: str, evidence_dir: Path, *,
     device_id = None
     identifiers: list[str] = []
     evidence = {"operator": "Paged Attention Decode", "status": "blocked", "tasks": [],
+                "max_candidates": max_candidates,
                 "protocol": {"seed": 42, "warmup": 3, "measurements": 5, "atol": 0.002, "rtol": 0.002},
                 "source_hashes": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(sample.glob("*.py"))}}
 
@@ -72,11 +74,11 @@ def run_smoke(base_url: str, ssh: dict, password: str, evidence_dir: Path, *,
                     "sample": {"source_type": "upload", "upload_id": upload_id,
                                "entry_file": "_upstream_sparse_gqa_decode_paged.py"},
                     "target": {"gpu_model": "MetaX C500", "backend": "mxmaca", "device_id": device_id,
-                               "user_overrides": {"shape_id": f"paged_attention_decode_b1_qh32_kvh8_d128_page16_ctx{context}_fp16"}},
+                               "user_overrides": {"shape_id": f"paged_attention_decode_b1_qh32_kvh8_d128_page16_ctx{context}_fp16", "dtype": "float16"}},
                     "commands": {"build_command": command + " --mode build",
                                  "correctness_command": command + " --mode correctness",
                                  "benchmark_command": command + " --mode benchmark"},
-                    "optimization": {"enabled": True, "max_candidates": 1, "benchmark_repeats": 5,
+                    "optimization": {"enabled": True, "max_candidates": max_candidates, "benchmark_repeats": 5,
                                      "min_improvement_percent": 1.0},
                     "budget": {"timeout_seconds": 180, "max_iterations": 1, "candidates_per_iteration": 1},
                     "profiler": {"enabled": True, "type": "mxmaca", "auto_collect": True,
@@ -104,6 +106,7 @@ def run_smoke(base_url: str, ssh: dict, password: str, evidence_dir: Path, *,
                 record.update({"status": task["status"], "error": task.get("error"), "execution_mode": task["execution_mode"],
                                "results_dir": results["results_dir"],
                                "source_optimization": results.get("source_optimization"),
+                               "optimization_rounds": results.get("optimization_rounds", []),
                                "summary_table": results.get("summary_table"), "events": events.get("events"),
                                "profiler_collections": results.get("profiler_collections")})
                 (evidence_dir / f"ctx{context}.json").write_text(json.dumps(sanitize(record), indent=2), encoding="utf-8")
