@@ -295,6 +295,52 @@ async (page) => {
     } : trial),
   });
 
+  const failedCandidate = {
+    trial_id: "failed-before-best",
+    optimization_name: "historical correctness failure",
+    status: "correctness_failed",
+    correctness: {passed: false, max_error: 1, reason: "historical mismatch"},
+    decision_reason: "candidate rejected, baseline restored",
+    rollback_verified: true,
+  };
+  const rejectedCandidate = acceptedSourceOptimization.trials[0];
+  const verifiedBaseline = {trial_id: "baseline", status: "benchmark_ok", latency: 1, correctness: {passed: true}};
+  const verifiedBest = sourceResultWithGate("accepted");
+  for (const history of [[failedCandidate], [rejectedCandidate], [failedCandidate, rejectedCandidate]]) {
+    const source = {...verifiedBest, trials: [...history, verifiedBest.trials[1]]};
+    await renderResult(source, "source_optimization", {
+      source_best_verified: true,
+      failed_cases: history,
+      summary_table: [verifiedBaseline, ...history, resultFixture(source).best_row],
+    });
+    await page.evaluate(() => { state.task.source_best_verified = true; renderTaskDetail(); });
+    const label = history.map((trial) => trial.status).join(" + ");
+    check(await page.locator("#fileTaskFeedback, #taskIntakeFeedback").count() === 0, `${label}: historical rejection cannot override the verified best in either page's top feedback`);
+    check((await page.locator("#taskDetailPanel").textContent()).includes("已接受源码修改") && (await page.locator("#apiResultsPanel").innerText()).includes("已验证提速，采用已核验的源码修改"), `${label}: task detail and results agree on the verified final selection`);
+    const metrics = await page.locator("#apiResultsPanel > .compare-grid > .result-card .metric-main").allInnerTexts();
+    check(metrics[1] === "0.85" && metrics[2] === "20%" && await page.locator("#downloadBestKernelBtn").isEnabled(), `${label}: best metrics and download remain tied to the accepted trial`);
+    for (const trial of history) {
+      const detail = page.locator("#apiResultsPanel .source-trial").filter({hasText: trial.optimization_name});
+      await detail.locator(":scope > summary").click();
+      check((await detail.innerText()).includes(trial.decision_reason) && (await detail.locator(":scope > summary").innerText()).includes(trial.status === "correctness_failed" ? "正确性失败" : "无明显改善"), `${label}: ${trial.trial_id} keeps its actual failure and reason in candidate details`);
+      await detail.locator(":scope > summary").click();
+    }
+  }
+
+  await page.evaluate(() => { state.warnings = []; renderAlerts(); });
+  for (const [name, width, height] of [["desktop", 1440, 1000], ["mobile", 390, 844]]) {
+    await page.setViewportSize({width, height});
+    await page.evaluate(() => scrollTo(0, 0));
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Verified best with failed history fits ${name}`);
+    await page.screenshot({path: `output/playwright/task-outcome-verified-best-${name}.png`, fullPage: true});
+  }
+  check(await page.evaluate((results) => fileTaskOutcome(results, {status: "failed", error: "protected_file_changed"})?.label, {...resultFixture(verifiedBest), source_best_verified: true}) === "受保护文件发生变化", "A genuine task-level failure is not hidden by an earlier accepted source record");
+
+  await renderResult({...verifiedBest, accepted_trial_id: null, best_source_sha256: baselineHash, trials: [failedCandidate, rejectedCandidate]}, "source_optimization", {
+    source_best_verified: true, summary_table: [verifiedBaseline], failed_cases: [failedCandidate],
+  });
+  check((await page.locator("#fileTaskFeedback").innerText()).includes("收益不足或不确定"), "Verified retained baseline reports the final rejection, not an earlier candidate's correctness failure");
+
   text = await renderResult(sourceResultWithGate("accepted"));
   check(text.includes("已验证提升") && text.includes("已接受源码修改：accepted-1"), "Accepted performance gate preserves a fully verified source result");
   check(!(await page.locator("#downloadBestKernelBtn").isDisabled()), "Accepted performance gate enables download only after all existing checks pass");

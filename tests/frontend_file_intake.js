@@ -173,6 +173,8 @@ async (page) => {
   check(await page.evaluate(() => fileTaskOutcome({source_optimization: {status: "completed", trials: [{status: "no_improvement"}]}}, {status: "completed"}).label) === "收益不足或不确定", "Rejected performance is not optimization success");
   check(await page.evaluate(() => fileTaskOutcome({source_optimization: {status: "unavailable", trials: []}}, {status: "completed"}).label) === "没有适用优化", "Unavailable transformation remains distinct from failure or speedup");
   check(await page.evaluate(() => fileTaskOutcome({source_optimization: {status: "completed", trials: [{status: "no_improvement"}]}}, {status: "running"})) === null, "Running task does not prematurely declare insufficient benefit");
+  check(await page.evaluate(() => fileTaskOutcome({failed_cases: [{status: "correctness_failed"}], source_optimization: {status: "running", trials: [{status: "correctness_failed"}]}}, {status: "running"})) === null, "Running task with a rejected candidate does not declare a final correctness failure");
+  check(await page.evaluate(() => fileTaskOutcome({summary_table: [{trial_id: "baseline", status: "correctness_failed", correctness: {passed: false}}]}, {status: "failed"})?.label) === "正确性失败", "An actual baseline correctness failure still has a task-level explanation");
   check(await page.evaluate(() => {
     state.taskEvents = [{type: "preflight_failed", message: "dependency_missing"}];
     return fileTaskOutcome({preflight: {status: "passed"}, failed_cases: [null, "malformed row"], source_optimization: {status: "unavailable", trials: []}}, {status: "completed"}).label;

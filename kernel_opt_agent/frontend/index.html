@@ -4054,13 +4054,16 @@
 
     function fileTaskOutcome(results, task) {
       if (task?.status === "cancelled") return {label: "已取消，验证未完成", message: "后端已确认取消。正确性、性能与回滚情况以实际结果为准，不将未核验的源码当作已验证 best。", kind: "warn"};
+      if (!task || !["completed", "failed"].includes(task.status)) return null;
       const source = sourceOptimizationPayload(results);
-      const rows = [...(Array.isArray(results?.failed_cases) ? results.failed_cases : []), ...(Array.isArray(results?.summary_table) ? results.summary_table : []), ...sourceOptimizationTrials(source)].filter((row) => row && typeof row === "object");
-      const hints = [results?.preflight?.error_category, task?.error, source?.reason,
-        ...rows.flatMap((row) => [row.status, row.error_category, row.reason, row.correctness?.reason])].filter((value) => typeof value === "string");
+      if (task.status === "completed" && acceptedSourceTrialVerified(source, results, task)) return null;
+      // Candidate failures belong in trial details, not the final task verdict.
+      const baseline = taskResultSummary(results).find((row) => String(row?.trial_id || "").toLowerCase() === "baseline");
+      const hints = [results?.preflight?.error_category, task?.error, source?.status === "failed" ? source.reason : null,
+        baseline?.status, baseline?.error_category, baseline?.reason, baseline?.correctness?.reason].filter((value) => typeof value === "string");
       const code = Object.keys(FILE_TASK_ERRORS).find((key) => hints.some((value) => value === key || value.startsWith(`${key}:`)));
       if (code) return {label: FILE_TASK_ERRORS[code][0], message: FILE_TASK_ERRORS[code][1], kind: "bad"};
-      if (!task || !["completed", "failed", "cancelled"].includes(task.status)) return null;
+      if (source?.accepted_trial_id) return null;
       if (source?.status === "unavailable") return {label: "没有适用优化", message: "后端未识别到可安全执行的源码变换。本次仅保留实际基线验证结果，不代表算子没有优化空间。", kind: "warn"};
       const trials = sourceOptimizationTrials(source);
       if (trials.some((trial) => trial.status === "no_improvement")) return {label: "收益不足或不确定", message: "候选未通过后端性能门禁，未采纳源码修改；是否回滚以后端校验记录为准。", kind: "warn"};
