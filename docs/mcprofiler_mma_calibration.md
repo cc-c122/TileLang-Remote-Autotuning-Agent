@@ -188,6 +188,13 @@ check ran. Missing validation defaults to blocked. Results API and planner
 recompute eligibility; the serialized boolean is never authority. Parsing
 confidence stays separate from attribution confidence.
 
+Identity aliases at the top level and in `collection_scope` must agree exactly.
+Conflicts (including explicit null versus a known value) fail closed with
+`<field>_identity_conflict`; empty/non-string identities use
+`<field>_identity_invalid`. Receipt issuance, rechecking and planner binding share
+the same canonical values. Consistent aliases may be added without changing the
+identity; non-identity collection context remains hash-bound. No API field is added.
+
 ## Reproduction And Exit Gate
 
 For a reachable container, use the existing **private** effective connection

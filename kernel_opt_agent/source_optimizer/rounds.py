@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from kernel_opt_agent.profiler.attribution import annotate_planning_eligibility
+from kernel_opt_agent.profiler.identity import canonical_identity
 from kernel_opt_agent.diagnosis.evidence import planning_evidence_allowed
 
 
@@ -64,18 +65,17 @@ def bound_evidence(results_dir: Path, trial_id: str, source_sha256: str,
     eligible, excluded = [], []
     for row in read_rows(results_dir / "metric_observations.jsonl"):
         annotated = annotate_planning_eligibility(row)
-        scope = row.get("collection_scope") or {}
-        digest = row.get("source_sha256") or (scope.get("source_sha256") if isinstance(scope, dict) else None)
-        reasons = list(annotated["eligibility_reasons"])
-        if row.get("source_trial_id") != trial_id or digest != source_sha256:
+        identity, identity_reasons = canonical_identity(row)
+        reasons = list(dict.fromkeys([*annotated["eligibility_reasons"], *identity_reasons]))
+        if identity["source_trial_id"] != trial_id or identity["source_sha256"] != source_sha256:
             reasons.append("current_parent_source_or_trial_mismatch")
         for field in ("device_id", "shape_id", "dtype"):
             expected = (binding or {}).get(field)
-            actual = row.get(field) or (scope.get(field) if isinstance(scope, dict) else None)
+            actual = identity[field]
             if expected is not None and actual != expected:
                 reasons.append(field + "_binding_mismatch")
         kernels = (binding or {}).get("kernel_names") or []
-        if kernels and row.get("kernel_name") not in kernels:
+        if kernels and identity["kernel_name"] not in kernels:
             reasons.append("target_kernel_binding_mismatch")
         if not reasons and planning_evidence_allowed(annotated):
             eligible.append(annotated)

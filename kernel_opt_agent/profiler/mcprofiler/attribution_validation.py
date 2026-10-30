@@ -17,6 +17,8 @@ from threading import RLock
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
+from ..identity import COLLECTION_IDENTITY_FIELDS, IDENTITY_KEYS, canonical_identity
+
 
 SCHEMA_VERSION = "v2.mcprofiler_metric_validation.v1"
 
@@ -205,14 +207,13 @@ def _number(value: Any) -> bool:
 
 
 def _binding(row: Mapping[str, Any]) -> str:
+    identity, reasons = canonical_identity(row)
+    if reasons:
+        raise ValueError("conflicting or invalid evidence identity")
     scope = row.get("collection_scope")
-    scope = scope if isinstance(scope, dict) else {}
-    identity = {key: row.get(key) for key in ("value", "unit", "source", "kernel_name", "device_id", "tool_version", "available")}
-    identity.update(metric=row.get("metric", row.get("metric_name")),
-                    source_field=row.get("source_field", row.get("source_field_name")),
-                    artifact=row.get("artifact_id", row.get("artifact")),
-                    source_trial_id=row.get("source_trial_id") or scope.get("source_trial_id"),
-                    collection_scope=scope)
+    scope = scope if isinstance(scope, Mapping) else {}
+    identity.update(value=row.get("value"), unit=row.get("unit"), available=row.get("available"),
+                    collection_scope={key: value for key, value in scope.items() if key not in IDENTITY_KEYS})
     return hashlib.sha256(json.dumps(identity, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
@@ -308,9 +309,13 @@ def _semantic_artifact_reasons(row: Mapping[str, Any], check: CollectionCheck, *
 def validate_mma_collection(row: Mapping[str, Any], check: CollectionCheck,
                             calibration: MmaCalibration | None = None) -> dict[str, Any]:
     """Called by the live backend collector, never from request/manifest flags."""
+    row_identity, identity_reasons = canonical_identity(row)
+    if identity_reasons:
+        return {"schema_version": SCHEMA_VERSION, "metric": "mma_duty", "status": "blocked",
+                "reason_codes": identity_reasons}
     reasons = _artifact_reasons(check)
     reasons.extend(_semantic_artifact_reasons(row, check))
-    metric = row.get("metric", row.get("metric_name"))
+    metric = row_identity["metric"]
     if metric != "mma_duty" or row.get("source") != "mcprofiler":
         reasons.append("metric_not_supported")
     if row.get("unit") != "percent":
@@ -323,12 +328,11 @@ def validate_mma_collection(row: Mapping[str, Any], check: CollectionCheck,
             reasons.append(key + "_unconfirmed")
         elif value != observed[key]:
             reasons.append(key + "_mismatch")
-    scope = row.get("collection_scope")
-    scope = scope if isinstance(scope, dict) else {}
-    row_identity = {key: row.get(key) for key in ("kernel_name", "device_id", "tool_version")}
-    row_identity.update({key: scope.get(key) for key in ("source_sha256", "shape_id", "dtype")})
-    row_identity["source_trial_id"] = row.get("source_trial_id") or scope.get("source_trial_id")
-    for key, value in row_identity.items():
+    required = {"kernel_name", "device_id", "tool_version", "source_sha256", "shape_id", "dtype", "source_trial_id"}
+    for key in COLLECTION_IDENTITY_FIELDS:
+        value = row_identity[key]
+        if value is None and key not in required:
+            continue
         if value is None or value != expected.get(key):
             reasons.append("observation_" + key + "_mismatch")
     if check.counter_scope != "kernel":
@@ -384,6 +388,9 @@ def validate_mma_collection(row: Mapping[str, Any], check: CollectionCheck,
 
 
 def backend_validation(row: Mapping[str, Any]) -> dict[str, Any]:
+    _, identity_reasons = canonical_identity(row)
+    if identity_reasons:
+        return {"schema_version": SCHEMA_VERSION, "status": "blocked", "reason_codes": identity_reasons}
     claim = row.get("attribution_validation")
     claim = claim if isinstance(claim, dict) else {}
     validation_id = claim.get("validation_id")

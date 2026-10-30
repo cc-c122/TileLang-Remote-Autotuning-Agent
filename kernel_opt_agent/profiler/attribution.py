@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from .identity import canonical_identity
+
 
 UNVERIFIED_ATTRIBUTION_WARNING = (
     "mcProfiler target attribution is unverified; counters may include other device activity. "
@@ -11,7 +13,7 @@ UNVERIFIED_ATTRIBUTION_WARNING = (
 
 
 def planning_eligibility(row: dict[str, Any]) -> tuple[bool, list[str]]:
-    reasons: list[str] = []
+    _, reasons = canonical_identity(row)
     source = row.get("source")
     compiler_metrics = {"register_count", "shared_memory_bytes", "private_memory_bytes",
                         "local_memory_bytes", "spill_bytes", "spill_count"}
