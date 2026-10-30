@@ -40,6 +40,7 @@ async (page) => {
   }
   async function details() {
     await page.locator("#apiResultsAdvanced > summary").click();
+    await page.locator("#evidenceTrustTable details").evaluateAll((rows) => rows.forEach((row) => { row.open = true; }));
     return page.locator("#evidenceTrustTable").innerText();
   }
   await render(base);
@@ -61,7 +62,7 @@ async (page) => {
   check((await details()).includes("资格与归因字段冲突"), "Contradictory backend metadata remains visible as a conflict");
   value = copy();
   Object.assign(value.evidence_summary[0], {source: "compiler_log", metric: "register_count", attribution_status: "verified",
-    attribution_confidence: "medium", scope: "kernel", planning_eligible: true, eligibility_reasons: []});
+    attribution_confidence: "medium", confidence: "medium", scope: "kernel", planning_eligible: true, eligibility_reasons: []});
   await render(value);
   check((await page.locator("#evidenceTrustSummary").innerText()).includes("1 条可用于优化分析"), "Explicit backend analysis eligibility is shown independently of profiler collection");
   check((await details()).includes("未返回规划使用记录"), "Eligibility alone is not a claim that a planner used the evidence");
