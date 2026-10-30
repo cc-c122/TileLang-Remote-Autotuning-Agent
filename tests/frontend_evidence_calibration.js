@@ -98,9 +98,9 @@ async (page) => {
     check(await actualUse() === 1, `${field}: a missing scope alias does not invalidate a valid top-level field`);
     data = aliases(); delete data.evidence_summary[0][field]; await render(data);
     check(!(await details()).includes("身份字段冲突"), `${field}: a missing top-level alias is not fabricated as a conflict`);
-    check(await actualUse() === (["source_trial_id", "kernel_name", "tool_version"].includes(field) ? 0 : 1), `${field}: top-level absence preserves the existing required-field/fallback rules`);
+    check(await actualUse() === (["kernel_name", "tool_version"].includes(field) ? 0 : 1), `${field}: absent aliases use the canonical value without fabricating required fields`);
     data = aliases(); data.evidence_summary[0][field] = null; await render(data);
-    check(!(await details()).includes("身份字段冲突"), `${field}: null remains an absent alias, not a conflicting identity`);
+    check((await details()).includes("身份字段冲突，引用待核验") && await actualUse() === 0, `${field}: explicit null conflicts with a known scope value`);
     data = aliases(); data.evidence_summary[0][field] = other;
     // Make the planner match the conflicting top-level alias, reproducing the former bypass.
     if (field === "source_sha256") {

@@ -13,6 +13,7 @@ async (page) => {
   const context = (trialId, name, unit, shape = "context-128") => ({...attribution,
     artifact_id: `${trialId}:${shape}`,
     evidence_id: `${trialId}:${shape}:${name}`,
+    source_trial_id: trialId,
     planning_eligible: true, eligibility_reasons: [], parse_confidence: "high",
     // Hypothetical backend validation for comparison-contract tests, never GPU evidence.
     attribution_validation: {schema_version: "v2.mcprofiler_metric_validation.v1", status: "verified", reason_codes: [],
@@ -25,6 +26,7 @@ async (page) => {
     device_id: `device_sha256:${"9".repeat(64)}`, tool_version: "contract-test-only",
     metric_definition: {name, unit, status: "documented", source: "contract-test-only"},
     collection_scope: {report_layout: "named_kernel", counter_scope: "kernel", requested_kernel: "contract_kernel",
+      source_trial_id: trialId, shape_id: shape, dtype: "CONTRACT_ONLY-float16",
       configured_kernels: ["contract_kernel"], per_kernel_actual: true, profile_from_start_actual: false, counts_actual: 100,
       background_workload_excluded: true, device_binding: "contract-test-only",
       collection_window: {kind: "contract-test-only", target_only_window_verified: true},
