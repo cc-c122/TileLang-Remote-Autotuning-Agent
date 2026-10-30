@@ -4268,7 +4268,24 @@
       return `<span class="badge ${kind}">${labels[status]}</span>`;
     }
 
+    function evidenceCanonicalIdentity(record) {
+      const scope = record?.collection_scope && typeof record.collection_scope === "object" && !Array.isArray(record.collection_scope)
+        ? record.collection_scope : {};
+      const values = {};
+      const conflicts = [];
+      // Backend CollectionIdentity fields may occur in both positions; check before selecting either alias.
+      for (const field of ["collection_id", "source_trial_id", "source_sha256", "generated_sha256", "device_id", "shape_id", "dtype",
+        "kernel_name", "launch_id", "tool_version", "tool_build", "gpu_model"]) {
+        const top = record?.[field];
+        const nested = scope[field];
+        if (top !== undefined && top !== null && nested !== undefined && nested !== null && top !== nested) conflicts.push(field);
+        values[field] = top ?? nested;
+      }
+      return {values, conflicts};
+    }
+
     function evidenceAttributionStatus(record) {
+      if (evidenceCanonicalIdentity(record).conflicts.length) return "unknown";
       if (record?.attribution_status === "unverified") return "unverified";
       if (record?.source === "mcprofiler" && evidenceCalibrationStatus(record) !== "verified") {
         return evidenceCalibrationStatus(record) === "blocked" ? "unverified" : "unknown";
@@ -4279,6 +4296,7 @@
     }
 
     function evidenceCalibrationStatus(record) {
+      if (evidenceCanonicalIdentity(record).conflicts.length) return "unknown";
       const validation = record?.attribution_validation;
       if (validation?.schema_version !== "v2.mcprofiler_metric_validation.v1") return "unknown";
       if (validation.status === "blocked") return "blocked";
@@ -4291,6 +4309,7 @@
     }
 
     function evidencePlanningStatus(record) {
+      if (evidenceCanonicalIdentity(record).conflicts.length) return "identity_conflict";
       if (record?.planning_eligible === false) return "excluded";
       if (record?.planning_eligible !== true) return "unknown";
       const compilerMetrics = ["register_count", "shared_memory_bytes", "private_memory_bytes", "local_memory_bytes", "spill_bytes", "spill_count"];
@@ -4346,6 +4365,7 @@
     }
 
     function evidenceEligibilityReasons(record) {
+      if (evidenceCanonicalIdentity(record).conflicts.length) return "身份字段冲突，引用待核验";
       const reasons = evidenceReasonCodes(record);
       if (!reasons.length && !Array.isArray(record?.eligibility_reasons)) return "后端未返回原因";
       if (!reasons.length && evidencePlanningStatus(record) === "conflict") return "后端资格与指标来源、归因或可用性字段不一致，暂不作为决策依据";
@@ -4354,6 +4374,7 @@
     }
 
     function evidenceCalibrationDetails(record) {
+      if (evidenceCanonicalIdentity(record).conflicts.length) return "身份字段冲突，引用待核验";
       if (record.source !== "mcprofiler") return "非 mcProfiler 指标；按后端来源与归因记录核验。";
       const validation = record.attribution_validation;
       const label = {verified: "后端校准与归因核验通过", blocked: "校准或归因核验未通过", unknown: "校准依据未返回或契约不完整"}[evidenceCalibrationStatus(record)];
@@ -4384,6 +4405,8 @@
     }
 
     function evidenceReferenceStatus(record, entry) {
+      const identity = evidenceCanonicalIdentity(record);
+      if (identity.conflicts.length) return {used: false, reason: "身份字段冲突，引用待核验"};
       const id = evidenceId(record);
       const row = entry.row;
       if (!Array.isArray(row.evidence_ids) || row.evidence_ids.filter((value) => value === id).length !== 1) {
@@ -4395,26 +4418,25 @@
       if (evidencePlanningStatus(record) !== "eligible") return {used: false, reason: "规划引用与资格或排除决定冲突，不能确认为决策依据"};
       if (!entry.known) return {used: false, reason: "轮次契约未识别，引用待核验"};
       if (!["llm", "rule_based"].includes(entry.source)) return {used: false, reason: "规划来源未返回，不能确认为模型引用"};
-      const scope = record.collection_scope || {};
-      const hash = sourceSha256(record.source_sha256 || scope.source_sha256);
+      const hash = sourceSha256(identity.values.source_sha256);
       if (!entry.parentHash || !hash) return {used: false, reason: "源码绑定未返回，引用待核验"};
       if (hash !== entry.parentHash) return {used: false, reason: "不属于本轮 parent 源码，不能确认为决策依据"};
       if (!entry.parentTrialId || !record.source_trial_id) return {used: false, reason: "parent trial 绑定未返回，引用待核验"};
       if (record.source_trial_id !== entry.parentTrialId) return {used: false, reason: "不属于本轮 parent trial，不能确认为决策依据"};
       const binding = row.artifacts?.evidence_binding || {};
       for (const field of ["device_id", "shape_id", "dtype"]) {
-        if (binding[field] !== undefined && binding[field] !== null && binding[field] !== (record[field] ?? scope[field])) {
+        if (binding[field] !== undefined && binding[field] !== null && binding[field] !== identity.values[field]) {
           return {used: false, reason: evidenceReasonLabel(field + "_binding_mismatch")};
         }
       }
-      if (Array.isArray(binding.kernel_names) && binding.kernel_names.length && !binding.kernel_names.includes(record.kernel_name)) {
+      if (Array.isArray(binding.kernel_names) && binding.kernel_names.length && !binding.kernel_names.includes(identity.values.kernel_name)) {
         return {used: false, reason: "目标 kernel 不匹配"};
       }
       return {used: true, reason: entry.source === "llm" ? "模型实际引用的决策依据" : "规则实际引用的证据，不是模型引用"};
     }
 
     function evidencePlanningLabel(record) {
-      return {eligible: "可用于优化分析", excluded: "不可用于优化分析", unknown: "分析资格未返回", conflict: "资格与归因字段冲突"}[evidencePlanningStatus(record)];
+      return {eligible: "可用于优化分析", excluded: "不可用于优化分析", unknown: "分析资格未返回", conflict: "资格与归因字段冲突", identity_conflict: "身份字段冲突，引用待核验"}[evidencePlanningStatus(record)];
     }
 
     function sourceSpeedupVerified(results, task) {
@@ -4433,12 +4455,13 @@
       const verified = records.filter((row) => evidenceAttributionStatus(row) === "verified").length;
       const eligible = records.filter((row) => uniqueEvidence.get(evidenceId(row)) === row && evidencePlanningStatus(row) === "eligible").length;
       const excluded = records.filter((row) => evidencePlanningStatus(row) === "excluded").length;
+      const identityConflicts = records.filter((row) => evidencePlanningStatus(row) === "identity_conflict").length;
       const uncertain = records.length - eligible - excluded;
       const speedup = sourceSpeedupVerified(results, state.task);
       return `<div class="kv" id="evidenceTrustSummary">
         <div>采集成功</div><div>${collected ? `${collected} 条采集成功记录；不代表归因或分析资格已通过。` : "尚无后端确认的采集成功记录。"}</div>
         <div>目标归因通过</div><div>${records.length ? `${unverified} 条归因未验证；${verified} 条归因已验证；${records.length - unverified - verified} 条归因未确认。` : "归因状态未返回，不默认可信。"}</div>
-        <div>可用于规划</div><div>${records.length ? `${eligible} 条可用于优化分析；${excluded} 条被后端排除；${uncertain} 条未确认。可用不等于模型实际引用，逐轮引用见候选记录。` : "分析资格未返回，不依据指标数值推断。"}</div>
+        <div>可用于规划</div><div>${records.length ? `${eligible} 条可用于优化分析；${excluded} 条被后端排除；${uncertain} 条未确认。${identityConflicts ? `${identityConflicts} 条身份字段冲突，引用待核验。` : ""}可用不等于模型实际引用，逐轮引用见候选记录。` : "分析资格未返回，不依据指标数值推断。"}</div>
         <div>性能改善通过</div><div><span class="badge ${speedup ? "ok" : "warn"}">${speedup ? "已验证提速" : "未确认已验证提速"}</span> ${speedup ? "依据最终采纳结果、正确性、性能门禁和产物核验，不依据 profiler 数值。" : "采集成功或任务结束不代表提速；最终选择见源码优化结果。"}</div>
       </div>${unverified ? `<div class="alert warn">归因未验证：仅供检查，未用于优化决策。</div>` : ""}${!eligible ? `<div class="alert warn">当前没有可信且可用于规划的指标。保留源码、benchmark 与日志回退；只能提出低置信度假设，不能据此确认瓶颈。</div>` : ""}`;
     }
@@ -4452,7 +4475,7 @@
         const duplicate = id && records.filter((row) => evidenceId(row) === id).length !== 1;
         const references = id && !duplicate ? entries.filter((entry) => Array.isArray(entry.row.evidence_ids) && entry.row.evidence_ids.includes(id)) : [];
         const planning = evidencePlanningStatus(record);
-        const usage = duplicate ? "证据标识重复，引用未确认" : planning === "excluded"
+        const usage = planning === "identity_conflict" ? "身份字段冲突，引用待核验" : duplicate ? "证据标识重复，引用未确认" : planning === "excluded"
           ? references.length ? "规划引用与排除决定冲突，需核查" : "未用于规划"
           : references.length ? references.map((entry) => `后端记录规划引用：${entry.label}；${evidenceReferenceStatus(record, entry).reason}`).join("；")
             : `未返回规划使用记录${entries.length ? "；未被这些轮次引用，不是决策依据" : ""}`;
@@ -4460,7 +4483,8 @@
         const attribution = {verified: "归因已验证", unverified: "归因未验证"}[evidenceAttributionStatus(record)] || "归因未确认";
         const reasons = evidenceReasonCodes(record);
         const reasonHtml = reasons.length > 2 ? `<details><summary>${escapeHtml(reasons.slice(0, 2).map(evidenceReasonLabel).join("；"))}（共 ${reasons.length} 项，展开）</summary><div>${escapeHtml(evidenceEligibilityReasons(record))}</div></details>` : escapeHtml(evidenceEligibilityReasons(record));
-        return `<tr><td>${escapeHtml(display(record.metric || record.metric_name))}<br>kernel：${escapeHtml(display(record.kernel_name || "未知"))}<br>${escapeHtml(display(record.source_trial_id || "trial 未返回"))}<br>来源：${escapeHtml(display(record.source || "unknown"))}</td><td>${escapeHtml(value)} ${escapeHtml(display(record.unit))}</td><td>${confidenceBadgeFor(record.parse_confidence || "unknown")}</td><td>${attribution} ${confidenceBadgeFor(record.attribution_confidence || "unknown")}</td><td>${escapeHtml(duplicate ? "证据标识重复，资格待核验" : evidencePlanningLabel(record))}</td><td>${escapeHtml(usage)}${evidenceAttributionStatus(record) !== "verified" ? `<div class="muted">仅供检查，未用于优化决策</div>` : ""}</td><td class="reason-cell">${escapeHtml(evidenceCalibrationDetails(record))}<div>${reasonHtml}</div></td></tr>`;
+        const planningLabel = duplicate && planning !== "identity_conflict" ? "证据标识重复，资格待核验" : evidencePlanningLabel(record);
+        return `<tr><td>${escapeHtml(display(record.metric || record.metric_name))}<br>kernel：${escapeHtml(display(record.kernel_name || "未知"))}<br>${escapeHtml(display(record.source_trial_id || "trial 未返回"))}<br>来源：${escapeHtml(display(record.source || "unknown"))}</td><td>${escapeHtml(value)} ${escapeHtml(display(record.unit))}</td><td>${confidenceBadgeFor(record.parse_confidence || "unknown")}</td><td>${attribution} ${confidenceBadgeFor(record.attribution_confidence || "unknown")}</td><td>${escapeHtml(planningLabel)}</td><td>${escapeHtml(usage)}${evidenceAttributionStatus(record) !== "verified" ? `<div class="muted">仅供检查，未用于优化决策</div>` : ""}</td><td class="reason-cell">${escapeHtml(evidenceCalibrationDetails(record))}<div>${reasonHtml}</div></td></tr>`;
       }).join("")}</tbody></table></div>`;
     }
 
@@ -5100,7 +5124,7 @@
         if (!record) return `<li>${escapeHtml(id)}：证据记录未返回或标识重复，不能确认为决策依据</li>`;
         const confidence = pick(record.confidence, "unknown");
         const usage = evidenceReferenceStatus(record, entry);
-        return `<li><span class="badge ${usage.used ? "best" : "warn"}">${usage.used ? entry.source === "llm" ? "模型实际引用" : "规则引用" : "待核验证据"}</span> ${escapeHtml(id)}：${escapeHtml(evidenceRecordLabel(record, id))}；kernel：${escapeHtml(display(record.kernel_name || "未知"))}；综合置信度：${escapeHtml(display(confidence))}；${escapeHtml(evidencePlanningLabel(record))}。${escapeHtml(usage.reason)}；${escapeHtml(evidenceEligibilityReasons(record))}${evidenceAttributionStatus(record) !== "verified" ? "；仅供检查，未用于优化决策" : ""}${record.source === "synthetic" ? "；仅解析测试，不是性能证据" : ""}</li>`;
+        return `<li><span class="badge ${usage.used ? "best" : "warn"}">${evidencePlanningStatus(record) === "identity_conflict" ? "身份字段冲突，引用待核验" : usage.used ? entry.source === "llm" ? "模型实际引用" : "规则引用" : "待核验证据"}</span> ${escapeHtml(id)}：${escapeHtml(evidenceRecordLabel(record, id))}；kernel：${escapeHtml(display(record.kernel_name || "未知"))}；综合置信度：${escapeHtml(display(confidence))}；${escapeHtml(evidencePlanningLabel(record))}。${escapeHtml(usage.reason)}；${escapeHtml(evidenceEligibilityReasons(record))}${evidenceAttributionStatus(record) !== "verified" ? "；仅供检查，未用于优化决策" : ""}${record.source === "synthetic" ? "；仅解析测试，不是性能证据" : ""}</li>`;
       }).join("")}</ul>${ids.length > limit ? `<div class="muted">另有 ${ids.length - limit} 条证据引用。</div>` : ""}`;
     }
 

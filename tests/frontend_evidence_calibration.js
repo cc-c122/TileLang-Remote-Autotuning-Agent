@@ -73,6 +73,57 @@ async (page) => {
   check(await actualUse() === 1, "Only the explicitly cited, bound metric receives the model-reference badge");
   check((await page.locator("#apiResultsPanel .optimization-round").count()) === 2, "Baseline and analysis-only stop rounds both survive");
 
+  // All repeated CollectionIdentity fields use one conflict rule; no alias may rebind a receipt.
+  const identityFields = [
+    ["source_sha256", a, b], ["source_trial_id", "source-baseline", "CONTRACT_ONLY-other-trial"],
+    ["device_id", "CONTRACT_ONLY-device", "CONTRACT_ONLY-other-device"],
+    ["shape_id", "CONTRACT_ONLY-shape", "CONTRACT_ONLY-other-shape"], ["dtype", "float16", "float32"],
+    ["collection_id", "CONTRACT_ONLY-collection", "CONTRACT_ONLY-other-collection"],
+    ["generated_sha256", "c".repeat(64), "d".repeat(64)], ["kernel_name", "CONTRACT_ONLY-kernel", "CONTRACT_ONLY-other-kernel"],
+    ["launch_id", "CONTRACT_ONLY-launch", "CONTRACT_ONLY-other-launch"],
+    ["tool_version", "CONTRACT_ONLY-tool", "CONTRACT_ONLY-other-tool"],
+    ["tool_build", "CONTRACT_ONLY-build", "CONTRACT_ONLY-other-build"], ["gpu_model", "CONTRACT_ONLY-GPU", "CONTRACT_ONLY-other-GPU"],
+  ];
+  for (const [field, value, other] of identityFields) {
+    const aliases = () => {
+      const result = fixture();
+      result.evidence_summary = [result.evidence_summary[0]];
+      result.evidence_summary[0][field] = value;
+      result.evidence_summary[0].collection_scope[field] = value;
+      return result;
+    };
+    data = aliases(); await render(data);
+    check(await actualUse() === 1 && (await summary()).includes("1 条可用于优化分析"), `${field}: equal aliases retain the existing qualified reference`);
+    data = aliases(); delete data.evidence_summary[0].collection_scope[field]; await render(data);
+    check(await actualUse() === 1, `${field}: a missing scope alias does not invalidate a valid top-level field`);
+    data = aliases(); delete data.evidence_summary[0][field]; await render(data);
+    check(!(await details()).includes("身份字段冲突"), `${field}: a missing top-level alias is not fabricated as a conflict`);
+    check(await actualUse() === (["source_trial_id", "kernel_name", "tool_version"].includes(field) ? 0 : 1), `${field}: top-level absence preserves the existing required-field/fallback rules`);
+    data = aliases(); data.evidence_summary[0][field] = null; await render(data);
+    check(!(await details()).includes("身份字段冲突"), `${field}: null remains an absent alias, not a conflicting identity`);
+    data = aliases(); data.evidence_summary[0][field] = other;
+    // Make the planner match the conflicting top-level alias, reproducing the former bypass.
+    if (field === "source_sha256") {
+      data.optimization_rounds[1].parent_source_sha256 = other;
+      data.optimization_rounds[0].parent_source_sha256 = other;
+    } else if (field === "source_trial_id") data.optimization_rounds[0].trial_id = other;
+    else if (["device_id", "shape_id", "dtype"].includes(field)) data.optimization_rounds[1].artifacts.evidence_binding[field] = other;
+    else if (field === "kernel_name") data.optimization_rounds[1].artifacts.evidence_binding.kernel_names = [other];
+    else if (field === "tool_version") data.evidence_summary[0].attribution_validation.definition.tool_version = other;
+    for (const planner of ["llm", "rule_based"]) {
+      data.optimization_rounds[1].plan.source = planner; await render(data);
+      check(await actualUse() === 0 && !(await summary()).includes("1 条可用于优化分析") && (await summary()).includes("0 条归因已验证"), `${field}/${planner}: conflicting aliases never count as trusted or actual use`);
+      text = await details();
+      check(text.includes("身份字段冲突，引用待核验") && !(await roundEvidence()).includes("实际引用的决策依据"), `${field}/${planner}: conflict is consistent in eligibility, details and round evidence`);
+    }
+    data = aliases(); data.evidence_summary[0].collection_scope[field] = other;
+    for (const planner of ["llm", "rule_based"]) {
+      data.optimization_rounds[1].plan.source = planner; await render(data);
+      check(await actualUse() === 0 && (await summary()).includes("0 条可用于优化分析"), `${field}/${planner}: changing the nested alias cannot reuse a matching top-level identity`);
+      check((await details()).includes("身份字段冲突，引用待核验"), `${field}/${planner}: nested identity mutation has the same conflict message`);
+    }
+  }
+
   for (const [label, mutate, expected] of [
     ["source", (x) => { x.evidence_summary[0].collection_scope.source_sha256 = b; }, "不属于本轮 parent 源码"],
     ["trial", (x) => { x.evidence_summary[0].source_trial_id = "wrong-trial"; }, "不属于本轮 parent trial"],
@@ -87,6 +138,14 @@ async (page) => {
     check(await actualUse() === 0, `${label}: no verified reference badge`);
     check((await details()).includes(expected), `${label}: precise conflict reason survives`);
   }
+
+  data = fixture(); data.evidence_summary = [data.evidence_summary[0]];
+  data.evidence_summary[0].shape_id = "CONTRACT_ONLY-conflicting-shape";
+  data.evidence_summary[0].planning_eligible = false;
+  data.evidence_summary.push(structuredClone(data.evidence_summary[0]));
+  await render(data); await details();
+  check((await page.locator("#evidenceTrustTable tbody tr td:nth-child(5)").allInnerTexts()).every((label) => label === "身份字段冲突，引用待核验")
+    && await actualUse() === 0, "Identity conflicts stay explicit even alongside duplicate IDs or backend exclusion");
 
   for (const field of ["planning_eligible", "parse_confidence", "confidence", "available", "artifact_id", "kernel_name", "attribution_status", "attribution_confidence", "attribution_validation", "eligibility_reasons"]) {
     data = fixture(); data.evidence_summary = [data.evidence_summary[0]]; delete data.evidence_summary[0][field]; await render(data);
@@ -159,6 +218,17 @@ async (page) => {
     await render(data); await page.setViewportSize({width, height}); await details();
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: advanced evidence is scrollable without page overflow`);
     check(await page.locator("#evidenceTrustTable").evaluate((el) => el.parentElement.scrollWidth >= el.parentElement.clientWidth), `${name}: evidence uses the existing horizontal table container`);
+    data = fixture(); data.evidence_summary = [data.evidence_summary[0]];
+    data.evidence_summary[0].shape_id = "CONTRACT_ONLY-conflicting-shape";
+    data.optimization_rounds[1].artifacts.evidence_binding.shape_id = data.evidence_summary[0].shape_id;
+    await render(data);
+    for (const [view, panel] of [["taskView", "#taskDetailPanel"], ["resultsView", "#apiResultsPanel"]]) {
+      await page.locator(`.tab-button[data-view-target="${view}"]`).click();
+      await page.locator(`${panel} .optimization-round`).evaluateAll((rows) => rows.forEach((row) => { row.open = true; }));
+      check(await page.locator(`${panel} [data-round-part="evidence"] .badge.best`).count() === 0
+        && (await page.locator(panel).innerText()).includes("身份字段冲突，引用待核验"), `${name}/${view}: conflicts stay untrusted in both progress and results`);
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}/${view}: conflict labels fit without page overflow`);
+    }
   }
   check(errors.length === 0, `No browser JS errors: ${errors.join("; ")}`);
   page.off("pageerror", onError);
