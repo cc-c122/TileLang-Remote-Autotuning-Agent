@@ -12,7 +12,16 @@ async (page) => {
   const attribution = {scope: "kernel", kernel_name: "contract_kernel", attribution_status: "verified", attribution_confidence: "medium"};
   const context = (trialId, name, unit, shape = "context-128") => ({...attribution,
     artifact_id: `${trialId}:${shape}`,
+    evidence_id: `${trialId}:${shape}:${name}`,
     planning_eligible: true, eligibility_reasons: [], parse_confidence: "high",
+    // Hypothetical backend validation for comparison-contract tests, never GPU evidence.
+    attribution_validation: {schema_version: "v2.mcprofiler_metric_validation.v1", status: "verified", reason_codes: [],
+      metric: name === "Global Read Instructions" ? "global_read_instructions" : name,
+      validation_id: `CONTRACT_ONLY-${trialId}-${shape}-${name}`, definition: {
+        numerator: "CONTRACT_ONLY numerator", denominator: "CONTRACT_ONLY denominator", counter_scope: "kernel", unit,
+        tool_version: "contract-test-only", tool_build: "CONTRACT_ONLY", gpu_model: "CONTRACT_ONLY",
+        reference_url: "https://example.invalid/contract-only", reference_sha256: "f".repeat(64),
+      }},
     device_id: `device_sha256:${"9".repeat(64)}`, tool_version: "contract-test-only",
     metric_definition: {name, unit, status: "documented", source: "contract-test-only"},
     collection_scope: {report_layout: "named_kernel", counter_scope: "kernel", requested_kernel: "contract_kernel",
@@ -31,7 +40,7 @@ async (page) => {
       metrics_requested: ["hbm_read_bandwidth", "warp_active_ratio", "boolean_only"],
       available_metrics: {hbm_read_bandwidth: true, warp_active_ratio: false, boolean_only: true},
       metric_observations: [
-        {...context(trialId, "hbm_read_bandwidth", "GB/s", shape), metric_name: "hbm_read_bandwidth", value, unit: "GB/s", source: "mcprofiler", available: true, confidence: "low"},
+        {...context(trialId, "hbm_read_bandwidth", "GB/s", shape), metric_name: "hbm_read_bandwidth", value, unit: "GB/s", source: "mcprofiler", available: true, confidence: "medium"},
         {...context(trialId, "warp_active_ratio", "%", shape), metric_name: "warp_active_ratio", value: null, unit: "%", source: "mcprofiler", available: false},
       ],
       kernel_names: ["contract_kernel"], warnings: ["Browser contract scenario only"],
@@ -91,7 +100,7 @@ async (page) => {
     row.metrics_requested = ["Global Read Instructions"];
     row.available_metrics = {global_read_instructions: true};
     row.metric_observations = [{...context(row.source_trial_id, "Global Read Instructions", "instructions"), metric_name: "global_read_instructions", source_field_name: "Global Read Instructions", value: 851256,
-      unit: "instructions", source: "mcprofiler", available: true, confidence: "low", parse_warnings: ["Contract scenario only"]}];
+      unit: "instructions", source: "mcprofiler", available: true, confidence: "medium", parse_warnings: ["Contract scenario only"]}];
   });
   comparison = await render(value);
   check(comparison.pairs[0].metrics.length === 1 && comparison.pairs[0].metrics[0].comparable, "Native requested name maps to the canonical metric only through source_field_name");
@@ -99,7 +108,7 @@ async (page) => {
   await page.locator("#apiResultsAdvanced > summary").click();
   await page.locator("#apiResultsAdvanced .source-trial > summary").first().click();
   const nativeRow = page.locator("#apiResultsAdvanced .source-trial table tbody tr").first();
-  check((await nativeRow.innerText()).includes("Global Read Instructions") && (await nativeRow.innerText()).includes("851256") && (await nativeRow.innerText()).includes("low") && (await nativeRow.innerText()).includes("Contract scenario only"), "Native name, value, confidence and parse warning stay in one detail row");
+  check((await nativeRow.innerText()).includes("Global Read Instructions") && (await nativeRow.innerText()).includes("851256") && (await nativeRow.innerText()).includes("medium") && (await nativeRow.innerText()).includes("Contract scenario only"), "Native name, value, confidence and parse warning stay in one detail row");
   value.profiler_collections.forEach((row) => { delete row.metric_observations[0].source_field_name; });
   comparison = await render(value);
   check(comparison.pairs[0].metrics.length === 1, "Unmapped vendor names remain in individual records, not in paired metrics");

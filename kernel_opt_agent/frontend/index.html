@@ -523,6 +523,7 @@
     #evidenceTrustTable th:nth-child(5) { width: 140px; }
     #evidenceTrustTable th:nth-child(6) { width: 200px; }
     #evidenceTrustTable th:nth-child(7) { width: 320px; }
+    #evidenceTrustTable td { white-space: normal; overflow-wrap: anywhere; }
 
     .hardware-table {
       min-width: 1120px;
@@ -4269,20 +4270,42 @@
 
     function evidenceAttributionStatus(record) {
       if (record?.attribution_status === "unverified") return "unverified";
+      if (record?.source === "mcprofiler" && evidenceCalibrationStatus(record) !== "verified") {
+        return evidenceCalibrationStatus(record) === "blocked" ? "unverified" : "unknown";
+      }
       return record?.attribution_status === "verified" && ["medium", "high"].includes(record.attribution_confidence)
         && record.scope === "kernel" && typeof record.kernel_name === "string" && !!record.kernel_name.trim()
         && ["mcprofiler", "benchmark", "compiler_log", "tilelang_log"].includes(record.source) ? "verified" : "unknown";
     }
 
+    function evidenceCalibrationStatus(record) {
+      const validation = record?.attribution_validation;
+      if (validation?.schema_version !== "v2.mcprofiler_metric_validation.v1") return "unknown";
+      if (validation.status === "blocked") return "blocked";
+      const definition = validation.definition;
+      return validation.status === "verified" && Array.isArray(validation.reason_codes) && !validation.reason_codes.length
+        && validation.metric === (record.metric || record.metric_name)
+        && typeof validation.validation_id === "string" && !!validation.validation_id.trim()
+        && definition?.numerator && definition.denominator && definition.counter_scope === "kernel"
+        && definition.unit === record.unit && definition.tool_version === record.tool_version ? "verified" : "unknown";
+    }
+
     function evidencePlanningStatus(record) {
       if (record?.planning_eligible === false) return "excluded";
       if (record?.planning_eligible !== true) return "unknown";
+      const compilerMetrics = ["register_count", "shared_memory_bytes", "private_memory_bytes", "local_memory_bytes", "spill_bytes", "spill_count"];
+      const metric = record.metric || record.metric_name;
+      const sourceMatches = record.source === "mcprofiler" || record.source === "benchmark" && metric === "latency_ms"
+        || ["compiler_log", "tilelang_log"].includes(record.source) && compilerMetrics.includes(metric);
       if (evidenceAttributionStatus(record) !== "verified"
-        || !Array.isArray(record.eligibility_reasons) || record.eligibility_reasons.length) return "conflict";
+        || !Array.isArray(record.eligibility_reasons) || record.eligibility_reasons.length
+        || !sourceMatches || record.available !== true || typeof record.value !== "number" || !Number.isFinite(record.value)
+        || !["medium", "high"].includes(record.parse_confidence) || !["medium", "high"].includes(record.confidence)
+        || !evidenceId(record) || !record.artifact_id) return "conflict";
       return "eligible";
     }
 
-    function evidenceEligibilityReasons(record) {
+    function evidenceReasonLabel(reason) {
       const labels = {
         source_unrecognized: "证据来源未识别", source_metric_mismatch: "来源与指标不匹配",
         metric_unavailable_or_non_numeric: "指标不可用或没有数值", evidence_id_missing: "缺少证据标识",
@@ -4293,11 +4316,101 @@
         background_workload_not_excluded: "未排除后台负载", device_binding_unknown: "设备绑定未确认",
         tool_version_unknown: "工具版本未知", metric_definition_unconfirmed: "指标口径未确认",
         metric_attribution_not_validated: "当前工具版本的该指标尚未通过归因验证",
+        backend_validation_missing: "缺少后端校准核验记录", backend_validation_unrecognized: "核验记录已失效或后端未识别",
+        validation_identity_mismatch: "证据身份与后端核验记录不一致", calibration_missing: "缺少校准记录",
+        calibration_repeats_missing: "校准重复采集不足", calibration_control_response_unconfirmed: "校准对照响应未确认",
+        calibration_window_unverified: "校准采集窗口未验证", collection_window_unverified: "当前采集窗口未验证",
+        calibration_artifact_provenance_unverified: "校准产物来源未验证", calibration_repeatability_failed: "校准重复性未通过",
+        calibration_repeatability_unqualified: "校准重复性尚无已确认标准", idle_control_not_quiet: "空闲对照仍有信号，原因未确认",
+        native_scope_verifier_unavailable: "缺少原生统计范围核验器", replay_count_unconfirmed: "实际重放次数未确认",
+        current_parent_source_or_trial_mismatch: "不属于本轮 parent 源码或 trial", device_id_binding_mismatch: "设备身份不匹配",
+        shape_id_binding_mismatch: "shape 不匹配", dtype_binding_mismatch: "dtype 不匹配", target_kernel_binding_mismatch: "目标 kernel 不匹配",
+        artifact_hash_mismatch: "原始产物校验不一致", report_hash_mismatch: "原始报告校验不一致",
+        native_artifact_parse_failed: "原始报告或配置损坏，无法解析", native_metric_value_mismatch: "指标数值与原始报告不一致",
+        metric_unit_mismatch: "指标单位与约定口径不一致", required_artifact_missing: "缺少必要原始产物",
+        artifact_unavailable_or_unsafe: "原始产物不可读取或路径不安全", calibration_report_mismatch: "校准报告不匹配",
+        native_kernel_filter_unconfirmed: "原生 kernel 过滤条件未确认", native_custom_window_unconfirmed: "原生采集窗口未确认",
+        native_source_artifact_mismatch: "原生源码产物不匹配", kernel_filter_mismatch: "kernel 过滤条件不匹配",
       };
-      const reasons = Array.isArray(record?.eligibility_reasons) ? record.eligibility_reasons : null;
-      if (!reasons) return "后端未返回原因";
-      return reasons.length ? reasons.map((reason) => labels[reason] || display(reason)).join("；")
+      if (Object.prototype.hasOwnProperty.call(labels, reason)) return labels[reason];
+      const fields = {collection_id: "采集标识", source_trial_id: "来源 trial", source_sha256: "源码 hash", generated_sha256: "生成代码 hash",
+        device_id: "设备身份", shape_id: "shape", dtype: "dtype", kernel_name: "目标 kernel", launch_id: "实际 launch", gpu_model: "GPU 型号", tool_version: "工具版本", tool_build: "工具 build"};
+      const identity = /^(?:observation_|native_|calibration_capture_|calibration_)?(.+)_(unconfirmed|mismatch)$/.exec(String(reason));
+      return identity && Object.prototype.hasOwnProperty.call(fields, identity[1])
+        ? `${fields[identity[1]]}${identity[2] === "unconfirmed" ? "未确认" : "不匹配"}` : display(reason);
+    }
+
+    function evidenceReasonCodes(record) {
+      return [...new Set([...(Array.isArray(record?.eligibility_reasons) ? record.eligibility_reasons : []),
+        ...(Array.isArray(record?.attribution_validation?.reason_codes) ? record.attribution_validation.reason_codes : [])])];
+    }
+
+    function evidenceEligibilityReasons(record) {
+      const reasons = evidenceReasonCodes(record);
+      if (!reasons.length && !Array.isArray(record?.eligibility_reasons)) return "后端未返回原因";
+      if (!reasons.length && evidencePlanningStatus(record) === "conflict") return "后端资格与指标来源、归因或可用性字段不一致，暂不作为决策依据";
+      return reasons.length ? reasons.map(evidenceReasonLabel).join("；")
         : record.planning_eligible === true ? "后端未列出排除原因" : "后端未说明排除原因";
+    }
+
+    function evidenceCalibrationDetails(record) {
+      if (record.source !== "mcprofiler") return "非 mcProfiler 指标；按后端来源与归因记录核验。";
+      const validation = record.attribution_validation;
+      const label = {verified: "后端校准与归因核验通过", blocked: "校准或归因核验未通过", unknown: "校准依据未返回或契约不完整"}[evidenceCalibrationStatus(record)];
+      const definition = validation?.definition;
+      if (!definition || typeof definition !== "object" || Array.isArray(definition)) return label;
+      return `${label}；工具：${display(definition.tool_version)} / ${display(definition.tool_build)}；GPU：${display(definition.gpu_model)}；分子：${display(definition.numerator)}；分母：${display(definition.denominator)}；单位：${display(definition.unit)}；范围：${display(definition.counter_scope)}；依据：${display(definition.reference_url)}；原文 SHA256：${display(definition.reference_sha256)}`;
+    }
+
+    function evidencePlanningEntry(row, results) {
+      const isRound = Object.prototype.hasOwnProperty.call(row, "schema_version");
+      const source = sourceOptimizationPayload(results);
+      const parentHash = sourceSha256(isRound ? row.parent_source_sha256 : row.source_before_sha256);
+      const parents = sourceOptimizationTrials(source).filter((trial) => trial.status === "accepted" && sourceSha256(trial.source_after_sha256) === parentHash);
+      const baseline = asArray(results?.optimization_rounds).filter((round) => round?.schema_version === "v2.optimization_round.v1"
+        && round.round_index === 0 && sourceSha256(round.parent_source_sha256) === parentHash);
+      const parentTrialId = baseline.length === 1 ? baseline[0].trial_id : parents.length === 1 ? parents[0].trial_id : null;
+      return {row, parentHash, parentTrialId, isRound,
+        known: !isRound || row.schema_version === "v2.optimization_round.v1" && Number.isInteger(row.round_index) && row.round_index > 0,
+        source: isRound ? row.plan?.source : row.artifacts?.planner?.source,
+        label: isRound ? `第 ${display(row.round_index)} 轮（${display(row.trial_id)}）` : display(row.trial_id)};
+    }
+
+    function evidencePlanningEntries(results) {
+      const rounds = asArray(results?.optimization_rounds).filter((row) => row && typeof row === "object" && !Array.isArray(row));
+      const roundIds = new Set(rounds.map((row) => row.trial_id));
+      const legacy = sourceOptimizationTrials(sourceOptimizationPayload(results)).filter((trial) => !roundIds.has(trial.trial_id));
+      return [...rounds.filter((row) => row.round_index !== 0), ...legacy].map((row) => evidencePlanningEntry(row, results));
+    }
+
+    function evidenceReferenceStatus(record, entry) {
+      const id = evidenceId(record);
+      const row = entry.row;
+      if (!Array.isArray(row.evidence_ids) || row.evidence_ids.filter((value) => value === id).length !== 1) {
+        return {used: false, reason: "证据引用缺失或重复，不能确认为决策依据"};
+      }
+      if (row.analysis?.basis === "source_and_logs_only") return {used: false, reason: "本轮记录为源码与日志回退，与指标引用冲突"};
+      const excluded = asArray(row.artifacts?.excluded_evidence).filter((item) => item?.evidence_id === id);
+      if (excluded.length) return {used: false, reason: `本轮已排除：${excluded.flatMap((item) => asArray(item.reasons)).map(evidenceReasonLabel).join("；") || "后端未说明原因"}`};
+      if (evidencePlanningStatus(record) !== "eligible") return {used: false, reason: "规划引用与资格或排除决定冲突，不能确认为决策依据"};
+      if (!entry.known) return {used: false, reason: "轮次契约未识别，引用待核验"};
+      if (!["llm", "rule_based"].includes(entry.source)) return {used: false, reason: "规划来源未返回，不能确认为模型引用"};
+      const scope = record.collection_scope || {};
+      const hash = sourceSha256(record.source_sha256 || scope.source_sha256);
+      if (!entry.parentHash || !hash) return {used: false, reason: "源码绑定未返回，引用待核验"};
+      if (hash !== entry.parentHash) return {used: false, reason: "不属于本轮 parent 源码，不能确认为决策依据"};
+      if (!entry.parentTrialId || !record.source_trial_id) return {used: false, reason: "parent trial 绑定未返回，引用待核验"};
+      if (record.source_trial_id !== entry.parentTrialId) return {used: false, reason: "不属于本轮 parent trial，不能确认为决策依据"};
+      const binding = row.artifacts?.evidence_binding || {};
+      for (const field of ["device_id", "shape_id", "dtype"]) {
+        if (binding[field] !== undefined && binding[field] !== null && binding[field] !== (record[field] ?? scope[field])) {
+          return {used: false, reason: evidenceReasonLabel(field + "_binding_mismatch")};
+        }
+      }
+      if (Array.isArray(binding.kernel_names) && binding.kernel_names.length && !binding.kernel_names.includes(record.kernel_name)) {
+        return {used: false, reason: "目标 kernel 不匹配"};
+      }
+      return {used: true, reason: entry.source === "llm" ? "模型实际引用的决策依据" : "规则实际引用的证据，不是模型引用"};
     }
 
     function evidencePlanningLabel(record) {
@@ -4314,36 +4427,40 @@
 
     function renderEvidenceTrust(results) {
       const records = evidenceRecordsFromSummary(evidenceSummaryFromResults(results));
+      const uniqueEvidence = evidenceRecordMap(evidenceSummaryFromResults(results));
       const collected = profilerCollectionRows(results).filter((row) => row.schema_version === MCPROFILER_COLLECTION_SCHEMA && row.status === "collected").length;
       const unverified = records.filter((row) => evidenceAttributionStatus(row) === "unverified").length;
       const verified = records.filter((row) => evidenceAttributionStatus(row) === "verified").length;
-      const eligible = records.filter((row) => evidencePlanningStatus(row) === "eligible").length;
+      const eligible = records.filter((row) => uniqueEvidence.get(evidenceId(row)) === row && evidencePlanningStatus(row) === "eligible").length;
       const excluded = records.filter((row) => evidencePlanningStatus(row) === "excluded").length;
       const uncertain = records.length - eligible - excluded;
       const speedup = sourceSpeedupVerified(results, state.task);
       return `<div class="kv" id="evidenceTrustSummary">
         <div>采集成功</div><div>${collected ? `${collected} 条采集成功记录；不代表归因或分析资格已通过。` : "尚无后端确认的采集成功记录。"}</div>
-        <div>目标归因</div><div>${records.length ? `${unverified} 条归因未验证；${verified} 条归因已验证；${records.length - unverified - verified} 条归因未确认。` : "归因状态未返回，不默认可信。"}</div>
-        <div>优化分析资格</div><div>${records.length ? `${eligible} 条可用于优化分析；${excluded} 条被后端排除；${uncertain} 条未确认。` : "分析资格未返回，不依据指标数值推断。"}</div>
-        <div>已验证提速</div><div><span class="badge ${speedup ? "ok" : "warn"}">${speedup ? "已验证提速" : "未确认已验证提速"}</span> ${speedup ? "依据最终采纳结果、正确性、性能门禁和产物核验，不依据 profiler 数值。" : "采集成功或任务结束不代表提速；最终选择见源码优化结果。"}</div>
-      </div>${unverified ? `<div class="alert warn">归因未验证：仅供检查，未用于优化决策。</div>` : ""}`;
+        <div>目标归因通过</div><div>${records.length ? `${unverified} 条归因未验证；${verified} 条归因已验证；${records.length - unverified - verified} 条归因未确认。` : "归因状态未返回，不默认可信。"}</div>
+        <div>可用于规划</div><div>${records.length ? `${eligible} 条可用于优化分析；${excluded} 条被后端排除；${uncertain} 条未确认。可用不等于模型实际引用，逐轮引用见候选记录。` : "分析资格未返回，不依据指标数值推断。"}</div>
+        <div>性能改善通过</div><div><span class="badge ${speedup ? "ok" : "warn"}">${speedup ? "已验证提速" : "未确认已验证提速"}</span> ${speedup ? "依据最终采纳结果、正确性、性能门禁和产物核验，不依据 profiler 数值。" : "采集成功或任务结束不代表提速；最终选择见源码优化结果。"}</div>
+      </div>${unverified ? `<div class="alert warn">归因未验证：仅供检查，未用于优化决策。</div>` : ""}${!eligible ? `<div class="alert warn">当前没有可信且可用于规划的指标。保留源码、benchmark 与日志回退；只能提出低置信度假设，不能据此确认瓶颈。</div>` : ""}`;
     }
 
     function renderEvidenceTrustDetails(results) {
       const records = evidenceRecordsFromSummary(evidenceSummaryFromResults(results));
       if (!records.length) return `<h3>证据可信度与规划记录</h3><div class="empty">后端未返回逐指标可信度与规划资格；旧结果不默认可信。</div>`;
-      const trials = sourceOptimizationTrials(sourceOptimizationPayload(results));
-      return `<h3>证据可信度与规划记录</h3><div class="table-wrap"><table id="evidenceTrustTable"><thead><tr><th>指标 / trial</th><th>原始值 / 单位</th><th>解析置信度</th><th>归因状态 / 置信度</th><th>优化分析资格</th><th>规划使用记录</th><th>原因</th></tr></thead><tbody>${records.map((record) => {
+      const entries = evidencePlanningEntries(results);
+      return `<h3>证据可信度与规划记录</h3><div class="table-wrap"><table id="evidenceTrustTable"><thead><tr><th>指标 / 目标 kernel / trial</th><th>原始值 / 单位</th><th>解析置信度</th><th>归因状态 / 置信度</th><th>优化分析资格</th><th>规划使用记录</th><th>校准依据 / 排除原因</th></tr></thead><tbody>${records.map((record) => {
         const id = evidenceId(record);
         const duplicate = id && records.filter((row) => evidenceId(row) === id).length !== 1;
-        const references = id && !duplicate ? trials.filter((trial) => Array.isArray(trial.evidence_ids) && trial.evidence_ids.includes(id)).map((trial) => trial.trial_id) : [];
+        const references = id && !duplicate ? entries.filter((entry) => Array.isArray(entry.row.evidence_ids) && entry.row.evidence_ids.includes(id)) : [];
         const planning = evidencePlanningStatus(record);
         const usage = duplicate ? "证据标识重复，引用未确认" : planning === "excluded"
           ? references.length ? "规划引用与排除决定冲突，需核查" : "未用于规划"
-          : references.length ? `后端记录规划引用：${references.join("、")}` : "未返回规划使用记录";
-        const value = Object.prototype.hasOwnProperty.call(record, "value") ? display(record.value) : "未采集";
+          : references.length ? references.map((entry) => `后端记录规划引用：${entry.label}；${evidenceReferenceStatus(record, entry).reason}`).join("；")
+            : `未返回规划使用记录${entries.length ? "；未被这些轮次引用，不是决策依据" : ""}`;
+        const value = Object.prototype.hasOwnProperty.call(record, "value") ? record.value === null ? "null / unavailable" : display(record.value) : "未采集";
         const attribution = {verified: "归因已验证", unverified: "归因未验证"}[evidenceAttributionStatus(record)] || "归因未确认";
-        return `<tr><td>${escapeHtml(display(record.metric || record.metric_name))}<br>${escapeHtml(display(record.source_trial_id || "trial 未返回"))}</td><td>${escapeHtml(value)} ${escapeHtml(display(record.unit))}</td><td>${confidenceBadgeFor(record.parse_confidence || "unknown")}</td><td>${attribution} ${confidenceBadgeFor(record.attribution_confidence || "unknown")}</td><td>${escapeHtml(evidencePlanningLabel(record))}</td><td>${escapeHtml(usage)}${record.attribution_status === "unverified" ? `<div class="muted">仅供检查，未用于优化决策</div>` : ""}</td><td class="reason-cell">${escapeHtml(evidenceEligibilityReasons(record))}</td></tr>`;
+        const reasons = evidenceReasonCodes(record);
+        const reasonHtml = reasons.length > 2 ? `<details><summary>${escapeHtml(reasons.slice(0, 2).map(evidenceReasonLabel).join("；"))}（共 ${reasons.length} 项，展开）</summary><div>${escapeHtml(evidenceEligibilityReasons(record))}</div></details>` : escapeHtml(evidenceEligibilityReasons(record));
+        return `<tr><td>${escapeHtml(display(record.metric || record.metric_name))}<br>kernel：${escapeHtml(display(record.kernel_name || "未知"))}<br>${escapeHtml(display(record.source_trial_id || "trial 未返回"))}<br>来源：${escapeHtml(display(record.source || "unknown"))}</td><td>${escapeHtml(value)} ${escapeHtml(display(record.unit))}</td><td>${confidenceBadgeFor(record.parse_confidence || "unknown")}</td><td>${attribution} ${confidenceBadgeFor(record.attribution_confidence || "unknown")}</td><td>${escapeHtml(duplicate ? "证据标识重复，资格待核验" : evidencePlanningLabel(record))}</td><td>${escapeHtml(usage)}${evidenceAttributionStatus(record) !== "verified" ? `<div class="muted">仅供检查，未用于优化决策</div>` : ""}</td><td class="reason-cell">${escapeHtml(evidenceCalibrationDetails(record))}<div>${reasonHtml}</div></td></tr>`;
       }).join("")}</tbody></table></div>`;
     }
 
@@ -4540,7 +4657,7 @@
       if (evidence.length !== 1 || evidencePlanningStatus(evidence[0]) !== "eligible") return null;
       // The results API recomputes eligibility; stored collection flags cannot override it.
       const binding = (row) => Object.fromEntries(["device_id", "tool_version", "kernel_name", "scope", "attribution_status",
-        "attribution_confidence", "metric_definition", "collection_scope"].map((key) => [key, row[key]]));
+        "attribution_confidence", "attribution_validation", "metric_definition", "collection_scope"].map((key) => [key, row[key]]));
       if (!sameEvidenceContext(binding(observation), binding(evidence[0]))) return null;
       const definition = observation.metric_definition;
       const scope = observation.collection_scope;
@@ -4635,10 +4752,13 @@
 
     function evidenceRecordMap(summary) {
       const map = new Map();
+      const duplicates = new Set();
       evidenceRecordsFromSummary(summary).forEach((record) => {
         const id = evidenceId(record);
+        if (map.has(id)) duplicates.add(id);
         if (id) map.set(id, record);
       });
+      duplicates.forEach((id) => map.delete(id));
       return map;
     }
 
@@ -4970,16 +5090,28 @@
       return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
     }
 
-    function sourceTrialEvidenceList(trial, evidenceMap, limit = Infinity) {
+    function sourceTrialEvidenceList(trial, evidenceMap, limit = Infinity, results = null) {
       const ids = Array.isArray(trial?.evidence_ids) ? trial.evidence_ids : [];
-      if (!ids.length) return `<div class="empty">未引用证据。</div>`;
+      if (!ids.length) return `<div class="empty">未引用证据。本轮保留源码、benchmark 与日志回退，不据此确认硬件瓶颈。</div>`;
+      const entry = evidencePlanningEntry(trial, results);
       return `<ul class="list-plain">${ids.slice(0, limit).map((rawId) => {
         const id = String(rawId);
         const record = evidenceMap.get(id);
-        if (!record) return `<li>${escapeHtml(id)}：证据记录未返回</li>`;
+        if (!record) return `<li>${escapeHtml(id)}：证据记录未返回或标识重复，不能确认为决策依据</li>`;
         const confidence = pick(record.confidence, "unknown");
-        return `<li>${evidencePlanningStatus(record) === "eligible" ? "" : `<span class="badge warn">待核验证据</span> `}${escapeHtml(evidenceRecordLabel(record, id))}；综合置信度：${escapeHtml(display(confidence))}；${escapeHtml(evidencePlanningLabel(record))}。${escapeHtml(evidenceEligibilityReasons(record))}${evidenceAttributionStatus(record) === "unverified" ? "；仅供检查，未用于优化决策" : ""}${record.source === "synthetic" ? "；仅解析测试，不是性能证据" : ""}</li>`;
+        const usage = evidenceReferenceStatus(record, entry);
+        return `<li><span class="badge ${usage.used ? "best" : "warn"}">${usage.used ? entry.source === "llm" ? "模型实际引用" : "规则引用" : "待核验证据"}</span> ${escapeHtml(id)}：${escapeHtml(evidenceRecordLabel(record, id))}；kernel：${escapeHtml(display(record.kernel_name || "未知"))}；综合置信度：${escapeHtml(display(confidence))}；${escapeHtml(evidencePlanningLabel(record))}。${escapeHtml(usage.reason)}；${escapeHtml(evidenceEligibilityReasons(record))}${evidenceAttributionStatus(record) !== "verified" ? "；仅供检查，未用于优化决策" : ""}${record.source === "synthetic" ? "；仅解析测试，不是性能证据" : ""}</li>`;
       }).join("")}</ul>${ids.length > limit ? `<div class="muted">另有 ${ids.length - limit} 条证据引用。</div>` : ""}`;
+    }
+
+    function sourceExcludedEvidenceList(round, evidenceMap) {
+      const excluded = asArray(round?.artifacts?.excluded_evidence).filter((row) => row && typeof row === "object");
+      if (!excluded.length) return `<div class="empty">后端未返回本轮逐项排除记录。</div>`;
+      return `<ul class="list-plain">${excluded.map((row) => {
+        const id = String(row.evidence_id || "标识未返回");
+        const record = evidenceMap.get(id);
+        return `<li>${escapeHtml(id)}${record ? `：${escapeHtml(evidenceRecordLabel(record, id))}` : ""}；未作为本轮决策依据。${escapeHtml(asArray(row.reasons).map(evidenceReasonLabel).join("；") || "排除原因未返回")}</li>`;
+      }).join("")}</ul>`;
     }
 
     function sourceTrialModification(trial) {
@@ -5031,15 +5163,16 @@
       const analysis = round.analysis || {};
       const source = round.plan?.source;
       const label = source === "llm" ? "LLM 建议" : source === "rule_based" ? "规则建议" : "分析来源未返回";
+      const basis = {source_and_logs_only: "源码与日志回退；没有引用可信指标", eligible_metrics_and_source: "可用指标与源码；实际决策依据须逐项核对引用"}[analysis.basis] || display(analysis.basis);
       return `<span class="badge warn">${label}</span> ${confidenceBadgeFor(analysis.confidence || "unknown")}
         <div>${escapeHtml(display(analysis.hypothesis))}</div>
-        <div>分析类型：${escapeHtml(display(analysis.bottleneck_type))}；依据：${escapeHtml(display(analysis.basis))}</div>
+        <div>分析类型：${escapeHtml(display(analysis.bottleneck_type))}；依据：${escapeHtml(basis)}</div>
         <div>预期影响：${escapeHtml(display(analysis.expected_effect))}</div>
         <div>风险：${escapeHtml(display(analysis.risk))}</div>${evidenceList("验证计划", analysis.validation_plan)}
         <div class="muted">规划假设，不代表瓶颈已确认。</div>`;
     }
 
-    function renderAnalysisRound(round, evidenceMap, warning = "") {
+    function renderAnalysisRound(round, evidenceMap, warning = "", results = null) {
       const known = round.schema_version === "v2.optimization_round.v1" && Number.isInteger(round.round_index) && round.round_index >= 0;
       const baseline = known && round.round_index === 0;
       const decision = round.acceptance?.decision;
@@ -5052,13 +5185,13 @@
         <summary><span>${escapeHtml(title)} <span class="muted">${escapeHtml(display(round.trial_id))}</span></span><span class="badge warn">${escapeHtml(status)}</span></summary>
         <div class="source-trial-body">${known ? `<div class="kv source-round-summary">
           <div>发现的问题</div><div data-round-part="problem">${baseline ? "原始 baseline 验证记录" : sourceRoundAnalysis(round)}</div>
-          <div>证据</div><div data-round-part="evidence">${sourceTrialEvidenceList(round, evidenceMap, 3)}</div>
+          <div>证据</div><div data-round-part="evidence">${sourceTrialEvidenceList(round, evidenceMap, 3, results)}</div>
           <div>修改内容</div><div data-round-part="change">${baseline ? "基线版本，未执行源码修改" : stopped && !round.candidate_source_sha256 ? "未执行源码修改" : "候选修改记录待核验"}</div>
           <div>验证结果</div><div data-round-part="validation">${baseline ? `${sourceCorrectnessBadge(validation.correctness)}；${escapeHtml(display(validation.status))}；${escapeHtml(sourceMeasurementSummary(validation.benchmark_samples_ms))}` : stopped && !round.candidate_source_sha256 ? "未执行候选验证" : "等待对应候选的完整核验记录"}</div>
           <div>最终决定</div><div data-round-part="decision">${escapeHtml(status)}：${escapeHtml(display(round.acceptance?.reason))}<div>轮次决定不代表最终 best 已发布。</div></div>
         </div>` : `<div class="alert warn">无法解释此版本的轮次记录，仅保留原始数据。</div>`}
         ${warning ? `<div class="alert warn">${escapeHtml(warning)}</div>` : ""}
-        <details class="source-trial-details"><summary>轮次原始记录与日志</summary><pre>${escapeHtml(JSON.stringify(redactObject(round), null, 2))}</pre></details></div>
+        <details class="source-trial-details"><summary>轮次原始记录与日志</summary><h4>本轮完整证据引用</h4>${sourceTrialEvidenceList(round, evidenceMap, Infinity, results)}<h4>本轮排除记录</h4>${sourceExcludedEvidenceList(round, evidenceMap)}<pre>${escapeHtml(JSON.stringify(redactObject(round), null, 2))}</pre></details></div>
       </details>`;
     }
 
@@ -5068,6 +5201,7 @@
       const evidenceMap = evidenceRecordMap(evidenceSummaryFromResults(results));
       const acceptedVerified = acceptedSourceTrialVerified(source, results, task);
       const context = {speedupVerified: sourceSpeedupVerified(results, task),
+        evidenceResults: results,
         acceptedChainIds: acceptedVerified ? sourceAcceptedChain(source).trials.map((trial) => trial.trial_id) : [],
         finalSelectionKnown: sourceOptimizationStatus(source) === "completed" && results?.source_best_verified === true && !sourceBestVerificationFailed(results, task)};
       const acceptedId = typeof source?.accepted_trial_id === "string" ? source.accepted_trial_id.trim() : "";
@@ -5079,7 +5213,7 @@
           && round.plan?.decision === "attempt" && matching.length === 1
           && round.parent_source_sha256 === matching[0].source_before_sha256 && !!round.candidate_source_sha256
           && round.candidate_source_sha256 === matching[0].source_after_sha256;
-        if (!joined) return renderAnalysisRound(round, evidenceMap, round.candidate_source_sha256 ? "轮次与候选身份未能核对，不借用其他候选的验证结果。" : "");
+        if (!joined) return renderAnalysisRound(round, evidenceMap, round.candidate_source_sha256 ? "轮次与候选身份未能核对，不借用其他候选的验证结果。" : "", results);
         represented.add(round.trial_id);
         return renderSourceTrial(matching[0], acceptedId, evidenceMap, acceptedVerified, {...context, round});
       });
@@ -5088,7 +5222,7 @@
       return {html: html.join(""), count: html.length};
     }
 
-    function renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified, {speedupVerified = false, finalSelectionKnown = false, acceptedChainIds = [], round = null} = {}) {
+    function renderSourceTrial(trial, acceptedId, evidenceMap, acceptedVerified, {speedupVerified = false, finalSelectionKnown = false, acceptedChainIds = [], round = null, evidenceResults = null} = {}) {
       const trialId = typeof trial.trial_id === "string" && trial.trial_id.trim() ? trial.trial_id.trim() : "未返回 trial_id";
       const selected = acceptedId && trialId === acceptedId;
       const correctness = trial.correctness && typeof trial.correctness === "object" ? trial.correctness : null;
@@ -5127,12 +5261,14 @@
         <div class="source-trial-body">
           <div class="kv source-round-summary">
             <div>发现的问题</div><div data-round-part="problem">${round ? sourceRoundAnalysis(round) : `<span class="badge warn">${proposalLabel}</span> ${escapeHtml(display(trial.hypothesis))}<div class="muted">规划假设，不代表瓶颈已确认。</div>`}</div>
-            <div>证据</div><div data-round-part="evidence">${sourceTrialEvidenceList(round || trial, evidenceMap, 3)}</div>
+            <div>证据</div><div data-round-part="evidence">${sourceTrialEvidenceList(round || trial, evidenceMap, 3, evidenceResults)}</div>
             <div>修改内容</div><div data-round-part="change"><span class="badge ${modification.kind}">${modification.label}</span> ${escapeHtml(display(changeLabels[trial.optimization_name] || trial.optimization_name))}<div>${escapeHtml([trial.target_file, trial.target_function].filter(Boolean).map(display).join(" / ") || "目标位置未返回")}</div></div>
             <div>验证结果</div><div data-round-part="validation"><span class="badge ${correctnessLabel.kind}">${correctnessLabel.label}</span> <span class="badge ${performance.kind}">${performance.label}</span></div>
             <div>最终决定</div><div data-round-part="decision">${escapeHtml(sourceTrialDecision(trial, selected, acceptedVerified, finalSelectionKnown, includedInBest))}${!measurementAccepted && trial.decision_reason ? `<div>${escapeHtml(display(trial.decision_reason))}</div>` : ""}${round ? `<div>本轮决定：${escapeHtml(display(round.acceptance?.decision))}；${escapeHtml(display(round.acceptance?.reason))}</div><div class="muted">轮次采纳仅选择下一轮 parent，不替代最终发布核验。</div>` : ""}</div>
           </div>
           <details class="source-trial-details"><summary>详细指标、diff 与日志</summary>
+          <h4>本轮完整证据引用</h4>${sourceTrialEvidenceList(round || trial, evidenceMap, Infinity, evidenceResults)}
+          <h4>本轮排除记录</h4>${sourceExcludedEvidenceList(round || trial, evidenceMap)}
           <div class="kv">
             <div>trial_id</div><div>${escapeHtml(trialId)}</div>
             <div>目标位置</div><div>${escapeHtml([trial.target_file, trial.target_function].filter(Boolean).map(display).join(" / ") || "未返回")}</div>
