@@ -34,6 +34,18 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTROL_SOURCE = ROOT / "kernel_opt_agent/samples/profiler_smoke/attribution_controls.cpp"
 
 
+def control_command(mode: str) -> str:
+    if mode not in {"idle", "elementwise", "mma"}:
+        raise ValueError("unsupported calibration control")
+    # The frozen profiler client leaks its private libstdc++ into child processes.
+    # Restore SDK/system lookup for this target only; never change system libraries.
+    return "env LD_LIBRARY_PATH=/opt/maca/lib:/opt/maca/lib64:/usr/lib/x86_64-linux-gnu ./attribution_controls " + mode
+
+
+def control_capture_record(mode: str, repeat: int, collection: dict) -> dict:
+    return {**collection, "control_mode": mode, "repeat": repeat}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--connection-config", type=Path, required=True)
@@ -121,9 +133,9 @@ def main() -> int:
         for repeat in (1, 2):
             for mode in ("idle", "elementwise", "mma"):
                 stage = f"control_{mode}_{repeat}"
-                command(stage + "_correctness", "./attribution_controls " + mode)
+                command(stage + "_correctness", control_command(mode))
                 request = McProfilerCollectionRequest(
-                    target_command="./attribution_controls " + mode, case_name=stage,
+                    target_command=control_command(mode), case_name=stage,
                     source_trial_id=stage, source_sha256=source_hash, metrics=("AP MMA Duty ratio",),
                     kernel_names=() if mode == "idle" else ("attribution_" + mode,),
                     executable=args.client, server_executable=args.server,
@@ -133,7 +145,7 @@ def main() -> int:
                 collection = collect_remote_mcprofiler_case(runner, args.output_dir, request,
                     redactor=sanitize, secret_values=(password,), append_imported_records=True)
                 case = collection.to_dict(sanitize)
-                cases.append({"mode": mode, "repeat": repeat, **case})
+                cases.append(control_capture_record(mode, repeat, case))
                 value, report_hash = None, ""
                 if collection.case_dir:
                     case_dir = args.output_dir / collection.case_dir

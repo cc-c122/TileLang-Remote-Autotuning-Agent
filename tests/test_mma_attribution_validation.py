@@ -281,6 +281,26 @@ class MmaAttributionValidationTests(unittest.TestCase):
         self.assertEqual(api_row["attribution_validation"], validation_result)
         self.assertFalse(api_row["planning_eligible"])
 
+    def test_real_control_library_lookup_is_child_scoped_and_guarded(self):
+        from scripts.calibrate_mcprofiler_mma import control_command
+        from kernel_opt_agent.runner.command_guard import validate
+
+        for mode in ("idle", "elementwise", "mma"):
+            command = control_command(mode)
+            self.assertTrue(command.startswith("env LD_LIBRARY_PATH="))
+            self.assertNotIn("_MEI", command)
+            self.assertTrue(validate(command, "/managed/calibration", "/managed/calibration").allowed)
+        with self.assertRaises(ValueError):
+            control_command("mma; shutdown")
+
+    def test_control_label_does_not_overwrite_native_collection_mode(self):
+        from scripts.calibrate_mcprofiler_mma import control_capture_record
+
+        record = control_capture_record("mma", 2, {"mode": "remote_official_cli", "status": "collected"})
+        self.assertEqual(record["mode"], "remote_official_cli")
+        self.assertEqual(record["control_mode"], "mma")
+        self.assertEqual(record["repeat"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,29 @@
+{
+  "device_id": "device_sha256:b9456a1142484727108d842e97b411e1c34753b3375e21a87b8528c3c41e80b3",
+  "environment": {
+    "device_count": 1,
+    "driver_version": "3.8.30",
+    "os": "Linux-5.15.0-58-generic-x86_64-with-glibc2.35",
+    "python_executable": "/opt/conda/bin/python3",
+    "python_version": "3.12.11",
+    "runtime_version": "3.5.3.20",
+    "torch_version": "2.8.0+metax3.5.3.9"
+  },
+  "fields": {
+    "available_memory_bytes": 16164847616,
+    "backend": "mxmaca",
+    "cu_count": null,
+    "device_count": 1,
+    "device_id": "device_sha256:b9456a1142484727108d842e97b411e1c34753b3375e21a87b8528c3c41e80b3",
+    "device_uuid": null,
+    "max_threads_per_block": null,
+    "pci_bus_id": null,
+    "runtime_multiprocessor_count": 104,
+    "shared_memory_per_block_bytes": 65536,
+    "sm_count": null,
+    "target_name": "MetaX C500",
+    "total_memory_bytes": 16341008384,
+    "warp_size": 64,
+    "wave_size": null
+  }
+}

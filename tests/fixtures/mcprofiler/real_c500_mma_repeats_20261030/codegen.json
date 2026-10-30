@@ -1,0 +1,10 @@
+{
+  "level": "device_llvm_ir_not_final_isa",
+  "mma_calls_by_function": {
+    "__cxa_deleted_virtual": 0,
+    "__cxa_pure_virtual": 0,
+    "__mcImplicitDeviceSynchronize": 0,
+    "attribution_elementwise": 0,
+    "attribution_mma": 128
+  }
+}

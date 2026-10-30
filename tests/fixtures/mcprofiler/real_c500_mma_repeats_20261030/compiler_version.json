@@ -1,0 +1,13 @@
+{
+  "command": "/opt/maca/mxgpu_llvm/bin/mxcc --version",
+  "duration": 0.03753972053527832,
+  "end_time": 1793333750.6589382,
+  "error_message": null,
+  "guard_denied": false,
+  "name": "compiler_version",
+  "returncode": 0,
+  "start_time": 1793333750.6213984,
+  "stderr": "",
+  "stdout": "mxcc version 1.0.0 (6477545d4d)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /opt/maca-3.5.3/mxgpu_llvm/bin\n",
+  "timeout": false
+}

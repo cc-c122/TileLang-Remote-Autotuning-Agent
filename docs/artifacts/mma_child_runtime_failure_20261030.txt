@@ -1,0 +1,58 @@
+profiler http listen to 127.0.0.1:57201
+try to connect to server...
+ * Serving Flask app 'Profiler' (lazy loading)
+ * Environment: production
+   WARNING: This is a development server. Do not use it in a production deployment.
+   Use a production WSGI server instead.
+ * Debug mode: off
+connect to server success
+cmdline is: sh -c 'export MCTX_TARGET_INIT=true; ./attribution_controls idle'
+casename is: control_idle_1
+metrics is: ['AP MMA Duty ratio']
+start a local task...
+[info] start a new perf exec thread
+[info] start perf_exec
+[info] new exec 26f1518e-f3b2-468f-9924-dd8c9f4af2d0:("sh -c 'export MCTX_TARGET_INIT=true; ./attribution_controls idle'", 'control_idle_1', ['AP MMA Duty ratio'])
+########## exec_id: 26f1518e-f3b2-468f-9924-dd8c9f4af2d0 ##########
+[info] start generate batch files
+[info] output path is: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519
+[info] generate event_batch_1.json successfully!
+[info] generate batch files done
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.21' not found (required by ./attribution_controls)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `CXXABI_1.3.9' not found (required by ./attribution_controls)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `CXXABI_1.3.8' not found (required by /opt/maca/lib/libmcToolsExt.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.22' not found (required by /opt/maca/lib/libmcToolsExt.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `CXXABI_1.3.9' not found (required by /opt/maca/lib/libmcToolsExt.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.20' not found (required by /opt/maca/lib/libmcToolsExt.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.21' not found (required by /opt/maca/lib/libmcToolsExt.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.20' not found (required by /opt/maca/lib/libmccompiler.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.22' not found (required by /opt/maca/lib/libmccompiler.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `CXXABI_1.3.9' not found (required by /opt/maca/lib/libmccompiler.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.21' not found (required by /opt/maca/lib/libmccompiler.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.20' not found (required by /opt/maca/lib/libmcruntime.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `CXXABI_1.3.8' not found (required by /opt/maca/lib/libmcruntime.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `CXXABI_1.3.9' not found (required by /opt/maca/lib/libmcruntime.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.21' not found (required by /opt/maca/lib/libmcruntime.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.22' not found (required by /opt/maca/lib/libmcruntime.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.20' not found (required by /opt/maca/lib/libmcanalyzer.so.1.10)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `CXXABI_1.3.9' not found (required by /opt/maca/lib/libmcanalyzer.so.1.10)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.21' not found (required by /opt/maca/lib/libmcanalyzer.so.1.10)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.22' not found (required by /opt/maca/lib/libmcanalyzer.so.1.10)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.20' not found (required by /opt/maca/lib/libmcpti.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `CXXABI_1.3.8' not found (required by /opt/maca/lib/libmcpti.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `CXXABI_1.3.9' not found (required by /opt/maca/lib/libmcpti.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.21' not found (required by /opt/maca/lib/libmcpti.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `CXXABI_1.3.8' not found (required by /opt/maca/lib/libmchotspot_host.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `CXXABI_1.3.9' not found (required by /opt/maca/lib/libmchotspot_host.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.21' not found (required by /opt/maca/lib/libmchotspot_host.so)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.22' not found (required by /opt/maca/lib/libmxc-runtime64.so.1)
+./attribution_controls: <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519/.tmp/_MEIj2d6RX/libstdc++.so.6: version `GLIBCXX_3.4.21' not found (required by /opt/maca/lib/libmxc-runtime64.so.1)
+
+[info] profiling task 26f1518e-f3b2-468f-9924-dd8c9f4af2d0
+Traceback (most recent call last):
+  File "phttp/server_backend.py", line 800, in perf_exec
+IndexError: list index out of range
+
+[error] profiler failed:list index out of range
+stop server
+perf done, please check report file <redacted>/.kernel_opt_agent/mcprofiler/collections/mcprof-20726c16fcb2f9b38e70f519

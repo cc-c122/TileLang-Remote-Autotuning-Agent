@@ -77,7 +77,58 @@ Fresh repeat collection was attempted twice on 2026-10-30 through SSHRunner,
 with in-memory credentials, existing host trust, a new managed workspace and
 bounded timeouts. Both stopped at `connect / AuthenticationException` before
 upload or GPU execution. See the [sanitized blocking receipt](artifacts/mma_calibration_blocked_20261030.json).
-No fresh controls or repeated-capture consistency result is claimed.
+Those attempts collected no controls. The following recovery supersedes only
+the connection blocker, not the metric-attribution blocker.
+
+### Real Recovery And Repeated Controls
+
+After the user restarted the container, the same SSHRunner and existing host
+trust connected successfully. The first six profiling attempts then failed with
+`report_not_found`: the frozen client leaked its private old `libstdc++` into
+the target, which could not load MXMACA (`GLIBCXX_3.4.20/21/22` and CXXABI missing).
+The client returned zero despite this failure. These attempts remain failed;
+their full partial artifacts and sanitized logs were retained. A representative
+[sanitized failure log](artifacts/mma_child_runtime_failure_20261030.txt) is included.
+
+The reproduction script now supplies an explicit SDK/system `LD_LIBRARY_PATH`
+to the control child command only. No library, driver or global environment was
+modified. Six subsequent attempts all produced valid native Cases. Independent
+and profiled reference checks printed `max_error=0` for every control. Source
+SHA and device LLVM IR SHA match the recorded control source; the IR still has
+zero elementwise MMA calls and 128 positive-control MMA calls, not final ISA.
+
+| Control | Repeat 1 raw MMA Duty | Repeat 2 raw MMA Duty |
+| --- | ---: | ---: |
+| Idle, no target kernel launch | 5.544957260637221 | 4.8756551081005775 |
+| Elementwise | 0.0 | 0.0 |
+| MMA positive control | 10.040149127720056 | 20.193788819875778 |
+
+See the [new original-byte fixture and complete SHA manifest](../tests/fixtures/mcprofiler/real_c500_mma_repeats_20261030/manifest.json).
+It includes six separately identified Cases, exact original report/config bytes,
+LLVM IR, compiler/tool/environment receipts, collector-sanitized stdout/stderr,
+and hashes of the complete native directories kept in the managed workspace.
+Raw and stored digests are separate and unchanged. These are native calibration
+controls, not new Paged Attention or optimization evidence.
+
+The current device binding is
+`device_sha256:b9456a1142484727108d842e97b411e1c34753b3375e21a87b8528c3c41e80b3`.
+It differs from the historical Paged Attention binding; no equivalence is
+assumed or transferred, even though both queries report C500.
+
+All six effective native configs record `profile_from_start=true` despite the
+custom-window request, and `counts=100` without observed replay proof. The
+idle control is nonzero, and the two positive responses differ substantially
+(descriptive `(max-min)/max` = 0.5028100364287251, not an acceptance threshold).
+The cause is unconfirmed: background activity, window/replay and counter scope
+cannot be excluded or attributed from these artifacts. No other process was
+stopped to force a quiet capture. The backend reports `idle_control_not_quiet`,
+unconfirmed definition/window/provenance/isolation and unqualified repeatability.
+**Collection succeeded; calibration did not. Every metric stays planning-ineligible.**
+
+Control labels in the reproduction audit now use `control_mode`; the native
+collection `mode=remote_official_cli` is preserved independently. The recovered
+fixture labels were checked against the exact generated trial IDs and control
+outputs, not inferred from report names.
 
 ## Backend Validator
 
@@ -146,7 +197,7 @@ explicit non-sensitive existing installations. No software is downloaded.
 
 ```sh
 python -m scripts.calibrate_mcprofiler_mma --connection-config <private-effective-config> --host-key-store <private-host-trust-store> --client <installed-mcProfiler> --server <installed-profiler_server> --output-dir kernel_opt_agent/workspace/mma-controls-new
-python -m unittest tests.test_mma_attribution_validation tests.test_mcprofiler_kernel_mapping tests.test_attribution_contract tests.test_mcprofiler_attribution tests.test_optimization_rounds
+python -m unittest tests.test_mma_real_repeats tests.test_mma_attribution_validation tests.test_mcprofiler_kernel_mapping tests.test_attribution_contract tests.test_mcprofiler_attribution tests.test_optimization_rounds
 python -m unittest discover -s tests
 python -m compileall -q kernel_opt_agent tests scripts
 git diff --check
@@ -162,15 +213,16 @@ The script exits 1 on execution/connection failure and 2 on blocked calibration;
 only verified calibration exits 0.
 
 Before stage two: obtain an applicable official definition and native scope proof;
-restore SSH; perform fresh repeated controls with observed windows/replays and
-bound launches; explicitly resolve background isolation. Only then may a later
+establish observed windows/replays and bound launches, explain the idle signal
+and repeat discrepancy, and explicitly resolve background isolation. Only then may a later
 accepted PR let the LLM reference an eligible `evidence_id` and attempt an
 appropriate authorized source transformation. If none applies, stop explicitly.
 
 ## Verification Notes
 
-The focused attribution/mapping/round regressions pass (53 tests). Compileall and
-diff checks pass. Two full-suite attempts in the deep Windows worktree each had
+The initial focused attribution/mapping/round regressions passed (53 tests);
+the real recovery follow-up passes 59 focused tests. Compileall and diff checks
+pass. Two full-suite attempts in the deep Windows worktree each had
 one failure in the pre-existing CPU-timed Web source-optimization test: the first
 had overlapping repeat envelopes; the second reached baseline recheck but failed
 with Windows `WinError 267` (invalid working directory) in the long task path.
