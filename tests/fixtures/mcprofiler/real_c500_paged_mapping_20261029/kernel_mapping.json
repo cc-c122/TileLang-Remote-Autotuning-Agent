@@ -1,0 +1,135 @@
+{
+  "generated_sha256": "070c7ac71b6a64ae224d4872237d1ce4b5eb7ac55e46f766d7e56959d2a3ceb4",
+  "host_sha256": "23cfcfbc8ee7b905e1fcd795304c66a3dbabae8036093216ec2380a03c97c1d2",
+  "mappings": [
+    {
+      "generated_candidates": [
+        {
+          "buffer_symbols": [
+            "K",
+            "Output_partial",
+            "Q",
+            "V",
+            "glse"
+          ],
+          "function_sha256": "bb0cfbc13f16ffb4d28553238e13529b22c0fbc4a81e359e5073cc5fdeaa4142",
+          "line_end": 216,
+          "line_start": 11,
+          "mma_call_sites": 2,
+          "name": "main_kernel",
+          "role_candidate": "split"
+        }
+      ],
+      "planning_eligible": false,
+      "report_candidates": [
+        {
+          "attribution_verified": false,
+          "file_name": "1_main_kernel_dumped_result.json",
+          "kernel_label": "main_kernel",
+          "launch_id": null,
+          "report_slot": 1,
+          "sha256": "dcbeb5eda9c5babbc464868909e17475844e3591eb429853bbcc17e0d6ab2635"
+        }
+      ],
+      "runtime_launches": [],
+      "source_region": {
+        "contains_modification": true,
+        "line_end": 132,
+        "line_start": 58,
+        "output_buffers": [
+          "Output_partial",
+          "glse"
+        ],
+        "role_candidate": "split",
+        "source_region_sha256": "ca145ea22aee3a4026b9869ae8c27465bdfb9f7da1dc2042beb9a44c5236157a"
+      },
+      "status": "static_candidate"
+    },
+    {
+      "generated_candidates": [
+        {
+          "buffer_symbols": [
+            "Output",
+            "Output_partial",
+            "glse"
+          ],
+          "function_sha256": "b82939cf77e055b4de4cdccccb3e1775c84e0d406342db1d6343cf64b7213890",
+          "line_end": 252,
+          "line_start": 218,
+          "mma_call_sites": 0,
+          "name": "main_kernel_1",
+          "role_candidate": "combine"
+        }
+      ],
+      "planning_eligible": false,
+      "report_candidates": [
+        {
+          "attribution_verified": false,
+          "file_name": "2_main_kernel_1_dumped_result.json",
+          "kernel_label": "main_kernel_1",
+          "launch_id": null,
+          "report_slot": 2,
+          "sha256": "06e5bb6241d3d22a2910e56f37d7318c5ab32efed708c4eb0373555635c32d19"
+        }
+      ],
+      "runtime_launches": [],
+      "source_region": {
+        "contains_modification": false,
+        "line_end": 167,
+        "line_start": 135,
+        "output_buffers": [
+          "Output"
+        ],
+        "role_candidate": "combine",
+        "source_region_sha256": "c3fae1af23305c2d2d282f9a920cbcb13a5a69241313cce208cfa7d2cc6e0980"
+      },
+      "status": "static_candidate"
+    }
+  ],
+  "operator": "paged_attention_decode",
+  "reports": [
+    {
+      "attribution_verified": false,
+      "file_name": "1_main_kernel_dumped_result.json",
+      "kernel_label": "main_kernel",
+      "launch_id": null,
+      "report_slot": 1,
+      "sha256": "dcbeb5eda9c5babbc464868909e17475844e3591eb429853bbcc17e0d6ab2635"
+    },
+    {
+      "attribution_verified": false,
+      "file_name": "2_main_kernel_1_dumped_result.json",
+      "kernel_label": "main_kernel_1",
+      "launch_id": null,
+      "report_slot": 2,
+      "sha256": "06e5bb6241d3d22a2910e56f37d7318c5ab32efed708c4eb0373555635c32d19"
+    },
+    {
+      "attribution_verified": false,
+      "file_name": "report_dumped_result.json",
+      "kernel_label": null,
+      "launch_id": null,
+      "report_slot": null,
+      "sha256": "0209a98ec1c66c46bf6964d819dd9295ecaf209124e8df8975ae4021b19dc813"
+    }
+  ],
+  "runtime_attribution_verified": false,
+  "schema_version": "v2.mcprofiler_kernel_mapping.v1",
+  "source_sha256": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6",
+  "static_host_calls": [
+    {
+      "kernel_name": "main_kernel",
+      "kind": "static_host_call_site_not_runtime_event",
+      "line": 3786
+    },
+    {
+      "kernel_name": "main_kernel_1",
+      "kind": "static_host_call_site_not_runtime_event",
+      "line": 3843
+    }
+  ],
+  "warnings": [
+    "runtime_launch_identity_unconfirmed",
+    "report_filename_is_not_launch_identity"
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "schema_version": "v2.mcprofiler_calibration_recovery.v1",
+  "date": "2026-10-30",
+  "ssh_status": "connected",
+  "collection_status": "collected",
+  "calibration_status": "blocked",
+  "planning_eligible": false,
+  "new_valid_cases": 6,
+  "metric": "mma_duty",
+  "tool_version": "3.9.0.29",
+  "tool_build": "c63ea13089",
+  "device_id": "device_sha256:b9456a1142484727108d842e97b411e1c34753b3375e21a87b8528c3c41e80b3",
+  "source_sha256": "4928b7701c38f437ae3e0bdc3bfc9567b2216e89af9962794d3fe2850cf24cdc",
+  "fixture": "tests/fixtures/mcprofiler/real_c500_mma_repeats_20261030",
+  "managed_results": "kernel_opt_agent/workspace/mma_controls_20261030_retry3",
+  "earlier_runtime_failure": {
+    "status": "failed",
+    "attempt_count": 6,
+    "reason_code": "report_not_found",
+    "root_cause": "profiler_frozen_client_child_library_path_incompatible_with_mxmaca",
+    "representative_log": "docs/artifacts/mma_child_runtime_failure_20261030.txt",
+    "source_sha256": "eae3699c92f459ef9f2dc4a421da1a8a7b2da592f9fe6b334c21f4f33816a5ef",
+    "stored_sha256": "eae3699c92f459ef9f2dc4a421da1a8a7b2da592f9fe6b334c21f4f33816a5ef",
+    "source_kind": "collector_sanitized_stdout",
+    "storage_transform": "none_original_collector_bytes_preserved",
+    "remediation": "set_SDK_and_system_library_lookup_for_control_child_command_only"
+  },
+  "cases": [
+    {"control": "idle", "repeat": 1, "collection_id": "mcprof-c4db83200600815ee24491ec", "mma_duty": 5.544957260637221, "max_error": 0.0},
+    {"control": "elementwise", "repeat": 1, "collection_id": "mcprof-815e315d8cc509fb3d9dd953", "mma_duty": 0.0, "max_error": 0.0},
+    {"control": "mma", "repeat": 1, "collection_id": "mcprof-3e582b7d145bbbb617620f24", "mma_duty": 10.040149127720056, "max_error": 0.0},
+    {"control": "idle", "repeat": 2, "collection_id": "mcprof-9f39829fb69e1d5a37f2744b", "mma_duty": 4.8756551081005775, "max_error": 0.0},
+    {"control": "elementwise", "repeat": 2, "collection_id": "mcprof-4cec4b87412929ed85617b22", "mma_duty": 0.0, "max_error": 0.0},
+    {"control": "mma", "repeat": 2, "collection_id": "mcprof-082a59776950f6db1e6f1cf1", "mma_duty": 20.193788819875778, "max_error": 0.0}
+  ],
+  "unresolved": [
+    "idle_control_not_quiet",
+    "metric_definition_unconfirmed",
+    "native_scope_verifier_unavailable",
+    "calibration_window_unverified",
+    "replay_count_unconfirmed",
+    "background_workload_not_excluded",
+    "calibration_repeatability_unqualified"
+  ],
+  "system_changes": false,
+  "other_processes_stopped": false,
+  "stage_two_started": false
+}

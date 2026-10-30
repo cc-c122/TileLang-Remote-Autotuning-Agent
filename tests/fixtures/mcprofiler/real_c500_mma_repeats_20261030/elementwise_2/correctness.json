@@ -1,0 +1,13 @@
+{
+  "command": "env LD_LIBRARY_PATH=/opt/maca/lib:/opt/maca/lib64:/usr/lib/x86_64-linux-gnu ./attribution_controls elementwise",
+  "duration": 0.08970999717712402,
+  "end_time": 1793333897.7962282,
+  "error_message": null,
+  "guard_denied": false,
+  "name": "control_elementwise_2_correctness",
+  "returncode": 0,
+  "start_time": 1793333897.7065182,
+  "stderr": "",
+  "stdout": "CALIBRATION_CONTROL mode=elementwise max_error=0\n",
+  "timeout": false
+}

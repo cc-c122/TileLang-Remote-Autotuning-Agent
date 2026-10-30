@@ -1,0 +1,13 @@
+{
+  "command": "/tmp/kernel-agent-c500-profiler-tools/tools/mcProfiler-ubuntu18/mcProfiler version",
+  "duration": 4.694781064987183,
+  "end_time": 1793333741.1644225,
+  "error_message": null,
+  "guard_denied": false,
+  "name": "tool_version",
+  "returncode": 0,
+  "start_time": 1793333736.4696414,
+  "stderr": "",
+  "stdout": "version:3.9.0.29\ntime:20260917210711\nhash:c63ea13089\ndistro:ubuntu18\n\n",
+  "timeout": false
+}

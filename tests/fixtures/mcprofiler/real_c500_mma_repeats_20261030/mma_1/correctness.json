@@ -1,0 +1,13 @@
+{
+  "command": "env LD_LIBRARY_PATH=/opt/maca/lib:/opt/maca/lib64:/usr/lib/x86_64-linux-gnu ./attribution_controls mma",
+  "duration": 0.07950615882873535,
+  "end_time": 1793333826.1368032,
+  "error_message": null,
+  "guard_denied": false,
+  "name": "control_mma_1_correctness",
+  "returncode": 0,
+  "start_time": 1793333826.057297,
+  "stderr": "",
+  "stdout": "CALIBRATION_CONTROL mode=mma max_error=0\n",
+  "timeout": false
+}

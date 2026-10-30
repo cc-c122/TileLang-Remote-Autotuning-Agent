@@ -1,0 +1,10 @@
+{
+    "GPU Throughput Statistics": [
+        {
+            "data": 5.806521155504349,
+            "isError": false,
+            "message": "",
+            "name": "AP MMA Duty ratio"
+        }
+    ]
+}

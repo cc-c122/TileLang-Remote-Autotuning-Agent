@@ -27,6 +27,12 @@ def read_report_context(root: Path, metadata: dict[str, Any], kernel_name: str |
     device = agent.get("device_id")
     if not isinstance(device, str) or not re.fullmatch(r"device_sha256:[0-9a-f]{64}", device):
         device = None
+    build = agent.get("tool_build")
+    if not isinstance(build, str) or not re.fullmatch(r"[0-9a-f]{6,64}", build):
+        build = None
+    collection_id = agent.get("collection_id")
+    if not isinstance(collection_id, str) or not re.fullmatch(r"mcprof-[0-9a-f]{24}", collection_id):
+        collection_id = None
     scope = {
         "report_layout": "named_kernel" if kernel_name else "aggregate",
         "counter_scope": "unknown",
@@ -43,5 +49,7 @@ def read_report_context(root: Path, metadata: dict[str, Any], kernel_name: str |
         "shape_id": agent.get("shape_id"),
         "dtype": agent.get("dtype"),
         "report_sha256": agent.get("report_sha256"),
+        "collection_id": collection_id,
+        "tool_build": build,
     }
     return {"device_id": device, "tool_version": version, "collection_scope": scope}

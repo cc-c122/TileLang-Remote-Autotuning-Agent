@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .attribution import UNVERIFIED_ATTRIBUTION_WARNING, annotate_planning_eligibility
@@ -84,16 +84,16 @@ class MetricObservation:
     tool_version: str | None = None
     metric_definition: dict[str, Any] = field(default_factory=dict)
     collection_scope: dict[str, Any] = field(default_factory=dict)
+    attribution_validation: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.parse_confidence is None:
             self.parse_confidence = self.confidence
         if self.source == "mcprofiler":
-            self.confidence = "low"
-            self.attribution_status = "unverified"
-            self.attribution_confidence = "low"
-            if UNVERIFIED_ATTRIBUTION_WARNING not in self.parse_warnings:
-                self.parse_warnings.append(UNVERIFIED_ATTRIBUTION_WARNING)
+            payload = annotate_planning_eligibility(asdict(self))
+            for name in ("confidence", "attribution_status", "attribution_confidence", "parse_warnings",
+                         "attribution_validation", "scope", "metric_definition"):
+                setattr(self, name, payload[name])
 
     def to_dict(self) -> dict[str, Any]:
         payload = redact_sensitive(
@@ -116,6 +116,7 @@ class MetricObservation:
                 "tool_version": self.tool_version,
                 "metric_definition": self.metric_definition,
                 "collection_scope": self.collection_scope,
+                "attribution_validation": self.attribution_validation,
             }
         )
         return annotate_planning_eligibility({**payload, "artifact_id": payload["artifact"]})

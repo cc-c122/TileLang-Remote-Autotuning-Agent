@@ -1,0 +1,46 @@
+{
+  "schema_version": "v2.mcprofiler_calibration_attempt.v1",
+  "stage": "one_attribution_calibration_only",
+  "date": "2026-10-30",
+  "metric": "mma_duty",
+  "status": "blocked",
+  "planning_eligible": false,
+  "new_gpu_captures": 0,
+  "attempts": [
+    {
+      "attempt": 1,
+      "runner": "existing_ssh_runner",
+      "stage": "connect",
+      "exception_type": "AuthenticationException",
+      "reason_code": "ssh_authentication_incomplete",
+      "commands_executed": false
+    },
+    {
+      "attempt": 2,
+      "runner": "existing_ssh_runner",
+      "stage": "connect",
+      "exception_type": "AuthenticationException",
+      "reason_code": "ssh_authentication_incomplete",
+      "commands_executed": false
+    }
+  ],
+  "historical_mapping": {
+    "task_id": "47b955a4380d44b89a53f9d434a77897",
+    "collection_id": "mcprof-2b736b75cdcc8f18b3f6ea3f",
+    "captured_at": "2026-10-29T13:26:35.001615Z",
+    "fixture": "tests/fixtures/mcprofiler/real_c500_paged_mapping_20261029",
+    "recollected_this_stage": false
+  },
+  "unresolved": [
+    "metric_definition_unconfirmed",
+    "native_scope_verifier_unavailable",
+    "runtime_launch_identity_unconfirmed",
+    "collection_window_unverified",
+    "replay_count_unconfirmed",
+    "background_workload_not_excluded",
+    "calibration_repeats_missing"
+  ],
+  "system_changes": false,
+  "other_processes_stopped": false,
+  "stage_two_started": false
+}

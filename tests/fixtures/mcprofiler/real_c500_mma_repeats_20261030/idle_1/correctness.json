@@ -1,0 +1,13 @@
+{
+  "command": "env LD_LIBRARY_PATH=/opt/maca/lib:/opt/maca/lib64:/usr/lib/x86_64-linux-gnu ./attribution_controls idle",
+  "duration": 0.10035085678100586,
+  "end_time": 1793333754.7054782,
+  "error_message": null,
+  "guard_denied": false,
+  "name": "control_idle_1_correctness",
+  "returncode": 0,
+  "start_time": 1793333754.6051273,
+  "stderr": "",
+  "stdout": "CALIBRATION_CONTROL mode=idle max_error=0\n",
+  "timeout": false
+}

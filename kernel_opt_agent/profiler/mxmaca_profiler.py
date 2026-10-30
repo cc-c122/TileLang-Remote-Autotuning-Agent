@@ -32,6 +32,20 @@ class MxmacaProfiler(BaseProfiler):
         if case_path:
             parsed_case = parse_mcprofiler_case(case_path)
             public_case = parsed_case.to_dict()
+            from .mcprofiler.attribution_validation import backend_validation
+
+            # A reparsed native report can recover only receipts already issued
+            # by this backend for the identical observation, not manifest flags.
+            rows = run_context.get("mcprofiler_metric_validations") or []
+            for observation in parsed_case.observations:
+                for row in rows:
+                    if not isinstance(row, dict) or row.get("metric_name", row.get("metric")) != observation.metric_name:
+                        continue
+                    candidate = {**observation.to_dict(), "attribution_validation": row.get("attribution_validation")}
+                    validated = backend_validation(candidate)
+                    if validated.get("validation_id"):
+                        observation.attribution_validation = validated
+                        break
             return self.from_observations(
                 parsed_case.observations,
                 benchmark_stdout=run_context.get("benchmark_stdout") or "",
