@@ -464,6 +464,7 @@ def run_trial(
                 profiler_context["mcprofiler_case_path"] = str(
                     db.results_dir / collection.case_dir / (collection.primary_report or ".")
                 )
+                profiler_context["mcprofiler_metric_validations"] = collection.metric_observations
         except Exception as exc:
             collection_record = redact_data(
                 config,

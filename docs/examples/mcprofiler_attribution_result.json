@@ -43,8 +43,14 @@
         "background_workload_not_excluded",
         "device_binding_unknown",
         "metric_definition_unconfirmed",
-        "metric_attribution_not_validated"
+        "metric_attribution_not_validated",
+        "backend_validation_missing"
       ],
+      "attribution_validation": {
+        "schema_version": "v2.mcprofiler_metric_validation.v1",
+        "status": "blocked",
+        "reason_codes": ["backend_validation_missing"]
+      },
       "parse_warnings": ["mcProfiler target attribution is unverified; counters may include other device activity. Excluded from optimization planning."]
     }
   ],

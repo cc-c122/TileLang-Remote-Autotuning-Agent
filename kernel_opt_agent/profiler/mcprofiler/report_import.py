@@ -9,10 +9,10 @@ from kernel_opt_agent.profiler.mxmaca_profiler import MxmacaProfiler
 from kernel_opt_agent.profiler.mcprofiler import parse_mcprofiler_case
 
 
-def import_report(case_dir: Path, out_dir: Path, source_trial_id: str | None = None) -> dict:
+def import_report(case_dir: Path, out_dir: Path, source_trial_id: str | None = None, *, profiler_result=None) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     parsed = parse_mcprofiler_case(case_dir)
-    result = MxmacaProfiler().collect({"mcprofiler_case_path": str(case_dir)})
+    result = profiler_result or MxmacaProfiler().collect({"mcprofiler_case_path": str(case_dir)})
     evidence_records = profiler_observations_to_evidence(
         result,
         source_trial_id or parsed.metadata.get("case_name") or case_dir.name,

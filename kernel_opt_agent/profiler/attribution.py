@@ -4,9 +4,6 @@ import math
 from typing import Any
 
 
-# No currently inspected mcProfiler version proves per-metric process isolation.
-# This is a backend policy, never populated from a report, request, or manifest.
-VALIDATED_MCPROFILER_METRICS: frozenset[tuple[str, str]] = frozenset()
 UNVERIFIED_ATTRIBUTION_WARNING = (
     "mcProfiler target attribution is unverified; counters may include other device activity. "
     "Excluded from optimization planning."
@@ -64,21 +61,33 @@ def planning_eligibility(row: dict[str, Any]) -> tuple[bool, list[str]]:
         definition = row.get("metric_definition")
         if not isinstance(definition, dict) or definition.get("status") != "documented":
             reasons.append("metric_definition_unconfirmed")
-        key = (str(row.get("tool_version") or ""), str(row.get("metric") or row.get("metric_name") or ""))
-        if key not in VALIDATED_MCPROFILER_METRICS:
+        from .mcprofiler.attribution_validation import backend_validation
+
+        validation = backend_validation(row)
+        if validation["status"] != "verified":
             reasons.append("metric_attribution_not_validated")
+            reasons.extend(validation["reason_codes"])
     return not reasons, reasons
 
 
 def annotate_planning_eligibility(row: dict[str, Any]) -> dict[str, Any]:
     # Recompute even when an imported row claims planning_eligible=true.
     row = dict(row)
-    key = (str(row.get("tool_version") or ""), str(row.get("metric") or row.get("metric_name") or ""))
-    if row.get("source") == "mcprofiler" and key not in VALIDATED_MCPROFILER_METRICS:
+    if row.get("source") == "mcprofiler":
+        from .mcprofiler.attribution_validation import backend_validation
+
+        validation = backend_validation(row)
+        row["attribution_validation"] = validation
         raw_warnings = row.get("parse_warnings")
         warnings = list(raw_warnings) if isinstance(raw_warnings, list) else []
-        if UNVERIFIED_ATTRIBUTION_WARNING not in warnings:
-            warnings.append(UNVERIFIED_ATTRIBUTION_WARNING)
-        row.update(confidence="low", attribution_status="unverified", attribution_confidence="low", parse_warnings=warnings)
+        if validation["status"] == "verified":
+            warnings = [item for item in warnings if item != UNVERIFIED_ATTRIBUTION_WARNING]
+            row.update(confidence=row.get("parse_confidence", "low"), attribution_status="verified",
+                       attribution_confidence="high", scope="kernel", parse_warnings=warnings,
+                       metric_definition={"status": "documented", **validation["definition"]})
+        else:
+            if UNVERIFIED_ATTRIBUTION_WARNING not in warnings:
+                warnings.append(UNVERIFIED_ATTRIBUTION_WARNING)
+            row.update(confidence="low", attribution_status="unverified", attribution_confidence="low", parse_warnings=warnings)
     eligible, reasons = planning_eligibility(row)
     return {**row, "planning_eligible": eligible, "eligibility_reasons": reasons}

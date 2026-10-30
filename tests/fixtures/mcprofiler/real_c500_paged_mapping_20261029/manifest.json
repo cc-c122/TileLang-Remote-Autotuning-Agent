@@ -1,0 +1,82 @@
+{
+  "artifacts": [
+    {
+      "path": "generated_device.cc",
+      "source": "compiler_output",
+      "source_sha256": "070c7ac71b6a64ae224d4872237d1ce4b5eb7ac55e46f766d7e56959d2a3ceb4",
+      "storage_transform": "none_original_bytes_preserved",
+      "stored_sha256": "070c7ac71b6a64ae224d4872237d1ce4b5eb7ac55e46f766d7e56959d2a3ceb4"
+    },
+    {
+      "path": "generated_host.cc",
+      "source": "native_case",
+      "source_sha256": "23cfcfbc8ee7b905e1fcd795304c66a3dbabae8036093216ec2380a03c97c1d2",
+      "storage_transform": "none_original_bytes_preserved",
+      "stored_sha256": "23cfcfbc8ee7b905e1fcd795304c66a3dbabae8036093216ec2380a03c97c1d2"
+    },
+    {
+      "path": "mcProfiler.json",
+      "source": "native_case",
+      "source_sha256": "407b939fe06462226dd36773f04532cd44403d1c6c8d99c469a5421d90b197c3",
+      "storage_transform": "none_original_bytes_preserved",
+      "stored_sha256": "407b939fe06462226dd36773f04532cd44403d1c6c8d99c469a5421d90b197c3"
+    },
+    {
+      "path": "1_main_kernel_dumped_result.json",
+      "source": "native_case",
+      "source_sha256": "dcbeb5eda9c5babbc464868909e17475844e3591eb429853bbcc17e0d6ab2635",
+      "storage_transform": "none_original_bytes_preserved",
+      "stored_sha256": "dcbeb5eda9c5babbc464868909e17475844e3591eb429853bbcc17e0d6ab2635"
+    },
+    {
+      "path": "2_main_kernel_1_dumped_result.json",
+      "source": "native_case",
+      "source_sha256": "06e5bb6241d3d22a2910e56f37d7318c5ab32efed708c4eb0373555635c32d19",
+      "storage_transform": "none_original_bytes_preserved",
+      "stored_sha256": "06e5bb6241d3d22a2910e56f37d7318c5ab32efed708c4eb0373555635c32d19"
+    },
+    {
+      "path": "report_dumped_result.json",
+      "source": "native_case",
+      "source_sha256": "0209a98ec1c66c46bf6964d819dd9295ecaf209124e8df8975ae4021b19dc813",
+      "storage_transform": "none_original_bytes_preserved",
+      "stored_sha256": "0209a98ec1c66c46bf6964d819dd9295ecaf209124e8df8975ae4021b19dc813"
+    }
+  ],
+  "attribution_status": "unverified",
+  "captured_at": "2026-10-29T13:26:35.001615Z",
+  "collection_id": "mcprof-2b736b75cdcc8f18b3f6ea3f",
+  "device_id": "device_sha256:b5ba7e87201b83f46abc4c30d0f0abc0c9d0f47c35ee7b4f53d48d8ddfe3ad74",
+  "dtype": "float16",
+  "fixture_kind": "historical_real_case_static_mapping_subset_not_new_calibration",
+  "gpu_model": "MetaX C500",
+  "notes": [
+    "Static host calls and report labels are not actual launch or replay identities.",
+    "Both split and combine reports exist although native configured kernel filter names only main_kernel.",
+    "Reused unchanged real artifacts from 2026-10-29. No new GPU measurement or optimization is claimed."
+  ],
+  "operator": "paged_attention_decode",
+  "planning_eligible": false,
+  "reason_codes": [
+    "metric_definition_unconfirmed",
+    "runtime_launch_identity_unconfirmed",
+    "collection_window_unverified",
+    "replay_count_unconfirmed",
+    "background_workload_not_excluded"
+  ],
+  "schema_version": "v2.mcprofiler_calibration_fixture.v1",
+  "shape_id": "paged_attention_decode_b1_qh32_kvh8_d128_page16_ctx128_fp16",
+  "source": {
+    "modification_lines_inspected_only": [
+      118,
+      118
+    ],
+    "path": "kernel_opt_agent/samples/paged_attention_decode/_upstream_sparse_gqa_decode_paged.py",
+    "sha256": "dca2e0114b88a029ec7e61e61cc791eaa97a4e2f5c4065cf3eef6b082c6a86c6"
+  },
+  "source_trial_id": "source-baseline",
+  "synthetic": false,
+  "task_id": "47b955a4380d44b89a53f9d434a77897",
+  "tool_build": "c63ea13089",
+  "tool_version": "3.9.0.29"
+}
